@@ -12,7 +12,7 @@ function toast(msg, isErr) {
 }
 
 async function api(url, opt) {
-  const r = await fetch((window.BASE || '') + url, opt);
+  const r = await fetch((window.SUP_BASE || '') + url, opt);
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
   return body;
@@ -31,8 +31,8 @@ async function loadWorkbooks() {
       : '<span class="muted">参数表未配置可编辑列</span>';
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${w.name}</td><td>${w.sheet_name}</td><td class="param-cell">${param}</td><td>${w.uploaded_at}</td>
-      <td><a class="btn" href="${window.BASE || ''}/admin/api/workbooks/${w.id}/download">下载 Excel</a>
-          <a class="btn" href="${window.BASE || ''}/api/workbooks/${w.id}/photos.zip">下载相片</a>
+      <td><a class="btn" href="${window.SUP_BASE || ''}/admin/api/workbooks/${w.id}/download">下载 Excel</a>
+          <a class="btn" href="${window.SUP_BASE || ''}/api/workbooks/${w.id}/photos.zip">下载相片</a>
           <button class="btn danger" data-del="${w.id}">删除</button></td>`;
     tb.appendChild(tr);
   }
@@ -55,7 +55,7 @@ async function loadTracks() {
   for (const t of data.tracks) {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${t.file}</td><td>${(t.size / 1024).toFixed(1)} KB</td>
-      <td><a class="btn" href="${window.BASE || ''}/admin/api/tracks/${encodeURIComponent(t.file)}">下载</a></td>`;
+      <td><a class="btn" href="${window.SUP_BASE || ''}/admin/api/tracks/${encodeURIComponent(t.file)}">下载</a></td>`;
     tb.appendChild(tr);
   }
 }
@@ -77,7 +77,7 @@ $('#adminFile').addEventListener('change', async (e) => {
   await loadWorkbooks();
 });
 
-$('#btnZip').addEventListener('click', () => { location.href = (window.BASE || '') + '/admin/api/tracks.zip'; });
+$('#btnZip').addEventListener('click', () => { location.href = (window.SUP_BASE || '') + '/admin/api/tracks.zip'; });
 
 $('#btnLogout').addEventListener('click', async () => {
   await api('/api/logout', { method: 'POST' }).catch(() => {});

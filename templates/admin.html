@@ -41,7 +41,7 @@
   </main>
 
   <div id="toast" class="toast hidden"></div>
-  <script>window.BASE = {{ request.script_root | tojson }};</script>
+  <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
   <script src="{{ url_for('static', filename='admin.js') }}"></script>
 </body>
 </html>

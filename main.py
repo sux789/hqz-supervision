@@ -454,6 +454,14 @@ def create_app(prefix=''):
     """
     app = Flask(__name__)
     app.secret_key = 'hqz-supervision-local-preview-key'
+
+    @app.after_request
+    def _no_cache_html(resp):
+        # HTML 不缓存：发版后浏览器必须拿新页面（静态资源 /static 不受限，正常缓存）
+        if resp.mimetype == 'text/html':
+            resp.headers['Cache-Control'] = 'no-cache'
+        return resp
+
     if prefix:
         app.config['APPLICATION_ROOT'] = prefix      # session cookie 限定本应用前缀
         app.config['PREFERRED_URL_SCHEME'] = 'https'

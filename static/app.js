@@ -20,7 +20,7 @@ function toast(msg, isErr) {
 }
 
 async function api(url, opt) {
-  const r = await fetch((window.BASE || '') + url, opt);
+  const r = await fetch((window.SUP_BASE || '') + url, opt);
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
   return body;
@@ -306,7 +306,7 @@ $('#albumMask').addEventListener('click', (e) => { if (e.target === $('#albumMas
 async function openAlbum() {
   const mask = $('#albumMask');
   mask.classList.remove('hidden');
-  $('#albumZip').href = `${window.BASE || ''}/api/workbooks/${cur.id}/photos.zip`;
+  $('#albumZip').href = `${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos.zip`;
   $('#albumGrid').innerHTML = '<span class="muted">加载中…</span>';
   try {
     const data = await api(`/api/workbooks/${cur.id}/photos`);
@@ -316,10 +316,10 @@ async function openAlbum() {
     if (!data.photos.length) { g.innerHTML = '<span class="muted">暂无相片，点「📷 拍照」开始。</span>'; return; }
     for (const p of data.photos) {
       const item = el(`<figure class="album-item" title="${p.path}（${(p.size / 1024).toFixed(0)} KB · ${p.mtime}）">
-        <img loading="lazy" src="${window.BASE || ''}/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}" alt="${p.path}">
+        <img loading="lazy" src="${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}" alt="${p.path}">
         <figcaption>${p.path.split('/').pop()}</figcaption></figure>`);
       item.querySelector('img').addEventListener('click', () =>
-        window.open(`${window.BASE || ''}/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}`, '_blank'));
+        window.open(`${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}`, '_blank'));
       g.appendChild(item);
     }
   } catch (err) { $('#albumGrid').innerHTML = `<span class="err">${err.message}</span>`; }

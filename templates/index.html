@@ -4,8 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>hqz-supervision · 网格填表</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.min.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/jspreadsheet.min.css">
+  <!-- jsuites/jspreadsheet 自托管（国内 jsdelivr CDN 不可靠，曾致网格页白屏） -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/jsuites.min.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/jspreadsheet.min.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -70,9 +71,9 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script>window.BASE = {{ request.script_root | tojson }};</script>
-  <script src="https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/jspreadsheet.min.js"></script>
+  <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
+  <script src="{{ url_for('static', filename='vendor/jsuites.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/jspreadsheet.min.js') }}"></script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
