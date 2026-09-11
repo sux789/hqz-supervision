@@ -56,6 +56,29 @@ $('#btnLogout').addEventListener('click', async () => {
   location.href = '/';
 });
 
+/* ── Hash 路由：#/（列表） #/wb/<id>（网格） #/wb/<id>/album（相册直达） ── */
+let loggedIn = false;
+
+function nav(hash) { if (location.hash !== hash) location.hash = hash; }
+
+async function route() {
+  if (!loggedIn) { show('login'); return; }
+  const m = location.hash.match(/^#\/wb\/(\d+)(\/album)?/);
+  if (m) {
+    const id = +m[1];
+    if (!cur || cur.id !== id) {
+      try { await openWorkbook(id, true); }
+      catch (e) { toast('打开工作簿失败：' + e.message, true); nav('#/'); return; }
+    } else show('grid');
+    if (m[2]) openAlbum();
+  } else {
+    show('list');
+    await loadList();
+  }
+}
+
+window.addEventListener('hashchange', route);
+
 /* ── 工作簿列表 ── */
 async function loadList() {
   const data = await api('/api/workbooks');
@@ -78,35 +101,16 @@ async function loadList() {
   });
 }
 
-$('#fileInput').addEventListener('change', async (e) => {
-  const files = [...e.target.files];
-  e.target.value = '';
-  for (const f of files) await uploadOne(f, $('#uploadMsg'));
-  await loadList();
-});
-
-async function uploadOne(f, msgEl) {
-  const fd = new FormData();
-  fd.append('file', f);
-  try {
-    const r = await api('/api/workbooks', { method: 'POST', body: fd });
-    toast(`已上传「${f.name}」：${r.rows} 行`);
-    if (msgEl) msgEl.textContent = '';
-  } catch (err) {
-    const m = `「${f.name}」上传失败：${err.message}`;
-    if (msgEl) msgEl.textContent = m; else toast(m, true);
-  }
-}
-
-$('#btnBack').addEventListener('click', async () => { show('list'); await loadList(); });
+$('#btnBack').addEventListener('click', () => nav('#/'));
 
 /* ── 打开工作簿：参数驱动渲染 ── */
-async function openWorkbook(id) {
+async function openWorkbook(id, fromRoute) {
   cur = await api(`/api/workbooks/${id}`);
   allRows = cur.rows.map((r) => r.map((v) => (v == null ? '' : String(v))));
   renderSearchBar();
   renderGrid();
   show('grid');
+  if (!fromRoute) nav(`#/wb/${id}`);   // 点卡片时同步地址，便于刷新/分享/调试
 }
 
 function cfgList(key) {           // 参数列表类值拆分
@@ -382,11 +386,12 @@ ${seg}
 
 /* ── 启动 ── */
 async function boot() {
-  // 探测会话：拉列表成功即已登录，401 则显示登录页
+  // 探测会话：拉列表成功即已登录，401 则显示登录页；登录后按 hash 路由直达
   try {
     await loadList();
+    loggedIn = true;
     $('#whoami').textContent = $('#whoami').dataset.user || '';
-    show('list');
+    await route();
   } catch (e) {
     show('login');
   }

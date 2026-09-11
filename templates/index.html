@@ -13,7 +13,7 @@
   <div id="viewLogin" class="center-wrap hidden">
     <form id="loginForm" class="login-card">
       <h1>网格填表</h1>
-      <p class="muted">hqz-supervision 本地预览</p>
+      <p class="muted">监督验收 · 中幼林抚育</p>
       <input id="loginUser" placeholder="用户名" autocomplete="username" required>
       <input id="loginPass" type="password" placeholder="密码" autocomplete="current-password" required>
       <button type="submit" class="btn primary">登录</button>
@@ -32,13 +32,8 @@
       <button id="btnLogout" class="btn ghost">退出</button>
     </header>
 
-    <!-- 工作簿列表 -->
+    <!-- 工作簿列表（上传在管理端 /admin，这里只选择进入） -->
     <section id="viewList" class="list-wrap">
-      <label class="upload-box">
-        <input type="file" id="fileInput" accept=".xlsx,.xlsm" multiple hidden>
-        <b>+ 上传 Excel</b><span class="muted">（需含「数据」sheet 和「参数」sheet）</span>
-      </label>
-      <div id="uploadMsg" class="err"></div>
       <div id="wbList" class="wb-list"></div>
     </section>
 
