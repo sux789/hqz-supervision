@@ -1,0 +1,51 @@
+name: Android APK
+
+# 推送 android 相关文件自动打包；也可在 Actions 页手动触发（workflow_dispatch）
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'www/**'
+      - 'package.json'
+      - 'capacitor.config.json'
+      - '.github/workflows/android-build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: JDK 17（Capacitor 6 要求）
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # capacitor.settings.gradle 引用 ../node_modules，且 assets/ 由 cap sync 再生成
+      - name: 安装依赖并同步 Capacitor
+        run: |
+          npm install --no-fund --no-audit
+          npx cap sync android
+
+      - name: Gradle 打包 Debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: 上传 APK 工件
+        uses: actions/upload-artifact@v4
+        with:
+          name: 监督验收-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
