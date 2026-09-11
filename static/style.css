@@ -82,3 +82,7 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 /* ── 轨迹记录中（B3） ── */
 #btnTrack.recording { background: #c62828; color: #fff; animation: recPulse 1.6s ease-in-out infinite; }
 @keyframes recPulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+
+/* ── 管理端参数摘要 ── */
+.param-cell { font-size: 12px; line-height: 1.7; }
+.param-cell b { color: #1a56a0; font-weight: 600; margin-right: 2px; }

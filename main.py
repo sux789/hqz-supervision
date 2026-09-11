@@ -366,7 +366,24 @@ def api_photo_zip(wid):
 @bp.route('/admin/api/workbooks', methods=['GET'])
 @admin_required
 def admin_list():
-    return api_list()
+    con = db()
+    rows = con.execute(
+        'SELECT id, name, sheet_name, uploaded_at, config FROM workbooks ORDER BY id DESC').fetchall()
+    con.close()
+    out = []
+    for r in rows:
+        cfg = json.loads(r['config'])
+        out.append({
+            'id': r['id'], 'name': r['name'], 'sheet_name': r['sheet_name'],
+            'uploaded_at': r['uploaded_at'],
+            # 参数摘要：让管理端直接看到该 Excel 决定了哪些项可编辑 / 启用了什么功能
+            # （config 中列表类 key 存的是分号分隔的原始字符串，这里归一化为数组）
+            'editable_cols': split_list(cfg.get('可编辑列')),
+            'hidden_cols': split_list(cfg.get('不显示列')),
+            'features': split_list(cfg.get('功能')),
+            'result_options': split_list(cfg.get('验收结果选项')),
+        })
+    return jsonify(workbooks=out)
 
 
 @bp.route('/admin/api/workbooks/<int:wid>/download', methods=['GET'])

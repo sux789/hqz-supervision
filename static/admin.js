@@ -23,8 +23,14 @@ async function loadWorkbooks() {
   const tb = $('#tblWb tbody');
   tb.innerHTML = '';
   for (const w of data.workbooks) {
+    const param = w.editable_cols.length
+      ? `<b>可编辑列：</b>${w.editable_cols.join('、')}`
+        + (w.hidden_cols.length ? `<br><b>隐藏列：</b>${w.hidden_cols.join('、')}` : '')
+        + (w.result_options.length ? `<br><b>验收结果：</b>${w.result_options.join(' / ')}` : '')
+        + (w.features.length ? `<br><b>功能：</b>${w.features.join('、')}` : '')
+      : '<span class="muted">参数表未配置可编辑列</span>';
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${w.name}</td><td>${w.sheet_name}</td><td>${w.uploaded_at}</td>
+    tr.innerHTML = `<td>${w.name}</td><td>${w.sheet_name}</td><td class="param-cell">${param}</td><td>${w.uploaded_at}</td>
       <td><a class="btn" href="${window.BASE || ''}/admin/api/workbooks/${w.id}/download">下载 Excel</a>
           <a class="btn" href="${window.BASE || ''}/api/workbooks/${w.id}/photos.zip">下载相片</a>
           <button class="btn danger" data-del="${w.id}">删除</button></td>`;
