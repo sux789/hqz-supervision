@@ -507,6 +507,10 @@ class _EmptyPathFix:
     def __init__(self, app):
         self.app = app
 
+    def __getattr__(self, name):
+        # gateway mount 会对工厂返回值访问 .config 等属性，必须透传给 Flask app
+        return getattr(self.app, name)
+
     def __call__(self, environ, start_response):
         if environ.get('PATH_INFO', '') == '':
             environ['PATH_INFO'] = '/'
