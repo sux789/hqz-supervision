@@ -235,6 +235,32 @@ def api_delete(wid):
     return jsonify(ok=True)
 
 
+@bp.route('/api/workbooks/<int:wid>/rows/<int:ridx>', methods=['POST'])
+@login_required
+def api_save_row(wid, ridx):
+    """单行自动保存（前端两列表单 onchange 触发，对齐 hqz-survey 编辑体验）。"""
+    vals = (request.get_json(silent=True) or {}).get('values')
+    if not isinstance(vals, list):
+        return jsonify(error='values 必须为数组'), 400
+    con = db()
+    try:
+        r = con.execute('SELECT rows FROM workbooks WHERE id=?', (wid,)).fetchone()
+        if not r:
+            abort(404)
+        rows = json.loads(r['rows'])
+        if not (0 <= ridx < len(rows)):
+            abort(404)
+        if len(vals) != len(rows[ridx]):
+            return jsonify(error=f'列数不匹配：期望 {len(rows[ridx])} 列，收到 {len(vals)}'), 400
+        rows[ridx] = [_norm_cell(v) for v in vals]
+        con.execute('UPDATE workbooks SET rows=? WHERE id=?',
+                    (json.dumps(rows, ensure_ascii=False), wid))
+        con.commit()
+    finally:
+        con.close()
+    return jsonify(ok=True)
+
+
 @bp.route('/api/workbooks/<int:wid>/save', methods=['POST'])
 @login_required
 def api_save(wid):

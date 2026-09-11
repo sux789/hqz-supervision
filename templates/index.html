@@ -22,40 +22,51 @@
     </form>
   </div>
 
-  <!-- 主体：工作簿列表 / 网格 -->
+  <!-- 主体：工作簿列表 / 小班列表 / 小班详情 -->
   <div id="viewMain" class="hidden">
     <header class="topbar">
-      <button id="btnBack" class="btn ghost hidden">← 工作簿</button>
-      <span id="pageName" class="page-name">工作簿</span>
+      <button id="btnBack" class="btn ghost hidden">←</button>
+      <span id="pageName" class="page-name"></span>
       <span class="spacer"></span>
       {% if role == 'admin' %}<a class="btn ghost" href="{{ url_for('sup.admin_page') }}">后台</a>{% endif %}
       <span id="whoami" class="muted" data-user="{{ user or '' }}"></span>
       <button id="btnLogout" class="btn ghost">退出</button>
     </header>
 
-    <!-- 工作簿列表（上传在管理端 /admin，这里只选择进入） -->
-    <section id="viewList" class="list-wrap">
+    <!-- ① 工作簿列表（上传在管理端 /admin） -->
+    <section id="viewList" class="list-wrap hidden">
+      <div id="lastChip"></div>
       <div id="wbList" class="wb-list"></div>
     </section>
 
-    <!-- 网格填表 -->
-    <section id="viewGrid" class="grid-wrap hidden">
-      <div id="searchBar" class="search-bar"></div>
-      <div class="grid-toolbar">
-        <span id="gridMeta" class="muted"></span>
+    <!-- ② 小班列表（前端本地搜索） -->
+    <section id="viewRows" class="list-wrap hidden">
+      <div class="search-bar">
+        <b style="align-self:center">搜索</b>
+        <input id="rowSearchInput" placeholder="任意字段搜索（本地过滤）" autocomplete="off">
+      </div>
+      <div id="rowMeta" class="muted" style="padding:0 14px"></div>
+      <div id="rowList" class="wb-list"></div>
+    </section>
+
+    <!-- ③ 小班详情：左标题右值表单（自动保存） + 拍照/轨迹/相片 -->
+    <section id="viewDetail" class="detail-wrap hidden">
+      <div class="detail-toolbar">
+        <span id="saveStatus" class="save-status ok">✓ 已保存</span>
         <span class="spacer"></span>
         <button id="btnPhoto" class="btn primary hidden">📷 拍照</button>
         <button id="btnTrack" class="btn primary hidden">◎ 轨迹</button>
         <button id="btnAlbum" class="btn ghost hidden">相册</button>
-        <button id="btnSave" class="btn primary">保存</button>
       </div>
-      <div id="gridEl"></div>
+      <div id="formEl"></div>
+      <div id="photoHint" class="muted photo-hint"></div>
+      <div id="rowPhotos" class="album-grid"></div>
     </section>
   </div>
 
   <input type="file" id="photoInput" accept="image/*" capture="environment" hidden>
 
-  <!-- 相册弹层 -->
+  <!-- 相册弹层（全部相片） -->
   <div id="albumMask" class="album-mask hidden">
     <div class="album-panel">
       <header class="album-head">

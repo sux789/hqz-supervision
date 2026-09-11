@@ -86,3 +86,16 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 /* ── 管理端参数摘要 ── */
 .param-cell { font-size: 12px; line-height: 1.7; }
 .param-cell b { color: #1a56a0; font-weight: 600; margin-right: 2px; }
+
+/* ── 小班详情（v0.7 两列表单，对齐 hqz-survey） ── */
+.detail-wrap { padding: 12px 14px 40px; max-width: 720px; margin: 0 auto; }
+.detail-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.save-status { font-size: 13px; min-width: 120px; }
+.save-status.ok { color: #1b7a3d; }
+.save-status.saving { color: #b26a00; }
+.save-status.err { color: #c62828; font-weight: 600; }
+.photo-hint { margin: 14px 0 8px; font-size: 12px; }
+#formEl .jss td { font-size: 14px; }
+#formEl .jss thead td { font-weight: 600; }
+#formEl .jss tbody td:first-child { background: #f7f7f7; color: #555; }
+#formEl .jss tbody td.locked { background: #f3f3f3; color: #999; }

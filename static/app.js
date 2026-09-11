@@ -1,13 +1,14 @@
-/* hqz-supervision 前端：登录 / 工作簿列表 / 参数驱动的网格填表 */
+/* hqz-supervision 前端：登录 / 工作簿列表 / 小班列表 / 两列表单（自动保存）+ 拍照轨迹 */
 'use strict';
 
 const $ = (s) => document.querySelector(s);
 const el = (h) => { const d = document.createElement('div'); d.innerHTML = h.trim(); return d.firstChild; };
 
-let grid = null;          // jspreadsheet 实例
 let cur = null;           // 当前工作簿 {id, headers, rows, config}
-let allRows = [];         // 未过滤全量行（编辑后同步）
-let selRow = -1;          // 当前点选的数据行（拍照上下文）
+let allRows = [];         // 全量行（编辑后同步）
+let curIdx = -1;          // 当前小班行索引（详情页上下文：拍照/轨迹/保存）
+let formGrid = null;      // 两列表单 jspreadsheet 实例
+let loggedIn = false;
 
 /* ── 工具 ── */
 function toast(msg, isErr) {
@@ -26,14 +27,54 @@ async function api(url, opt) {
   return body;
 }
 
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/* ── Hash 路由：#/ 工作簿列表 · #/wb/<id> 小班列表 · #/wb/<id>/r/<idx> 小班详情 ── */
+function nav(hash) { if (location.hash !== hash) location.hash = hash; }
+
+async function route() {
+  if (!loggedIn) { show('login'); return; }
+  let m = location.hash.match(/^#\/wb\/(\d+)\/r\/(\d+)$/);
+  if (m) {
+    if (!await ensureWb(+m[1])) return;
+    openDetail(+m[2]);
+    return;
+  }
+  m = location.hash.match(/^#\/wb\/(\d+)$/);
+  if (m) {
+    if (!await ensureWb(+m[1])) return;
+    show('rows');
+    renderRowsList();
+    return;
+  }
+  show('list');
+  await loadList();
+}
+
+async function ensureWb(id) {
+  if (cur && cur.id === id) return true;
+  try { cur = await api(`/api/workbooks/${id}`); }
+  catch (e) { toast('打开工作簿失败：' + e.message, true); nav('#/'); return false; }
+  allRows = cur.rows.map((r) => r.map((v) => (v == null ? '' : String(v))));
+  return true;
+}
+
+window.addEventListener('hashchange', route);
+
 /* ── 视图切换 ── */
 function show(view) {
   $('#viewLogin').classList.toggle('hidden', view !== 'login');
   $('#viewMain').classList.toggle('hidden', view === 'login');
   $('#viewList').classList.toggle('hidden', view !== 'list');
-  $('#viewGrid').classList.toggle('hidden', view !== 'grid');
-  $('#btnBack').classList.toggle('hidden', view !== 'grid');
-  $('#pageName').textContent = view === 'grid' ? (cur ? cur.name : '') : '工作簿';
+  $('#viewRows').classList.toggle('hidden', view !== 'rows');
+  $('#viewDetail').classList.toggle('hidden', view !== 'detail');
+  $('#btnBack').classList.toggle('hidden', view === 'list');
+  $('#pageName').textContent =
+    view === 'detail' ? (cur ? `${rowVal('小班号') || '详情'} · ${cur.name}` : '') :
+    view === 'rows' ? (cur ? cur.name : '') : '工作簿';
+  $('#btnBack').onclick = () => nav(view === 'detail' ? `#/wb/${cur.id}` : '#/');
 }
 
 /* ── 登录 ── */
@@ -56,132 +97,106 @@ $('#btnLogout').addEventListener('click', async () => {
   location.href = '/';
 });
 
-/* ── Hash 路由：#/（列表） #/wb/<id>（网格） #/wb/<id>/album（相册直达） ── */
-let loggedIn = false;
-
-function nav(hash) { if (location.hash !== hash) location.hash = hash; }
-
-async function route() {
-  if (!loggedIn) { show('login'); return; }
-  const m = location.hash.match(/^#\/wb\/(\d+)(\/album)?/);
-  if (m) {
-    const id = +m[1];
-    if (!cur || cur.id !== id) {
-      try { await openWorkbook(id, true); }
-      catch (e) { toast('打开工作簿失败：' + e.message, true); nav('#/'); return; }
-    } else show('grid');
-    if (m[2]) openAlbum();
-  } else {
-    show('list');
-    await loadList();
-  }
+/* ── 缓存：记住上次编辑位置（同 hqz-survey last_project 惯例） ── */
+function rememberLast() {
+  try {
+    localStorage.setItem('hqz_sup_last', JSON.stringify(
+      { wb: cur.id, idx: curIdx, name: cur.name, xh: rowVal('小班号') }));
+  } catch (e) {}
 }
 
-window.addEventListener('hashchange', route);
+function loadLast() {
+  try { return JSON.parse(localStorage.getItem('hqz_sup_last') || 'null'); } catch (e) { return null; }
+}
 
-/* ── 工作簿列表 ── */
+function rowVal(key) {
+  const i = cur.headers.indexOf(key);
+  return (curIdx >= 0 && i >= 0) ? String(allRows[curIdx][i] || '').trim() : '';
+}
+
+/* ── ① 工作簿列表 ── */
 async function loadList() {
   const data = await api('/api/workbooks');
   const box = $('#wbList');
   box.innerHTML = '';
+  const last = loadLast();
+  $('#lastChip').innerHTML = (last && data.workbooks.some((w) => w.id === last.wb))
+    ? `<div class="wb-item last-chip" id="lastItem">
+         <span class="wb-name">↩ 上次编辑：${escapeHtml(last.name)} · 小班 ${escapeHtml(last.xh || '-')}</span>
+         <span class="spacer"></span><span class="btn primary">继续</span></div>`
+    : '';
+  const li = $('#lastItem');
+  if (li) li.addEventListener('click', () => nav(`#/wb/${last.wb}/r/${last.idx}`));
   if (!data.workbooks.length) {
-    box.appendChild(el(`<div class="muted" style="padding:12px">还没有工作簿，先上传一个 Excel。</div>`));
+    box.appendChild(el(`<div class="muted" style="padding:12px">还没有工作簿，请在管理后台上传 Excel。</div>`));
   }
   for (const w of data.workbooks) {
-    box.appendChild(el(`
+    const n = el(`
       <div class="wb-item" data-id="${w.id}">
-        <span class="wb-name">${w.name}</span>
-        <span class="muted">${w.sheet_name} · ${w.uploaded_at}</span>
+        <span class="wb-name">${escapeHtml(w.name)}</span>
+        <span class="muted">${escapeHtml(w.sheet_name)} · ${escapeHtml(w.uploaded_at)}</span>
         <span class="spacer"></span>
         <span class="btn primary">打开</span>
-      </div>`));
+      </div>`);
+    n.addEventListener('click', () => nav(`#/wb/${w.id}`));
+    box.appendChild(n);
   }
-  box.querySelectorAll('.wb-item').forEach((n) => {
-    n.addEventListener('click', () => openWorkbook(+n.dataset.id));
-  });
 }
 
-$('#btnBack').addEventListener('click', () => nav('#/'));
-
-/* ── 打开工作簿：参数驱动渲染 ── */
-async function openWorkbook(id, fromRoute) {
-  cur = await api(`/api/workbooks/${id}`);
-  allRows = cur.rows.map((r) => r.map((v) => (v == null ? '' : String(v))));
-  renderSearchBar();
-  renderGrid();
-  show('grid');
-  if (!fromRoute) nav(`#/wb/${id}`);   // 点卡片时同步地址，便于刷新/分享/调试
+/* ── ② 小班列表：本地搜索 + 卡片 ── */
+function renderRowsList() {
+  const inp = $('#rowSearchInput');
+  if (!inp._bound) {
+    let h; inp.addEventListener('input', () => { clearTimeout(h); h = setTimeout(renderRowCards, 200); });
+    inp._bound = true;
+  }
+  inp.value = '';
+  renderRowCards();
 }
 
-function cfgList(key) {           // 参数列表类值拆分
+function renderRowCards() {
+  const q = ($('#rowSearchInput').value || '').trim().toLowerCase();
+  const box = $('#rowList');
+  box.innerHTML = '';
+  let shown = 0;
+  for (let i = 0; i < allRows.length && shown < 200; i++) {
+    const r = allRows[i];
+    if (q && !r.some((v) => String(v || '').toLowerCase().includes(q))) continue;
+    shown++;
+    const xhI = cur.headers.indexOf('小班号');
+    const card = el(`
+      <div class="wb-item" data-idx="${i}">
+        <span class="wb-name">${escapeHtml(String(xhI >= 0 ? (r[xhI] ?? '') : (r[0] ?? ''))) || '(未编号)'}</span>
+        <span class="muted">${escapeHtml(r.slice(0, 4).map(String).join(' / '))}</span>
+        <span class="spacer"></span>
+        <span class="btn primary">编辑</span>
+      </div>`);
+    card.addEventListener('click', () => nav(`#/wb/${cur.id}/r/${i}`));
+    box.appendChild(card);
+  }
+  $('#rowMeta').textContent = q
+    ? `匹配 ${countMatch(q)} / ${allRows.length} 行（显示前 ${shown}）`
+    : `共 ${allRows.length} 个小班${allRows.length > 200 ? '（显示前 200，请搜索缩小范围）' : ''}`;
+}
+
+function countMatch(q) {
+  let n = 0;
+  for (const r of allRows) if (r.some((v) => String(v || '').toLowerCase().includes(q))) n++;
+  return n;
+}
+
+/* ── ③ 小班详情：两列表单（标题左/值右，onchange 自动保存，无保存按钮） ── */
+function cfgList(key) {
   return (cur.config[key] || '').split(';').map((s) => s.trim()).filter(Boolean);
 }
 
-function renderSearchBar() {
-  const bar = $('#searchBar');
-  bar.innerHTML = '<b style="align-self:center">搜索</b>';
-  const items = (cur.config['搜索选项'] || '').split(';').map((s) => s.trim()).filter(Boolean);
-  items.forEach((item, i) => {
-    const [field, type] = item.split('|').map((s) => s.trim());
-    if (type === 'select') {
-      const uniq = [...new Set(allRows.map((r) => r[cur.headers.indexOf(field)]))].filter(Boolean).sort();
-      const sel = el(`<select data-i="${i}"><option value="">${field}（全部）</option>
-        ${uniq.map((v) => `<option>${v}</option>`).join('')}</select>`);
-      sel.addEventListener('change', applyFilter);
-      bar.appendChild(sel);
-    } else {                     // search：前端本地即时过滤（不发服务端请求）
-      const inp = el(`<input data-i="${i}" placeholder="${field} 搜索" autocomplete="off">`);
-      let h; inp.addEventListener('input', () => { clearTimeout(h); h = setTimeout(applyFilter, 200); });
-      bar.appendChild(inp);
-    }
-  });
-}
-
-function applyFilter() {
-  const items = (cur.config['搜索选项'] || '').split(';').map((s) => s.trim()).filter(Boolean);
-  const conds = [];
-  $('#searchBar').querySelectorAll('select,input').forEach((n) => {
-    const q = n.value.trim();
-    if (!q) return;
-    const field = items[+n.dataset.i].split('|')[0].trim();
-    conds.push({ col: cur.headers.indexOf(field), q });
-  });
-  const rows = allRows.filter((r) => conds.every(({ col, q }) =>
-    String(r[col] || '').toLowerCase().includes(q.toLowerCase())));
-  grid.setData(rows.length ? rows : [allRows[0] || []]);
-  $('#gridMeta').textContent = `${rows.length} / ${allRows.length} 行（搜索为前端本地过滤）`;
-}
-
-function renderGrid() {
-  const hide = new Set(cfgList('不显示列'));
-  const editable = new Set(cfgList('可编辑列'));
-  const optKey = Object.keys(cur.config).find((k) => k.endsWith('选项'));
-  const optCol = optKey ? optKey.slice(0, -2) : '';   // 验收结果选项 → 验收结果
-  const options = optCol ? cfgList(optKey) : [];
-
-  const columns = cur.headers.map((h) => {
-    const idx = cur.headers.indexOf(h);
-    const c = { title: h, width: Math.max(90, Math.min(200, h.length * 22)), readOnly: !editable.has(h) };
-    if (hide.has(h)) c.type = 'hidden';
-    if (h === optCol && options.length) { c.type = 'dropdown'; c.source = options; }
-    return c;
-  });
-
-  const el0 = $('#gridEl');
-  el0.innerHTML = '';
-  if (grid) { try { jspreadsheet.destroy(el0); } catch (e) {} grid = null; }
-  grid = jspreadsheet(el0, {
-    data: allRows,
-    columns,
-    minDimensions: [cur.headers.length, 1],
-    allowDeleteRow: false, allowInsertRow: false, allowInsertColumn: false, allowDeleteColumn: false,
-    allowRenameColumn: false, columnDrag: false, columnSorting: false,
-    search: false, toolbar: false, tableOverflow: true, tableWidth: '100%', lazyLoading: true,
-    onselection: (inst, x1, y1) => { selRow = y1; },
-    onload: () => { $('#gridMeta').textContent = `${allRows.length} 行 · ${cur.sheet_name}`; },
-  });
-
-  // 功能开关（参数「功能」）控制工具栏按钮
+function openDetail(idx) {
+  if (!allRows[idx]) { nav(`#/wb/${cur.id}`); return; }
+  curIdx = idx;
+  show('detail');
+  renderForm();
+  renderRowPhotos();
+  rememberLast();
   const feats = cfgList('功能');
   $('#btnPhoto').classList.toggle('hidden', !feats.includes('拍照'));
   $('#btnAlbum').classList.toggle('hidden', !feats.includes('拍照'));
@@ -189,23 +204,125 @@ function renderGrid() {
   $('#btnTrack').classList.toggle('recording', trackWatch !== null);
 }
 
-$('#btnSave').addEventListener('click', async () => {
-  const data = grid.getData();
-  // 搜索过滤状态下只回写当前全量；全量行以 allRows 为准
-  const visible = grid.getData();
+function setSaveStatus(text, cls) {
+  const s = $('#saveStatus');
+  s.textContent = text;
+  s.className = 'save-status ' + cls;
+}
+
+let saveTimer = null, saveSeq = 0;
+function scheduleRowSave() {
+  setSaveStatus('⏳ 保存中…', 'saving');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(doRowSave, 800);   // 输入停顿 0.8s 自动落库（onchange 本身含 blur 时机）
+}
+
+async function doRowSave() {
+  const seq = ++saveSeq;
   try {
-    await api(`/api/workbooks/${cur.id}/save`, {
+    await api(`/api/workbooks/${cur.id}/rows/${curIdx}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rows: visible }),
+      body: JSON.stringify({ values: allRows[curIdx] }),
     });
-    allRows = visible.map((r) => r.map((v) => (v == null ? '' : String(v))));
-    toast('已保存');
-  } catch (err) { toast('保存失败：' + err.message, true); }
+    if (seq === saveSeq) setSaveStatus('✓ 已保存', 'ok');
+  } catch (e) {
+    if (seq === saveSeq) setSaveStatus('✗ 保存失败（改动仍在页面，重新编辑即重试）', 'err');
+  }
+}
+
+function renderForm() {
+  const editable = new Set(cfgList('可编辑列'));
+  const optKey = Object.keys(cur.config).find((k) => k.endsWith('选项'));
+  const optCol = optKey ? optKey.slice(0, -2) : '';
+  const options = optCol ? cfgList(optKey) : [];
+
+  const data = cur.headers.map((h, i) => [h, allRows[curIdx][i] || '']);
+  const el0 = $('#formEl');
+  el0.innerHTML = '';
+  if (formGrid) { try { jspreadsheet.destroy(el0); } catch (e) {} formGrid = null; }
+
+  formGrid = jspreadsheet(el0, {
+    data,
+    columns: [
+      { title: '字段', width: 150, readOnly: true },
+      { title: '值', width: Math.max(200, Math.min(420, window.innerWidth - 220)), type: 'text' },
+    ],
+    contextMenu: false, allowInsertRow: false, allowManualInsertRow: false, allowDeleteRow: false,
+    allowInsertColumn: false, allowDeleteColumn: false, allowRenameColumn: false,
+    columnDrag: false, columnSorting: false, search: false, toolbar: false,
+    tableOverflow: false, tableWidth: '100%',
+    onbeforechange: (inst, cell, x, y, value) => {
+      // 非可编辑字段：直接阻止编辑（4.15 的 setReadOnly('B{n}') 字符串签名会误锁整列，弃用）
+      if (x === 1 && !editable.has(cur.headers[y])) return false;
+      return value;
+    },
+    onchange: (inst, cell, x, y, value) => {
+      if (x !== 1) return;
+      const h = cur.headers[y];
+      if (!editable.has(h)) return;                    // 双保险
+      allRows[curIdx][y] = value == null ? '' : String(value);
+      scheduleRowSave();
+    },
+    onload: () => {
+      // 非可编辑行值格：灰底视觉标识（拦截逻辑在 onbeforechange）
+      el0.querySelectorAll('tbody tr').forEach((tr, y) => {
+        if (!editable.has(cur.headers[y])) {
+          const td = tr.querySelectorAll('td')[1];
+          if (td) td.classList.add('locked');
+        }
+      });
+    },
+  });
+  // 让容器自然撑开、外层滚动（同 hqz-survey）
+  el0.style.overflow = 'visible';
+  const jss = el0.querySelector('.jss');
+  if (jss) { jss.style.overflow = 'visible'; jss.style.maxHeight = 'none'; jss.style.height = 'auto'; }
+  const tbl = el0.querySelector('table');
+  if (tbl) tbl.style.height = 'auto';
+  $('#photoHint').textContent = '📁 相片保存目录：' + (rowSubdir() || '(参数未配置目录)');
+}
+
+/* 下拉字段（验收结果选项 → 验收结果）：点击值格弹原生 select，change 即触发自动保存链 */
+document.addEventListener('click', (e) => {
+  if (!formGrid || !cur || curIdx < 0) return;
+  const optKey = Object.keys(cur.config).find((k) => k.endsWith('选项'));
+  if (!optKey) return;
+  const oy = cur.headers.indexOf(optKey.slice(0, -2));
+  if (oy < 0) return;
+  const cell = formGrid.getCell(`B${oy + 1}`);
+  if (!cell || !cell.contains(e.target) || cell.querySelector('select')) return;
+  const options = cfgList(optKey);
+  const old = allRows[curIdx][oy];
+  const sel = document.createElement('select');
+  sel.style.width = '100%';
+  sel.add(new Option('', ''));
+  options.forEach((o) => sel.add(new Option(o, o, false, o === old)));
+  cell.textContent = '';
+  cell.appendChild(sel);
+  sel.focus();
+  sel.addEventListener('change', () => {
+    const v = sel.value;
+    cell.textContent = v;
+    allRows[curIdx][oy] = v;
+    scheduleRowSave();
+  });
+  sel.addEventListener('blur', () => { cell.textContent = allRows[curIdx][oy] || ''; });
 });
 
-/* ── 拍照（B2）：参数化模板 + 固定日期水印 + 上传 ── */
-// 模板渲染：{{列名}}→行值；{{sheet名称}}→当前sheet；{{时间}}→YYYYMMDD_HHMMSS（C02 保留字）
+/* 该小班的相片子目录（参数「目录」模板渲染 + 与后端 _safe_segments 同规则清洗） */
+function sanitizeSeg(s) {
+  return s.replace(/[\\/:*?"<>|]+/g, '_').replace(/^[. ]+|[. ]+$/g, '');
+}
+
+function rowSubdir() {
+  const row = allRows[curIdx];
+  if (!row) return '';
+  return (cur.config['目录'] || '').split('/')
+    .map((s) => sanitizeSeg(renderTpl(s, row, ''))).filter(Boolean).join('/');
+}
+
+/* 模板渲染：{{列名}}→行值；{{sheet名称}}→当前sheet；{{时间}}→YYYYMMDD_HHMMSS（C02 保留字） */
 function renderTpl(tpl, row, now) {
   return (tpl || '').replace(/\{\{(.+?)\}\}/g, (_, key) => {
     key = key.trim();
@@ -216,11 +333,55 @@ function renderTpl(tpl, row, now) {
   });
 }
 
-function sanitizeSeg(s) {          // 与后端 _safe_segments 同规则
-  return s.replace(/[\\/:*?"<>|]+/g, '_').replace(/^[. ]+|[. ]+$/g, '');
+/* 该小班相片墙：按参数目录过滤 */
+async function renderRowPhotos() {
+  const g = $('#rowPhotos');
+  g.innerHTML = '<span class="muted">相片加载中…</span>';
+  try {
+    const data = await api(`/api/workbooks/${cur.id}/photos`);
+    const prefix = rowSubdir();
+    const mine = data.photos.filter((p) => !prefix || p.path.startsWith(prefix + '/'));
+    g.innerHTML = '';
+    if (!mine.length) { g.innerHTML = '<span class="muted">该小班暂无相片，点「📷 拍照」开始。</span>'; return; }
+    for (const p of mine) {
+      const item = el(`<figure class="album-item" title="${escapeHtml(p.path)}（${(p.size / 1024).toFixed(0)} KB · ${p.mtime}）">
+        <img loading="lazy" src="${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}" alt="${escapeHtml(p.path)}">
+        <figcaption>${escapeHtml(p.path.split('/').pop())}</figcaption></figure>`);
+      item.querySelector('img').addEventListener('click', () =>
+        window.open(`${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}`, '_blank'));
+      g.appendChild(item);
+    }
+  } catch (e) { g.innerHTML = `<span class="err">${e.message}</span>`; }
 }
 
-// 定位：best-effort，2.5s 拿不到就跳过（坐标行不画）
+/* ── 相册弹层（全部相片 + zip） ── */
+$('#btnAlbum').addEventListener('click', openAlbum);
+$('#albumClose').addEventListener('click', () => $('#albumMask').classList.add('hidden'));
+$('#albumMask').addEventListener('click', (e) => { if (e.target === $('#albumMask')) $('#albumMask').classList.add('hidden'); });
+
+async function openAlbum() {
+  const mask = $('#albumMask');
+  mask.classList.remove('hidden');
+  $('#albumZip').href = `${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos.zip`;
+  $('#albumGrid').innerHTML = '<span class="muted">加载中…</span>';
+  try {
+    const data = await api(`/api/workbooks/${cur.id}/photos`);
+    $('#albumMeta').textContent = `${data.photos.length} 张`;
+    const g = $('#albumGrid');
+    g.innerHTML = '';
+    if (!data.photos.length) { g.innerHTML = '<span class="muted">暂无相片。</span>'; return; }
+    for (const p of data.photos) {
+      const item = el(`<figure class="album-item" title="${escapeHtml(p.path)}">
+        <img loading="lazy" src="${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}" alt="${escapeHtml(p.path)}">
+        <figcaption>${escapeHtml(p.path)}</figcaption></figure>`);
+      item.querySelector('img').addEventListener('click', () =>
+        window.open(`${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}`, '_blank'));
+      g.appendChild(item);
+    }
+  } catch (err) { $('#albumGrid').innerHTML = `<span class="err">${err.message}</span>`; }
+}
+
+/* ── 拍照（B2）：参数化模板 + 固定日期水印 + 上传到参数目录（照片保留本地） ── */
 function getCoords() {
   return new Promise((res) => {
     if (!navigator.geolocation) return res(null);
@@ -232,8 +393,7 @@ function getCoords() {
   });
 }
 
-// 水印绘制（参考 hqz-survey app.js L3131：黑字白边，左下角，JPEG 0.92）
-// 日期行固定输出（C06：水印日期不参数化）
+// 水印（黑字白边左下角 JPEG 0.92）；日期行固定输出（C06：水印日期不参数化）
 async function drawWatermark(file, remark, coords) {
   let bmp;
   try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
@@ -244,9 +404,8 @@ async function drawWatermark(file, remark, coords) {
   ctx.drawImage(bmp, 0, 0);
   bmp.close && bmp.close();
 
-  const lines = [`日期：${new Date().toLocaleDateString('sv-SE')}`];   // sv-SE → YYYY-MM-DD
+  const lines = [`日期：${new Date().toLocaleDateString('sv-SE')}`];
   if (coords) lines.push(`坐标：${coords}`);
-  // 备注长文本按 22 字符折行，首行带前缀
   for (const [i, seg] of (remark.match(/[\s\S]{1,22}/g) || []).entries()) {
     lines.push((i === 0 ? '备注：' : '') + seg);
   }
@@ -268,16 +427,15 @@ async function drawWatermark(file, remark, coords) {
 }
 
 $('#btnPhoto').addEventListener('click', () => {
-  if (!cur || selRow < 0 || !allRows[selRow]) { toast('请先在网格中点选一行数据', true); return; }
+  if (curIdx < 0 || !allRows[curIdx]) { toast('请先选择小班', true); return; }
   $('#photoInput').click();
 });
 
 $('#photoInput').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
-  if (!file || !cur) return;
-  const row = allRows[selRow];
-  if (!row) { toast('请先在网格中点选一行数据', true); return; }
+  if (!file || curIdx < 0) return;
+  const row = allRows[curIdx];
   toast('正在处理水印…');
   try {
     const now = new Date();
@@ -288,46 +446,20 @@ $('#photoInput').addEventListener('change', async (e) => {
     const remark = renderTpl(cur.config['相片备注'] || '', row, ts);
     const blob = await drawWatermark(file, remark, coords);
     const filename = sanitizeSeg(renderTpl(cur.config['相片文件名'] || '', row, ts)) || 'photo';
-    const subdir = (cur.config['目录'] || '').split('/').map(sanitizeSeg).filter(Boolean).join('/');
+    const subdir = rowSubdir();
     const fd = new FormData();
     fd.append('file', blob, 'photo.jpg');
     fd.append('filename', filename);
     fd.append('subdir', subdir);
     const r = await api(`/api/workbooks/${cur.id}/photos`, { method: 'POST', body: fd });
     toast(`已上传：${r.path}`);
+    renderRowPhotos();
   } catch (err) { toast('拍照上传失败：' + err.message, true); }
 });
 
-/* ── 相册 ── */
-$('#btnAlbum').addEventListener('click', openAlbum);
-$('#albumClose').addEventListener('click', () => $('#albumMask').classList.add('hidden'));
-$('#albumMask').addEventListener('click', (e) => { if (e.target === $('#albumMask')) $('#albumMask').classList.add('hidden'); });
-
-async function openAlbum() {
-  const mask = $('#albumMask');
-  mask.classList.remove('hidden');
-  $('#albumZip').href = `${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos.zip`;
-  $('#albumGrid').innerHTML = '<span class="muted">加载中…</span>';
-  try {
-    const data = await api(`/api/workbooks/${cur.id}/photos`);
-    $('#albumMeta').textContent = `${data.photos.length} 张`;
-    const g = $('#albumGrid');
-    g.innerHTML = '';
-    if (!data.photos.length) { g.innerHTML = '<span class="muted">暂无相片，点「📷 拍照」开始。</span>'; return; }
-    for (const p of data.photos) {
-      const item = el(`<figure class="album-item" title="${p.path}（${(p.size / 1024).toFixed(0)} KB · ${p.mtime}）">
-        <img loading="lazy" src="${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}" alt="${p.path}">
-        <figcaption>${p.path.split('/').pop()}</figcaption></figure>`);
-      item.querySelector('img').addEventListener('click', () =>
-        window.open(`${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}`, '_blank'));
-      g.appendChild(item);
-    }
-  } catch (err) { $('#albumGrid').innerHTML = `<span class="err">${err.message}</span>`; }
-}
-
 /* ── 轨迹（B3）：watchPosition 采集 → GPX 生成 → 上传后台 ── */
-let trackWatch = null;    // watchPosition id
-let trackPts = [];        // [{lat, lng, ele, t: ISO}]
+let trackWatch = null;
+let trackPts = [];
 
 $('#btnTrack').addEventListener('click', () => (trackWatch === null ? startTrack() : stopTrack()));
 
@@ -356,9 +488,8 @@ function stopTrack() {
   const n = trackPts.length;
   if (n < 2) { trackPts = []; toast('有效定位点不足 2 个，未上传', true); return; }
   const gpx = buildGpx(trackPts);
-  const row = allRows[selRow];
-  const cls = row ? sanitizeSeg(String(row[cur.headers.indexOf('小班号')] || '').trim() || '无小班') : '无小班';
-  const name = `轨迹_${cls}_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '')}.gpx`;
+  const cls = rowVal('小班号') || '无小班';
+  const name = `轨迹_${sanitizeSeg(cls)}_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '')}.gpx`;
   const fd = new FormData();
   fd.append('file', new Blob([gpx], { type: 'application/gpx+xml' }), name);
   api('/api/track', { method: 'POST', body: fd })
@@ -386,9 +517,8 @@ ${seg}
 
 /* ── 启动 ── */
 async function boot() {
-  // 探测会话：拉列表成功即已登录，401 则显示登录页；登录后按 hash 路由直达
   try {
-    await loadList();
+    await api('/api/workbooks');
     loggedIn = true;
     $('#whoami').textContent = $('#whoami').dataset.user || '';
     await route();
