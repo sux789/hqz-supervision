@@ -1,0 +1,9 @@
+code: supervision
+name: 监督验收
+prefix: /supervision
+root: /home/www/bibook_deploy/apps/supervision
+factory: main:create_app
+static_url_path: /supervision/static
+auth: global
+description: 通用Excel网格填表+拍照轨迹
+enabled: true

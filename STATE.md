@@ -2,10 +2,11 @@
 
 > 每次迭代后更新，≤25 行。跨会话恢复先读本文件，不翻 doc/ 归档。
 
-- **版本**：v0.5 ｜ **更新**：2026-09-11
+- **版本**：v0.6 ｜ **更新**：2026-09-11
 - **能跑**：`python main.py` → http://127.0.0.1:8720（雷华雄/lhx123 登录）：上传 Excel→列表选择→参数驱动网格填表→保存；后台 /admin 模板管理+下载 Excel+轨迹下载
 - **已知问题**：admin 端无相片/轨迹在线预览（仅 zip 下载）；轨迹记录不支持后台运行（页面切换即停）
-- **下一步**：1. [ ] 部署 forest.bibook.top/supervision（Android 壳 server.url 就绪，CI 已能出 APK） 2. [ ] 正式签名 keystore + release 构建 3. [ ] 网格交互打磨
+- **能跑**：https://forest.bibook.top/supervision 已上线（gateway 挂载，账号 雷华雄/lhx123）；./deploy.sh 一键部署
+- **下一步**：1. [ ] 正式签名 keystore + CI release 构建 2. [ ] 网格交互打磨 3. [ ] 轨迹后台运行（Capacitor 插件，可选）
 - **最近迭代文档**：doc/004-后台与账号需求.md（轻后端架构反转 doc/003、账号 C05、水印日期 C06）
 - **活跃约束**：C01–C06（详见 CONSTRAINTS.md）
 

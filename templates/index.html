@@ -27,7 +27,7 @@
       <button id="btnBack" class="btn ghost hidden">← 工作簿</button>
       <span id="pageName" class="page-name">工作簿</span>
       <span class="spacer"></span>
-      {% if role == 'admin' %}<a class="btn ghost" href="/admin">后台</a>{% endif %}
+      {% if role == 'admin' %}<a class="btn ghost" href="{{ url_for('sup.admin_page') }}">后台</a>{% endif %}
       <span id="whoami" class="muted" data-user="{{ user or '' }}"></span>
       <button id="btnLogout" class="btn ghost">退出</button>
     </header>
@@ -75,6 +75,7 @@
 
   <div id="toast" class="toast hidden"></div>
 
+  <script>window.BASE = {{ request.script_root | tojson }};</script>
   <script src="https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/jspreadsheet.min.js"></script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>

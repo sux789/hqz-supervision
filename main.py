@@ -16,8 +16,8 @@ from functools import wraps
 from pathlib import Path
 
 import openpyxl
-from flask import (Flask, abort, jsonify, redirect, render_template, request,
-                   send_file, session, url_for)
+from flask import (Blueprint, Flask, abort, jsonify, redirect, render_template,
+                   request, send_file, session, url_for)
 
 from param_parser import ParamError, _s, parse_params, split_list
 
@@ -31,8 +31,7 @@ for d in (UPLOAD_DIR, TRACK_DIR):
 
 PORT = 8720  # 独立端口（C03：不与 hqz-survey / hqz-cam-app 冲突）
 
-app = Flask(__name__)
-app.secret_key = 'hqz-supervision-local-preview-key'
+bp = Blueprint('sup', __name__)
 
 # ────────────────────────── 基础设施 ──────────────────────────
 
@@ -84,14 +83,14 @@ def admin_required(f):
 
 # ────────────────────────── 页面路由 ──────────────────────────
 
-@app.route('/')
+@bp.route('/')
 def index():
     if not session.get('user'):
         return render_template('index.html', user=None)
     return render_template('index.html', user=session['user'], role=session.get('role'))
 
 
-@app.route('/admin')
+@bp.route('/admin')
 def admin_page():
     if not session.get('user') or session.get('role') != 'admin':
         return redirect(url_for('index'))
@@ -100,7 +99,7 @@ def admin_page():
 
 # ────────────────────────── 认证 API ──────────────────────────
 
-@app.route('/api/login', methods=['POST'])
+@bp.route('/api/login', methods=['POST'])
 def api_login():
     data = request.get_json(force=True)
     username = (data.get('username') or '').strip()
@@ -115,7 +114,7 @@ def api_login():
     return jsonify(ok=True, role=row['role'])
 
 
-@app.route('/api/logout', methods=['POST'])
+@bp.route('/api/logout', methods=['POST'])
 def api_logout():
     session.clear()
     return jsonify(ok=True)
@@ -179,7 +178,7 @@ def parse_workbook_storage(stream):
         wb.close()
 
 
-@app.route('/api/workbooks', methods=['GET'])
+@bp.route('/api/workbooks', methods=['GET'])
 @login_required
 def api_list():
     con = db()
@@ -189,7 +188,7 @@ def api_list():
     return jsonify(workbooks=[dict(r) for r in rows])
 
 
-@app.route('/api/workbooks', methods=['POST'])
+@bp.route('/api/workbooks', methods=['POST'])
 @login_required
 def api_upload():
     fs = request.files.get('file')
@@ -213,7 +212,7 @@ def api_upload():
     return jsonify(ok=True, id=wid, rows=len(rows))
 
 
-@app.route('/api/workbooks/<int:wid>', methods=['GET'])
+@bp.route('/api/workbooks/<int:wid>', methods=['GET'])
 @login_required
 def api_get(wid):
     con = db()
@@ -226,7 +225,7 @@ def api_get(wid):
                    config=json.loads(r['config']))
 
 
-@app.route('/api/workbooks/<int:wid>', methods=['DELETE'])
+@bp.route('/api/workbooks/<int:wid>', methods=['DELETE'])
 @admin_required
 def api_delete(wid):
     con = db()
@@ -236,7 +235,7 @@ def api_delete(wid):
     return jsonify(ok=True)
 
 
-@app.route('/api/workbooks/<int:wid>/save', methods=['POST'])
+@bp.route('/api/workbooks/<int:wid>/save', methods=['POST'])
 @login_required
 def api_save(wid):
     rows = request.get_json(force=True).get('rows')
@@ -255,7 +254,7 @@ def api_save(wid):
 
 # ────────────────────────── 轨迹（B3 前端接入） ──────────────────────────
 
-@app.route('/api/track', methods=['POST'])
+@bp.route('/api/track', methods=['POST'])
 @login_required
 def api_track():
     fs = request.files.get('file')
@@ -286,7 +285,7 @@ def _photo_root(wid):
     return UPLOAD_DIR / str(wid) / 'photos'
 
 
-@app.route('/api/workbooks/<int:wid>/photos', methods=['POST'])
+@bp.route('/api/workbooks/<int:wid>/photos', methods=['POST'])
 @login_required
 def api_photo_upload(wid):
     con = db()
@@ -320,7 +319,7 @@ def api_photo_upload(wid):
     return jsonify(ok=True, path=rel)
 
 
-@app.route('/api/workbooks/<int:wid>/photos', methods=['GET'])
+@bp.route('/api/workbooks/<int:wid>/photos', methods=['GET'])
 @login_required
 def api_photo_list(wid):
     root = _photo_root(wid)
@@ -333,7 +332,7 @@ def api_photo_list(wid):
     return jsonify(photos=photos)
 
 
-@app.route('/api/workbooks/<int:wid>/photos/file/<path:rel>', methods=['GET'])
+@bp.route('/api/workbooks/<int:wid>/photos/file/<path:rel>', methods=['GET'])
 @login_required
 def api_photo_file(wid, rel):
     try:
@@ -346,7 +345,7 @@ def api_photo_file(wid, rel):
     return send_file(path, mimetype='image/jpeg')
 
 
-@app.route('/api/workbooks/<int:wid>/photos.zip', methods=['GET'])
+@bp.route('/api/workbooks/<int:wid>/photos.zip', methods=['GET'])
 @login_required
 def api_photo_zip(wid):
     root = _photo_root(wid)
@@ -364,13 +363,13 @@ def api_photo_zip(wid):
 
 # ────────────────────────── 管理后台 API ──────────────────────────
 
-@app.route('/admin/api/workbooks', methods=['GET'])
+@bp.route('/admin/api/workbooks', methods=['GET'])
 @admin_required
 def admin_list():
     return api_list()
 
 
-@app.route('/admin/api/workbooks/<int:wid>/download', methods=['GET'])
+@bp.route('/admin/api/workbooks/<int:wid>/download', methods=['GET'])
 @admin_required
 def admin_download(wid):
     con = db()
@@ -402,14 +401,14 @@ def admin_download(wid):
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-@app.route('/admin/api/tracks', methods=['GET'])
+@bp.route('/admin/api/tracks', methods=['GET'])
 @admin_required
 def admin_tracks():
     files = sorted(TRACK_DIR.glob('*.gpx'), reverse=True)
     return jsonify(tracks=[{'file': f.name, 'size': f.stat().st_size} for f in files])
 
 
-@app.route('/admin/api/tracks.zip', methods=['GET'])
+@bp.route('/admin/api/tracks.zip', methods=['GET'])
 @admin_required
 def admin_tracks_zip():
     buf = io.BytesIO()
@@ -420,7 +419,7 @@ def admin_tracks_zip():
     return send_file(buf, as_attachment=True, download_name='轨迹导出.zip', mimetype='application/zip')
 
 
-@app.route('/admin/api/tracks/<path:name>', methods=['GET'])
+@bp.route('/admin/api/tracks/<path:name>', methods=['GET'])
 @admin_required
 def admin_track_dl(name):
     path = (TRACK_DIR / Path(name).name)
@@ -429,8 +428,24 @@ def admin_track_dl(name):
     return send_file(path, as_attachment=True, download_name=path.name)
 
 
+def create_app(prefix=''):
+    """Flask 工厂。gateway 约定 create_app(prefix=spec['prefix'])；
+    本地预览 prefix=''（路由在根路径）。
+    注意：gateway DispatcherMiddleware 已设 SCRIPT_NAME 剥前缀，路由不挂 url_prefix
+    （否则双重前缀 404）；static 用默认 /static 规则（剥离后正好命中）；
+    prefix 仅用于 session cookie 限定。
+    """
+    app = Flask(__name__)
+    app.secret_key = 'hqz-supervision-local-preview-key'
+    if prefix:
+        app.config['APPLICATION_ROOT'] = prefix      # session cookie 限定本应用前缀
+        app.config['PREFERRED_URL_SCHEME'] = 'https'
+    app.register_blueprint(bp)
+    return app
+
+
 init_db()
 
 if __name__ == '__main__':
     print(f'hqz-supervision 本地预览 → http://127.0.0.1:{PORT} （不影响其他业务）')
-    app.run(host='127.0.0.1', port=PORT, debug=False)
+    create_app().run(host='127.0.0.1', port=PORT, debug=False)

@@ -17,7 +17,7 @@ android/                   # cap add android 生成的原生工程（已提交�
 |---|---|---|
 | appId | top.bibook.survey | **top.bibook.supervision** |
 | appName | 验收APP | **监督验收** |
-| server.url | https://forest.bibook.top/survey | **https://forest.bibook.top/supervision**（部署后启用） |
+| server.url | https://forest.bibook.top/survey | **https://forest.bibook.top/supervision**（已上线 v0.6） |
 | 前端桥接 | waitForCapacitor() 等 bridge 注入 | 同款约定（B2 拍照/B3 轨迹沿用） |
 
 ## 3. 构建步骤（需装有 Android Studio / SDK 的机器）
