@@ -321,9 +321,6 @@ async function doRowSave() {
 
 function renderForm() {
   const editable = new Set(cfgList('可编辑列'));
-  const optKey = Object.keys(cur.config).find((k) => k.endsWith('选项'));
-  const optCol = optKey ? optKey.slice(0, -2) : '';
-  const options = optCol ? cfgList(optKey) : [];
 
   const data = cur.headers.map((h, i) => [h, allRows[curIdx][i] || '']);
   const el0 = $('#formEl');
@@ -371,10 +368,17 @@ function renderForm() {
   $('#photoHint').textContent = '📁 相片保存目录：' + (rowSubdir() || '(参数未配置目录)');
 }
 
+/* 解析下拉选项键：形如「XX选项」且 XX 是真实表头列（排除「搜索选项」控件映射键）。
+   坑：简单 endsWith('选项') 会先命中「搜索选项」（v0.7 遗留 bug，下拉从未弹出） */
+function resultOptKey() {
+  return Object.keys(cur.config).find((k) =>
+    k.endsWith('选项') && k !== '搜索选项' && cur.headers.includes(k.slice(0, -2)));
+}
+
 /* 下拉字段（验收结果选项 → 验收结果）：点击值格弹原生 select，change 即触发自动保存链 */
 document.addEventListener('click', (e) => {
   if (!formGrid || !cur || curIdx < 0) return;
-  const optKey = Object.keys(cur.config).find((k) => k.endsWith('选项'));
+  const optKey = resultOptKey();
   if (!optKey) return;
   const oy = cur.headers.indexOf(optKey.slice(0, -2));
   if (oy < 0) return;
@@ -393,10 +397,36 @@ document.addEventListener('click', (e) => {
     const v = sel.value;
     cell.textContent = v;
     allRows[curIdx][oy] = v;
+    try { formGrid.setValueFromCoords(1, oy, v); } catch (e) {}   // 同步内部数据（否则网格数据与 allRows 脱节）
+    if (v) autoFillOnResult(oy);      // 内置规则：选中结果选项 → 自动填验收人+验收日期
     scheduleRowSave();
   });
   sel.addEventListener('blur', () => { cell.textContent = allRows[curIdx][oy] || ''; });
 });
+
+/* 内置联动规则（通用，非本模板硬编码）：
+   任何「*选项」下拉列选中非空值时，自动填充：
+   - 验收人 = 当前登录用户（存在该列时）
+   - 验收日期（或 验收时间）= 今天 YYYY-MM-DD（存在该列时）
+   已有值会被覆盖（选结果的人即验收人，最后操作者生效） */
+function autoFillOnResult(resultColIdx) {
+  const user = ($('#whoami').dataset.user || '').trim();
+  const today = new Date().toLocaleDateString('sv-SE');
+  const fill = (colName, val) => {
+    const ci = cur.headers.indexOf(colName);
+    if (ci < 0 || ci === resultColIdx) return false;
+    if (allRows[curIdx][ci] === val) return false;
+    allRows[curIdx][ci] = val;
+    try { formGrid.setValueFromCoords(1, ci, val); } catch (e) {}
+    return true;
+  };
+  let filled = false;
+  if (user) filled = fill('验收人', user) || filled;
+  let di = cur.headers.indexOf('验收日期');
+  if (di < 0) di = cur.headers.indexOf('验收时间');
+  if (di >= 0) filled = fill(di >= 0 ? cur.headers[di] : '', today) || filled;
+  if (filled) toast('已自动填入验收人/验收日期');
+}
 
 /* 该小班的相片子目录（参数「目录」模板渲染 + 与后端 _safe_segments 同规则清洗） */
 function sanitizeSeg(s) {
