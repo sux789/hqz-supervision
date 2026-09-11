@@ -93,7 +93,7 @@ def index():
 @bp.route('/admin')
 def admin_page():
     if not session.get('user') or session.get('role') != 'admin':
-        return redirect(url_for('index'))
+        return redirect(url_for('sup.index'))
     return render_template('admin.html', user=session['user'])
 
 
@@ -492,7 +492,25 @@ def create_app(prefix=''):
         app.config['APPLICATION_ROOT'] = prefix      # session cookie 限定本应用前缀
         app.config['PREFERRED_URL_SCHEME'] = 'https'
     app.register_blueprint(bp)
-    return app
+    return _EmptyPathFix(app)
+
+
+class _EmptyPathFix:
+    """网关 DispatcherMiddleware 剥前缀后 PATH_INFO 可能为空串（如 GET /supervision），
+    werkzeug 会 308「补斜杠」且 Location 用 environ 的明文 scheme 拼成
+    http://forest.bibook.top/supervision/ —— Android WebView 直接
+    net::ERR_CLEARTEXT_NOT_PERMITTED（2026-09-11 v0.7.2 APK 实测踩坑）。
+    空路径归一为 /，直接命中首页，绕开重定向（浏览器也少一跳）。
+    nginx 在容器内无权改，故在应用层根治；hqz-survey 同架构同坑（其用
+    usesCleartextTraffic=true 掩盖，本项目不走明文）。"""
+
+    def __init__(self, app):
+        self.app = app
+
+    def __call__(self, environ, start_response):
+        if environ.get('PATH_INFO', '') == '':
+            environ['PATH_INFO'] = '/'
+        return self.app(environ, start_response)
 
 
 init_db()

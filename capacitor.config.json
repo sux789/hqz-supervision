@@ -4,7 +4,7 @@
   "webDir": "www",
   "backgroundColor": "#2e7d32",
   "server": {
-    "url": "https://forest.bibook.top/supervision",
+    "url": "https://forest.bibook.top/supervision/",
     "allowNavigation": ["forest.bibook.top", "www.bibook.top"],
     "cleartext": false
   }
