@@ -39,18 +39,10 @@
       <div id="wbList" class="wb-list"></div>
     </section>
 
-    <!-- ② 小班列表（前端本地搜索） -->
-    <section id="viewRows" class="list-wrap hidden">
-      <div class="search-bar">
-        <b style="align-self:center">搜索</b>
-        <input id="rowSearchInput" placeholder="任意字段搜索（本地过滤）" autocomplete="off">
-      </div>
-      <div id="rowMeta" class="muted" style="padding:0 14px"></div>
-      <div id="rowList" class="wb-list"></div>
-    </section>
-
-    <!-- ③ 小班详情：左标题右值表单（自动保存） + 拍照/轨迹/相片 -->
+    <!-- ② 单页编辑：顶部搜索栏（搜索选项驱动 select/search）+ 两列表单（自动保存）+ 拍照/轨迹/相片 -->
     <section id="viewDetail" class="detail-wrap hidden">
+      <div id="selectorBar" class="selector-bar"></div>
+      <div id="selMeta" class="muted sel-meta"></div>
       <div class="detail-toolbar">
         <span id="saveStatus" class="save-status ok">✓ 已保存</span>
         <span class="spacer"></span>

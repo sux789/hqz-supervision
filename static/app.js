@@ -1,4 +1,4 @@
-/* hqz-supervision 前端：登录 / 工作簿列表 / 小班列表 / 两列表单（自动保存）+ 拍照轨迹 */
+/* hqz-supervision 前端：登录 / 工作簿列表 / 单页编辑（搜索栏+两列表单自动保存）+ 拍照轨迹 */
 'use strict';
 
 const $ = (s) => document.querySelector(s);
@@ -31,7 +31,7 @@ function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-/* ── Hash 路由：#/ 工作簿列表 · #/wb/<id> 小班列表 · #/wb/<id>/r/<idx> 小班详情 ── */
+/* ── Hash 路由：#/ 工作簿列表 · #/wb/<id> 单页编辑（默认上次小班） · #/wb/<id>/r/<idx> 指定小班 ── */
 function nav(hash) { if (location.hash !== hash) location.hash = hash; }
 
 async function route() {
@@ -45,8 +45,9 @@ async function route() {
   m = location.hash.match(/^#\/wb\/(\d+)$/);
   if (m) {
     if (!await ensureWb(+m[1])) return;
-    show('rows');
-    renderRowsList();
+    const last = loadLast();
+    const idx = (last && last.wb === cur.id && allRows[last.idx]) ? last.idx : 0;
+    openDetail(idx);
     return;
   }
   show('list');
@@ -68,13 +69,11 @@ function show(view) {
   $('#viewLogin').classList.toggle('hidden', view !== 'login');
   $('#viewMain').classList.toggle('hidden', view === 'login');
   $('#viewList').classList.toggle('hidden', view !== 'list');
-  $('#viewRows').classList.toggle('hidden', view !== 'rows');
   $('#viewDetail').classList.toggle('hidden', view !== 'detail');
   $('#btnBack').classList.toggle('hidden', view === 'list');
   $('#pageName').textContent =
-    view === 'detail' ? (cur ? `${rowVal('小班号') || '详情'} · ${cur.name}` : '') :
-    view === 'rows' ? (cur ? cur.name : '') : '工作簿';
-  $('#btnBack').onclick = () => nav(view === 'detail' ? `#/wb/${cur.id}` : '#/');
+    view === 'detail' ? (cur ? `${rowVal('小班号') || '详情'} · ${cur.name}` : '') : '工作簿';
+  $('#btnBack').onclick = () => nav('#/');
 }
 
 /* ── 登录 ── */
@@ -143,57 +142,146 @@ async function loadList() {
   }
 }
 
-/* ── ② 小班列表：本地搜索 + 卡片 ── */
-function renderRowsList() {
-  const inp = $('#rowSearchInput');
-  if (!inp._bound) {
-    let h; inp.addEventListener('input', () => { clearTimeout(h); h = setTimeout(renderRowCards, 200); });
-    inp._bound = true;
-  }
-  inp.value = '';
-  renderRowCards();
-}
-
-function renderRowCards() {
-  const q = ($('#rowSearchInput').value || '').trim().toLowerCase();
-  const box = $('#rowList');
-  box.innerHTML = '';
-  let shown = 0;
-  for (let i = 0; i < allRows.length && shown < 200; i++) {
-    const r = allRows[i];
-    if (q && !r.some((v) => String(v || '').toLowerCase().includes(q))) continue;
-    shown++;
-    const xhI = cur.headers.indexOf('小班号');
-    const card = el(`
-      <div class="wb-item" data-idx="${i}">
-        <span class="wb-name">${escapeHtml(String(xhI >= 0 ? (r[xhI] ?? '') : (r[0] ?? ''))) || '(未编号)'}</span>
-        <span class="muted">${escapeHtml(r.slice(0, 4).map(String).join(' / '))}</span>
-        <span class="spacer"></span>
-        <span class="btn primary">编辑</span>
-      </div>`);
-    card.addEventListener('click', () => nav(`#/wb/${cur.id}/r/${i}`));
-    box.appendChild(card);
-  }
-  $('#rowMeta').textContent = q
-    ? `匹配 ${countMatch(q)} / ${allRows.length} 行（显示前 ${shown}）`
-    : `共 ${allRows.length} 个小班${allRows.length > 200 ? '（显示前 200，请搜索缩小范围）' : ''}`;
-}
-
-function countMatch(q) {
-  let n = 0;
-  for (const r of allRows) if (r.some((v) => String(v || '').toLowerCase().includes(q))) n++;
-  return n;
-}
-
-/* ── ③ 小班详情：两列表单（标题左/值右，onchange 自动保存，无保存按钮） ── */
+/* ── 参数取值：分号拆列表 ── */
 function cfgList(key) {
   return (cur.config[key] || '').split(';').map((s) => s.trim()).filter(Boolean);
 }
 
+/* ── ② 单页编辑：顶部搜索栏（参数「搜索选项」驱动：字段|select 下拉 / 字段|search 文本唯一选中）──
+   选中即在本页下方直接切换编辑表单，无列表跳转页。 */
+let selState = {};        // 搜索栏当前值 {字段名: value}（search 字段存的是已选中的值）
+let selCfg = [];          // 解析后的控件配置 [{field, type}]
+
+function parseSelCfg() {
+  selCfg = cfgList('搜索选项').map((s) => {
+    const p = s.split('|');
+    return { field: (p[0] || '').trim(), type: (p[1] || 'search').trim() };
+  }).filter((c) => c.field && cur.headers.includes(c.field));
+  if (!selCfg.length) {   // 兜底：未配置时用「小班号」搜索，再退到第一列
+    const f = cur.headers.includes('小班号') ? '小班号' : cur.headers[0];
+    selCfg = [{ field: f, type: 'search' }];
+  }
+}
+
+function uniqueVals(field) {
+  const ci = cur.headers.indexOf(field);
+  const set = new Set();
+  for (const r of allRows) { const v = String(r[ci] ?? '').trim(); if (v) set.add(v); }
+  return [...set].sort((a, b) => a.localeCompare(b, 'zh'));
+}
+
+/* 按搜索栏（select 字段）过滤候选行索引 */
+function candidateIdxs() {
+  let idxs = allRows.map((_, i) => i);
+  for (const c of selCfg) {
+    if (c.type !== 'select') continue;
+    const v = selState[c.field];
+    if (!v) continue;
+    const ci = cur.headers.indexOf(c.field);
+    idxs = idxs.filter((i) => String(allRows[i][ci] ?? '').trim() === v);
+  }
+  return idxs;
+}
+
+function syncSelectorToRow(idx) {
+  for (const c of selCfg) {
+    const ci = cur.headers.indexOf(c.field);
+    selState[c.field] = String(allRows[idx][ci] ?? '').trim();
+  }
+  renderSelectorBar();
+}
+
+function renderSelectorBar() {
+  const bar = $('#selectorBar');
+  bar.innerHTML = '';
+  for (const c of selCfg) {
+    const wrap = el(`<div class="sel-field"><label>${escapeHtml(c.field)}${c.type === 'search' ? '（输入筛选，点击选中）' : ''}</label></div>`);
+    if (c.type === 'select') {
+      const sel = document.createElement('select');
+      sel.add(new Option('全部', ''));
+      uniqueVals(c.field).forEach((v) => sel.add(new Option(v, v, false, selState[c.field] === v)));
+      sel.addEventListener('change', () => {
+        selState[c.field] = sel.value;
+        const cands = candidateIdxs();
+        if (cands.length === 1) jumpRow(cands[0]);
+        else if (cands.length && !cands.includes(curIdx)) jumpRow(cands[0]);
+        else updateSelMeta();
+      });
+      wrap.appendChild(sel);
+    } else {
+      const inp = document.createElement('input');
+      inp.placeholder = `搜索${c.field}…`;
+      inp.autocomplete = 'off';
+      inp.value = selState[c.field] || '';
+      const sug = el(`<div class="sel-suggest hidden"></div>`);
+      wrap.appendChild(inp); wrap.appendChild(sug);
+
+      const showSug = () => {
+        const q = inp.value.trim().toLowerCase();
+        // 候选 = search 字段本身模糊匹配 + 其它 select 字段已选条件
+        const pre = candidateIdxs();
+        const ci = cur.headers.indexOf(c.field);
+        const hits = [];
+        for (const i of pre) {
+          const v = String(allRows[i][ci] ?? '').trim();
+          if (v && (!q || v.toLowerCase().includes(q)) && !hits.some((h) => h.v === v)) hits.push({ v, i });
+          if (hits.length >= 50) break;
+        }
+        sug.innerHTML = '';
+        if (!hits.length) {
+          sug.appendChild(el(`<div class="sg-empty">无匹配${escapeHtml(c.field)}</div>`));
+        } else {
+          for (const h of hits) {
+            const item = el(`<div class="sg-item">${escapeHtml(h.v)}</div>`);
+            item.addEventListener('mousedown', (e) => {   // mousedown 先于 blur
+              e.preventDefault();
+              jumpRow(h.i);
+            });
+            sug.appendChild(item);
+          }
+        }
+        sug.classList.remove('hidden');
+      };
+      inp.addEventListener('input', showSug);
+      inp.addEventListener('focus', showSug);
+      inp.addEventListener('blur', () => setTimeout(() => sug.classList.add('hidden'), 120));
+      inp.addEventListener('keydown', (e) => {        // 回车选中唯一匹配
+        if (e.key !== 'Enter') return;
+        const q = inp.value.trim().toLowerCase();
+        const ci = cur.headers.indexOf(c.field);
+        const exact = candidateIdxs().filter((i) => String(allRows[i][ci] ?? '').trim().toLowerCase() === q);
+        if (exact.length === 1) { jumpRow(exact[0]); } else showSug();
+      });
+    }
+    bar.appendChild(wrap);
+  }
+  updateSelMeta();
+}
+
+function updateSelMeta() {
+  const cands = candidateIdxs();
+  const xh = rowVal('小班号');
+  $('#selMeta').innerHTML = allRows.length
+    ? `匹配 ${cands.length} / ${allRows.length} 个小班 · 当前：<span class="cur-xh">${escapeHtml(xh || '(未编号)')}</span>`
+    : '该工作簿没有数据行';
+}
+
+function jumpRow(idx) {
+  if (!allRows[idx]) return;
+  curIdx = idx;
+  syncSelectorToRow(idx);
+  renderForm();
+  renderRowPhotos();
+  rememberLast();
+  $('#pageName').textContent = `${rowVal('小班号') || '详情'} · ${cur.name}`;
+}
+
 function openDetail(idx) {
-  if (!allRows[idx]) { nav(`#/wb/${cur.id}`); return; }
+  if (!allRows[idx]) { nav('#/'); return; }
   curIdx = idx;
   show('detail');
+  if (!selCfg.length) parseSelCfg();
+  syncSelectorToRow(idx);
   renderForm();
   renderRowPhotos();
   rememberLast();
