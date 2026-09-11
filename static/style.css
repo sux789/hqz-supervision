@@ -78,3 +78,7 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .album-item { margin: 0; }
 .album-item img { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: 6px; cursor: zoom-in; background: #f2f2f2; }
 .album-item figcaption { font-size: 11px; color: #666; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── 轨迹记录中（B3） ── */
+#btnTrack.recording { background: #c62828; color: #fff; animation: recPulse 1.6s ease-in-out infinite; }
+@keyframes recPulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }

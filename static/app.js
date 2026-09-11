@@ -181,6 +181,8 @@ function renderGrid() {
   const feats = cfgList('功能');
   $('#btnPhoto').classList.toggle('hidden', !feats.includes('拍照'));
   $('#btnAlbum').classList.toggle('hidden', !feats.includes('拍照'));
+  $('#btnTrack').classList.toggle('hidden', !feats.includes('轨迹'));
+  $('#btnTrack').classList.toggle('recording', trackWatch !== null);
 }
 
 $('#btnSave').addEventListener('click', async () => {
@@ -317,6 +319,65 @@ async function openAlbum() {
       g.appendChild(item);
     }
   } catch (err) { $('#albumGrid').innerHTML = `<span class="err">${err.message}</span>`; }
+}
+
+/* ── 轨迹（B3）：watchPosition 采集 → GPX 生成 → 上传后台 ── */
+let trackWatch = null;    // watchPosition id
+let trackPts = [];        // [{lat, lng, ele, t: ISO}]
+
+$('#btnTrack').addEventListener('click', () => (trackWatch === null ? startTrack() : stopTrack()));
+
+function startTrack() {
+  if (!navigator.geolocation) { toast('当前环境不支持定位', true); return; }
+  trackPts = [];
+  trackWatch = navigator.geolocation.watchPosition((p) => {
+    trackPts.push({
+      lat: p.coords.latitude, lng: p.coords.longitude,
+      ele: p.coords.altitude == null ? null : p.coords.altitude,
+      t: new Date(p.timestamp).toISOString().replace(/\.\d+Z$/, 'Z'),
+    });
+    $('#btnTrack').textContent = `● 记录中 ${trackPts.length} 点`;
+  }, (err) => toast('定位失败：' + err.message, true),
+    { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 });
+  $('#btnTrack').classList.add('recording');
+  $('#btnTrack').textContent = '● 记录中 0 点';
+  toast('轨迹记录已开始，走完点「◎ 轨迹」停止并上传');
+}
+
+function stopTrack() {
+  navigator.geolocation.clearWatch(trackWatch);
+  trackWatch = null;
+  $('#btnTrack').classList.remove('recording');
+  $('#btnTrack').textContent = '◎ 轨迹';
+  const n = trackPts.length;
+  if (n < 2) { trackPts = []; toast('有效定位点不足 2 个，未上传', true); return; }
+  const gpx = buildGpx(trackPts);
+  const row = allRows[selRow];
+  const cls = row ? sanitizeSeg(String(row[cur.headers.indexOf('小班号')] || '').trim() || '无小班') : '无小班';
+  const name = `轨迹_${cls}_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '')}.gpx`;
+  const fd = new FormData();
+  fd.append('file', new Blob([gpx], { type: 'application/gpx+xml' }), name);
+  api('/api/track', { method: 'POST', body: fd })
+    .then((r) => toast(`轨迹已上传：${r.file}（${n} 点）`))
+    .catch((err) => toast('轨迹上传失败：' + err.message, true));
+  trackPts = [];
+}
+
+function buildGpx(pts) {
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const seg = pts.map((p) =>
+    `      <trkpt lat="${p.lat.toFixed(6)}" lng="${p.lng.toFixed(6)}">` +
+    (p.ele != null ? `<ele>${p.ele.toFixed(1)}</ele>` : '') +
+    `<time>${p.t}</time></trkpt>`).join('\n');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="hqz-supervision" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>${esc(cur ? cur.name + ' · ' + cur.sheet_name : '轨迹')}</name>
+    <time>${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</time></metadata>
+  <trk><name>${esc(cur ? cur.sheet_name : '')}</name>
+    <trkseg>
+${seg}
+    </trkseg></trk>
+</gpx>`;
 }
 
 /* ── 启动 ── */
