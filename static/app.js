@@ -365,7 +365,8 @@ function renderForm() {
   if (jss) { jss.style.overflow = 'visible'; jss.style.maxHeight = 'none'; jss.style.height = 'auto'; }
   const tbl = el0.querySelector('table');
   if (tbl) tbl.style.height = 'auto';
-  $('#photoHint').textContent = '📁 相片保存目录：' + (rowSubdir() || '(参数未配置目录)');
+  $('#photoHint').textContent = (isNativeApp() ? '📁 相册保存目录：Pictures/' : '📁 服务器保存目录：')
+    + (rowSubdir() || '(参数未配置目录)');
 }
 
 /* 解析下拉选项键：形如「XX选项」且 XX 是真实表头列（排除「搜索选项」控件映射键）。
@@ -549,6 +550,21 @@ $('#btnPhoto').addEventListener('click', () => {
   $('#photoInput').click();
 });
 
+/* App 壳判定与 blob→base64（供原生 savePhoto 写相册，同 hqz-survey） */
+function isNativeApp() {
+  return !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function'
+    && window.Capacitor.isNativePlatform());
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
 $('#photoInput').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
@@ -565,12 +581,31 @@ $('#photoInput').addEventListener('change', async (e) => {
     const blob = await drawWatermark(file, remark, coords);
     const filename = sanitizeSeg(renderTpl(cur.config['相片文件名'] || '', row, ts)) || 'photo';
     const subdir = rowSubdir();
+
+    // ① App 内：原生 MediaStore 存入系统相册 Pictures/{参数「目录」}/（多级子目录，相册立即可见）
+    //    与 hqz-survey 行为一致；Android 10+ 自有媒体免存储权限
+    let albumPath = '';
+    if (isNativeApp()) {
+      try {
+        const plugin = window.Capacitor.Plugins.AppPermissions;
+        if (plugin && plugin.savePhoto) {
+          const r = await plugin.savePhoto({
+            base64: await blobToBase64(blob),
+            name: filename + '.jpg',
+            subdir: subdir || '验收照片',
+          });
+          albumPath = (r && r.path) || '';
+        }
+      } catch (err) { /* 相册保存失败不阻断，继续走服务器存档 */ }
+    }
+
+    // ② 上传服务器存档（管理端相片 zip/相片墙依赖；浏览器端唯一通道）
     const fd = new FormData();
     fd.append('file', blob, 'photo.jpg');
     fd.append('filename', filename);
     fd.append('subdir', subdir);
     const r = await api(`/api/workbooks/${cur.id}/photos`, { method: 'POST', body: fd });
-    toast(`已上传：${r.path}`);
+    toast(albumPath ? `已存入相册：${albumPath}` : `已上传：${r.path}`);
     renderRowPhotos();
   } catch (err) { toast('拍照上传失败：' + err.message, true); }
 });
