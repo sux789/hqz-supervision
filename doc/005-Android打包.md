@@ -32,6 +32,16 @@ npx cap open android        # 打开 Android Studio → Build APK
 
 产物：`android/app/build/outputs/apk/debug/app-debug.apk`
 
+## 3.1 云端打包（GitHub Actions，推荐——本机无需 Android SDK）
+
+`.github/workflows/android-build.yml`：推送触及 `android/**`、`www/**`、`capacitor.config.json` 等自动触发；Actions 页也可手动 Run workflow。
+
+流程：`npm install → npx cap sync android → ./gradlew assembleDebug → 上传工件`（JDK 17 + Node 22，ubuntu-latest 自带 SDK 34）。
+
+取 APK：仓库页 **Actions → Android APK #N → Artifacts → 监督验收-debug-apk**（保留 30 天），下载解压得 `app-debug.apk`，可直接安装。
+
+注意：`android/.gitignore`（Capacitor 自带）忽略了 `assets/capacitor.config.json` 与 `capacitor-cordova-android-plugins/`，由 CI 的 `cap sync` 再生成——**不要绕过 cap sync 直接 gradlew**（CI 与本机构建都要先 sync）。
+
 ## 4. 本地联调（未部署时）
 
 `capacitor.config.json` 临时改为：
