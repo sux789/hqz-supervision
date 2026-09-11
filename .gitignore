@@ -5,3 +5,10 @@ __pycache__/
 *.pyc
 out/
 baseline/
+node_modules/
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/.idea/
+android/capacitor-cordova-android-plugins/

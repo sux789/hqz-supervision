@@ -1,0 +1,19 @@
+{
+  "name": "hqz-supervision-android",
+  "version": "0.3.0",
+  "private": true,
+  "description": "林业监督验收 — 通用网格填表 Android 壳（Capacitor，WebView 指向后端，模式同 hqz-survey）",
+  "scripts": {
+    "build": "echo \"no web build step; web served from remote server\"",
+    "sync": "cap sync android",
+    "open": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/geolocation": "^6.1.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.0.0"
+  }
+}

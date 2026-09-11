@@ -1,0 +1,11 @@
+{
+  "appId": "top.bibook.supervision",
+  "appName": "监督验收",
+  "webDir": "www",
+  "backgroundColor": "#2e7d32",
+  "server": {
+    "url": "https://forest.bibook.top/supervision",
+    "allowNavigation": ["forest.bibook.top", "www.bibook.top"],
+    "cleartext": false
+  }
+}
