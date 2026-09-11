@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>后台 · hqz-supervision</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn ghost" href="/">← 前端</a>
+    <span class="page-name">管理后台</span>
+    <span class="spacer"></span>
+    <span class="muted">{{ user }}</span>
+    <button id="btnLogout" class="btn ghost">退出</button>
+  </header>
+
+  <main class="admin-wrap">
+    <section class="card">
+      <h2>模板管理</h2>
+      <label class="upload-box">
+        <input type="file" id="adminFile" accept=".xlsx,.xlsm" multiple hidden>
+        <b>+ 上传模板</b><span class="muted">（数据 sheet + 参数 sheet）</span>
+      </label>
+      <div id="adminMsg" class="err"></div>
+      <table class="tbl" id="tblWb">
+        <thead><tr><th>文件名</th><th>数据 sheet</th><th>上传时间</th><th>操作</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>轨迹下载</h2>
+      <p class="muted">前端（B3）产生的 GPX 轨迹将出现在这里。</p>
+      <button id="btnZip" class="btn primary">下载全部轨迹 zip</button>
+      <table class="tbl" id="tblTrack">
+        <thead><tr><th>文件</th><th>大小</th><th>操作</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="{{ url_for('static', filename='admin.js') }}"></script>
+</body>
+</html>

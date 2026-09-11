@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>hqz-supervision · 网格填表</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/jspreadsheet.min.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <!-- 登录 -->
+  <div id="viewLogin" class="center-wrap hidden">
+    <form id="loginForm" class="login-card">
+      <h1>网格填表</h1>
+      <p class="muted">hqz-supervision 本地预览</p>
+      <input id="loginUser" placeholder="用户名" autocomplete="username" required>
+      <input id="loginPass" type="password" placeholder="密码" autocomplete="current-password" required>
+      <button type="submit" class="btn primary">登录</button>
+      <div id="loginErr" class="err"></div>
+    </form>
+  </div>
+
+  <!-- 主体：工作簿列表 / 网格 -->
+  <div id="viewMain" class="hidden">
+    <header class="topbar">
+      <button id="btnBack" class="btn ghost hidden">← 工作簿</button>
+      <span id="pageName" class="page-name">工作簿</span>
+      <span class="spacer"></span>
+      {% if role == 'admin' %}<a class="btn ghost" href="/admin">后台</a>{% endif %}
+      <span id="whoami" class="muted" data-user="{{ user or '' }}"></span>
+      <button id="btnLogout" class="btn ghost">退出</button>
+    </header>
+
+    <!-- 工作簿列表 -->
+    <section id="viewList" class="list-wrap">
+      <label class="upload-box">
+        <input type="file" id="fileInput" accept=".xlsx,.xlsm" multiple hidden>
+        <b>+ 上传 Excel</b><span class="muted">（需含「数据」sheet 和「参数」sheet）</span>
+      </label>
+      <div id="uploadMsg" class="err"></div>
+      <div id="wbList" class="wb-list"></div>
+    </section>
+
+    <!-- 网格填表 -->
+    <section id="viewGrid" class="grid-wrap hidden">
+      <div id="searchBar" class="search-bar"></div>
+      <div class="grid-toolbar">
+        <span id="gridMeta" class="muted"></span>
+        <span class="spacer"></span>
+        <button id="btnSave" class="btn primary">保存</button>
+      </div>
+      <div id="gridEl"></div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspreadsheet-ce@4/dist/jspreadsheet.min.js"></script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

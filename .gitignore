@@ -1,0 +1,7 @@
+data/app.sqlite3*
+data/workbooks/
+data/tracks/
+__pycache__/
+*.pyc
+out/
+baseline/
