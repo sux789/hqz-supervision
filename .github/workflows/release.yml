@@ -1,0 +1,53 @@
+name: Release APK
+
+# 推送 v* 标签触发：构建 APK 并发布到 GitHub Releases（Release 资产不过期，区别于 30 天的 Actions 工件）
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: JDK 17（Capacitor 6 要求）
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 安装依赖并同步 Capacitor
+        run: |
+          npm install --no-fund --no-audit
+          npx cap sync android
+
+      - name: Gradle 打包 Debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: 发布到 GitHub Releases（中文名称）
+        uses: softprops/action-gh-release@v2
+        with:
+          name: 监督验收 ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          body: |
+            监督验收 App（Android 安装包）
+
+            - 版本：${{ github.ref_name }}
+            - 安装后打开 App 自动加载线上最新页面（远程 URL 壳，网页更新无需重装）
+            - debug 签名，仅供内部测试使用
+          files: android/app/build/outputs/apk/debug/*.apk
+          fail_on_unmatched_files: true
