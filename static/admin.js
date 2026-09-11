@@ -26,6 +26,7 @@ async function loadWorkbooks() {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${w.name}</td><td>${w.sheet_name}</td><td>${w.uploaded_at}</td>
       <td><a class="btn" href="/admin/api/workbooks/${w.id}/download">下载 Excel</a>
+          <a class="btn" href="/api/workbooks/${w.id}/photos.zip">下载相片</a>
           <button class="btn danger" data-del="${w.id}">删除</button></td>`;
     tb.appendChild(tr);
   }

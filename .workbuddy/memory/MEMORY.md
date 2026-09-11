@@ -6,3 +6,4 @@
 - 关键文档：doc/001-参数sheet配置规范.md、doc/002-拍照轨迹功能迁移设计.md（迁移批次 B1 param_parser+grid_render → B2 photo_mgr → B3 track_mgr）。
 - hqz-survey 硬编码位置备查：app.js buildPhotoName L3033 / photoSaveSubdir L3005 / PHOTO_SAVE_DIR L2984 / EXPORT_SAVE_DIR L3031。
 - 模板自带 inspect.py 与 stdlib 冲突：目录内跑 python 需 cd /tmp。
+- Android 打包（v0.3.1）：Capacitor6 远程URL壳模式（同 hqz-survey），appId top.bibook.supervision / appName 监督验收 / URL 占位 forest.bibook.top/supervision；android/ 已生成并提交，构建需装 SDK 的机器（本机无 Android SDK）；前端桥接约定 waitForCapacitor()。GitHub 远程 git@github.com:sux789/hqz-supervision.git，建仓后 push。

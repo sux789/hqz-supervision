@@ -48,10 +48,28 @@
       <div class="grid-toolbar">
         <span id="gridMeta" class="muted"></span>
         <span class="spacer"></span>
+        <button id="btnPhoto" class="btn primary hidden">📷 拍照</button>
+        <button id="btnAlbum" class="btn ghost hidden">相册</button>
         <button id="btnSave" class="btn primary">保存</button>
       </div>
       <div id="gridEl"></div>
     </section>
+  </div>
+
+  <input type="file" id="photoInput" accept="image/*" capture="environment" hidden>
+
+  <!-- 相册弹层 -->
+  <div id="albumMask" class="album-mask hidden">
+    <div class="album-panel">
+      <header class="album-head">
+        <b>相册</b>
+        <span id="albumMeta" class="muted"></span>
+        <span class="spacer"></span>
+        <a id="albumZip" class="btn ghost" href="#">下载 zip</a>
+        <button id="albumClose" class="btn ghost">关闭</button>
+      </header>
+      <div id="albumGrid" class="album-grid"></div>
+    </div>
   </div>
 
   <div id="toast" class="toast hidden"></div>

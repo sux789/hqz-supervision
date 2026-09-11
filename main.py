@@ -267,6 +267,101 @@ def api_track():
     return jsonify(ok=True, file=path.name)
 
 
+# ────────────────────────── 相片（B2：参数化目录/文件名，前端水印） ──────────────────────────
+
+def _safe_segments(rel):
+    """校验相对路径：按 / 拆段，每段清洗非法字符，禁止 .. 与空段。返回清洗后的段列表，违规抛 ValueError。"""
+    segs = []
+    for seg in (rel or '').split('/'):
+        seg = re.sub(r'[\\/:*?"<>|]+', '_', seg).strip(' .')
+        if not seg or seg == '..':
+            raise ValueError(f'非法路径段「{seg}」')
+        segs.append(seg)
+    if len(segs) > 8:
+        raise ValueError('目录层级过深（最多 8 层）')
+    return segs
+
+
+def _photo_root(wid):
+    return UPLOAD_DIR / str(wid) / 'photos'
+
+
+@app.route('/api/workbooks/<int:wid>/photos', methods=['POST'])
+@login_required
+def api_photo_upload(wid):
+    con = db()
+    if not con.execute('SELECT 1 FROM workbooks WHERE id=?', (wid,)).fetchone():
+        con.close()
+        abort(404)
+    con.close()
+    fs = request.files.get('file')
+    if not fs:
+        return jsonify(error='缺少相片文件'), 400
+    try:
+        segs = _safe_segments(request.form.get('subdir', ''))
+        name_segs = _safe_segments(request.form.get('filename', 'photo'))
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    fname = '_'.join(name_segs)
+    if not fname.lower().endswith(('.jpg', '.jpeg')):
+        fname += '.jpg'
+    d = _photo_root(wid)
+    if segs:
+        d = d.joinpath(*segs)
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / fname
+    i = 2
+    stem, ext = path.stem, path.suffix
+    while path.exists():
+        path = d / f'{stem}_{i}{ext}'
+        i += 1
+    fs.save(path)
+    rel = path.relative_to(_photo_root(wid)).as_posix()
+    return jsonify(ok=True, path=rel)
+
+
+@app.route('/api/workbooks/<int:wid>/photos', methods=['GET'])
+@login_required
+def api_photo_list(wid):
+    root = _photo_root(wid)
+    photos = []
+    if root.exists():
+        for p in sorted(root.rglob('*.jpg')) + sorted(root.rglob('*.jpeg')):
+            rel = p.relative_to(root).as_posix()
+            photos.append({'path': rel, 'size': p.stat().st_size,
+                           'mtime': datetime.fromtimestamp(p.stat().st_mtime).strftime('%Y-%m-%d %H:%M')})
+    return jsonify(photos=photos)
+
+
+@app.route('/api/workbooks/<int:wid>/photos/file/<path:rel>', methods=['GET'])
+@login_required
+def api_photo_file(wid, rel):
+    try:
+        segs = _safe_segments(rel)
+    except ValueError:
+        abort(400)
+    path = _photo_root(wid).joinpath(*segs)
+    if not path.is_file():
+        abort(404)
+    return send_file(path, mimetype='image/jpeg')
+
+
+@app.route('/api/workbooks/<int:wid>/photos.zip', methods=['GET'])
+@login_required
+def api_photo_zip(wid):
+    root = _photo_root(wid)
+    buf = io.BytesIO()
+    n = 0
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        if root.exists():
+            for p in sorted(root.rglob('*.jpg')) + sorted(root.rglob('*.jpeg')):
+                zf.write(p, p.relative_to(root).as_posix())
+                n += 1
+    buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name=f'工作簿{wid}_相片.zip',
+                     mimetype='application/zip') if n else (jsonify(error='该工作簿暂无相片'), 404)
+
+
 # ────────────────────────── 管理后台 API ──────────────────────────
 
 @app.route('/admin/api/workbooks', methods=['GET'])

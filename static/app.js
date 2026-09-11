@@ -7,6 +7,7 @@ const el = (h) => { const d = document.createElement('div'); d.innerHTML = h.tri
 let grid = null;          // jspreadsheet 实例
 let cur = null;           // 当前工作簿 {id, headers, rows, config}
 let allRows = [];         // 未过滤全量行（编辑后同步）
+let selRow = -1;          // 当前点选的数据行（拍照上下文）
 
 /* ── 工具 ── */
 function toast(msg, isErr) {
@@ -172,8 +173,14 @@ function renderGrid() {
     allowDeleteRow: false, allowInsertRow: false, allowInsertColumn: false, allowDeleteColumn: false,
     allowRenameColumn: false, columnDrag: false, columnSorting: false,
     search: false, toolbar: false, tableOverflow: true, tableWidth: '100%', lazyLoading: true,
+    onselection: (inst, x1, y1) => { selRow = y1; },
     onload: () => { $('#gridMeta').textContent = `${allRows.length} 行 · ${cur.sheet_name}`; },
   });
+
+  // 功能开关（参数「功能」）控制工具栏按钮
+  const feats = cfgList('功能');
+  $('#btnPhoto').classList.toggle('hidden', !feats.includes('拍照'));
+  $('#btnAlbum').classList.toggle('hidden', !feats.includes('拍照'));
 }
 
 $('#btnSave').addEventListener('click', async () => {
@@ -190,6 +197,127 @@ $('#btnSave').addEventListener('click', async () => {
     toast('已保存');
   } catch (err) { toast('保存失败：' + err.message, true); }
 });
+
+/* ── 拍照（B2）：参数化模板 + 固定日期水印 + 上传 ── */
+// 模板渲染：{{列名}}→行值；{{sheet名称}}→当前sheet；{{时间}}→YYYYMMDD_HHMMSS（C02 保留字）
+function renderTpl(tpl, row, now) {
+  return (tpl || '').replace(/\{\{(.+?)\}\}/g, (_, key) => {
+    key = key.trim();
+    if (key === 'sheet名称') return cur.sheet_name;
+    if (key === '时间') return now;
+    const i = cur.headers.indexOf(key);
+    return i >= 0 ? String(row[i] == null ? '' : row[i]).trim() : '';
+  });
+}
+
+function sanitizeSeg(s) {          // 与后端 _safe_segments 同规则
+  return s.replace(/[\\/:*?"<>|]+/g, '_').replace(/^[. ]+|[. ]+$/g, '');
+}
+
+// 定位：best-effort，2.5s 拿不到就跳过（坐标行不画）
+function getCoords() {
+  return new Promise((res) => {
+    if (!navigator.geolocation) return res(null);
+    const t = setTimeout(() => res(null), 2500);
+    navigator.geolocation.getCurrentPosition(
+      (p) => { clearTimeout(t); res(`${p.coords.latitude.toFixed(5)},${p.coords.longitude.toFixed(5)}`); },
+      () => { clearTimeout(t); res(null); },
+      { enableHighAccuracy: true, timeout: 2500 });
+  });
+}
+
+// 水印绘制（参考 hqz-survey app.js L3131：黑字白边，左下角，JPEG 0.92）
+// 日期行固定输出（C06：水印日期不参数化）
+async function drawWatermark(file, remark, coords) {
+  let bmp;
+  try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+  catch (e) { bmp = await createImageBitmap(file); }
+  const canvas = document.createElement('canvas');
+  canvas.width = bmp.width; canvas.height = bmp.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bmp, 0, 0);
+  bmp.close && bmp.close();
+
+  const lines = [`日期：${new Date().toLocaleDateString('sv-SE')}`];   // sv-SE → YYYY-MM-DD
+  if (coords) lines.push(`坐标：${coords}`);
+  // 备注长文本按 22 字符折行，首行带前缀
+  for (const [i, seg] of (remark.match(/[\s\S]{1,22}/g) || []).entries()) {
+    lines.push((i === 0 ? '备注：' : '') + seg);
+  }
+
+  const fs = Math.max(18, Math.round(canvas.width / 34));
+  const lh = Math.round(fs * 1.35);
+  ctx.font = `${fs}px system-ui,'PingFang SC','Microsoft YaHei',sans-serif`;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+  ctx.lineWidth = Math.max(3, Math.round(fs / 8));
+  ctx.strokeStyle = 'rgba(255,255,255,.92)'; ctx.fillStyle = '#111';
+  let y = canvas.height - Math.round(fs * 0.6);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const x = Math.round(fs * 0.6);
+    ctx.strokeText(lines[i], x, y); ctx.fillText(lines[i], x, y);
+    y -= lh;
+  }
+  return new Promise((res, rej) =>
+    canvas.toBlob((b) => (b ? res(b) : rej(new Error('水印编码失败'))), 'image/jpeg', 0.92));
+}
+
+$('#btnPhoto').addEventListener('click', () => {
+  if (!cur || selRow < 0 || !allRows[selRow]) { toast('请先在网格中点选一行数据', true); return; }
+  $('#photoInput').click();
+});
+
+$('#photoInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file || !cur) return;
+  const row = allRows[selRow];
+  if (!row) { toast('请先在网格中点选一行数据', true); return; }
+  toast('正在处理水印…');
+  try {
+    const now = new Date();
+    const ts = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') +
+      String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') +
+      String(now.getMinutes()).padStart(2, '0') + String(now.getSeconds()).padStart(2, '0');
+    const coords = await getCoords();
+    const remark = renderTpl(cur.config['相片备注'] || '', row, ts);
+    const blob = await drawWatermark(file, remark, coords);
+    const filename = sanitizeSeg(renderTpl(cur.config['相片文件名'] || '', row, ts)) || 'photo';
+    const subdir = (cur.config['目录'] || '').split('/').map(sanitizeSeg).filter(Boolean).join('/');
+    const fd = new FormData();
+    fd.append('file', blob, 'photo.jpg');
+    fd.append('filename', filename);
+    fd.append('subdir', subdir);
+    const r = await api(`/api/workbooks/${cur.id}/photos`, { method: 'POST', body: fd });
+    toast(`已上传：${r.path}`);
+  } catch (err) { toast('拍照上传失败：' + err.message, true); }
+});
+
+/* ── 相册 ── */
+$('#btnAlbum').addEventListener('click', openAlbum);
+$('#albumClose').addEventListener('click', () => $('#albumMask').classList.add('hidden'));
+$('#albumMask').addEventListener('click', (e) => { if (e.target === $('#albumMask')) $('#albumMask').classList.add('hidden'); });
+
+async function openAlbum() {
+  const mask = $('#albumMask');
+  mask.classList.remove('hidden');
+  $('#albumZip').href = `/api/workbooks/${cur.id}/photos.zip`;
+  $('#albumGrid').innerHTML = '<span class="muted">加载中…</span>';
+  try {
+    const data = await api(`/api/workbooks/${cur.id}/photos`);
+    $('#albumMeta').textContent = `${data.photos.length} 张`;
+    const g = $('#albumGrid');
+    g.innerHTML = '';
+    if (!data.photos.length) { g.innerHTML = '<span class="muted">暂无相片，点「📷 拍照」开始。</span>'; return; }
+    for (const p of data.photos) {
+      const item = el(`<figure class="album-item" title="${p.path}（${(p.size / 1024).toFixed(0)} KB · ${p.mtime}）">
+        <img loading="lazy" src="/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}" alt="${p.path}">
+        <figcaption>${p.path.split('/').pop()}</figcaption></figure>`);
+      item.querySelector('img').addEventListener('click', () =>
+        window.open(`/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}`, '_blank'));
+      g.appendChild(item);
+    }
+  } catch (err) { $('#albumGrid').innerHTML = `<span class="err">${err.message}</span>`; }
+}
 
 /* ── 启动 ── */
 async function boot() {
