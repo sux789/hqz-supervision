@@ -80,11 +80,13 @@ function show(view) {
 $('#loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
-    await api('/api/login', {
+    const r = await api('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: $('#loginUser').value, password: $('#loginPass').value }),
     });
+    // 关键：登录不刷新页面，data-user 必须在此回写（否则验收联动/拍照人拿空用户名）
+    $('#whoami').dataset.user = r.user || $('#loginUser').value.trim();
     boot();
   } catch (err) {
     $('#loginErr').textContent = err.message;
@@ -135,9 +137,15 @@ async function loadList() {
         <span class="wb-name">${escapeHtml(w.name)}</span>
         <span class="muted">${escapeHtml(w.sheet_name)} · ${escapeHtml(w.uploaded_at)}</span>
         <span class="spacer"></span>
+        <span class="btn ghost wb-export">⬇ 导出</span>
         <span class="btn primary">打开</span>
       </div>`);
     n.addEventListener('click', () => nav(`#/wb/${w.id}`));
+    // 列表页直接导出（按上传模板回填）；阻止冒泡避免触发「打开」
+    n.querySelector('.wb-export').addEventListener('click', (e) => {
+      e.stopPropagation();
+      window.open((window.SUP_BASE || '') + `/api/workbooks/${w.id}/export`, '_blank');
+    });
     box.appendChild(n);
   }
 }
@@ -351,10 +359,16 @@ function renderForm() {
     },
     onload: () => {
       // 非可编辑行值格：灰底视觉标识（拦截逻辑在 onbeforechange）
+      const resultName = resultOptKey() ? resultOptKey().slice(0, -2) : '';
       el0.querySelectorAll('tbody tr').forEach((tr, y) => {
         if (!editable.has(cur.headers[y])) {
           const td = tr.querySelectorAll('td')[1];
           if (td) td.classList.add('locked');
+        }
+        // 验收结果行 label 突出显示（★ + 绿底加粗）；注意 td[0] 是 jss 行号列，字段名格是 data-x=0
+        if (cur.headers[y] === resultName) {
+          const td0 = tr.querySelector('td[data-x="0"]');
+          if (td0) td0.classList.add('result-label');
         }
       });
     },
@@ -437,11 +451,12 @@ function syncAcceptCols(resultColIdx, v) {
     return true;
   };
 
-  let changed = false;
+  let changed = false, changedNames = [];
   if (v) {
-    changed = setCol('验收人', user) || changed;
-    changed = setCol(dateCol, today) || changed;
-    if (changed) toast('已自动填入验收人/验收日期');
+    if (user && setCol('验收人', user)) changedNames.push('验收人');
+    if (setCol(dateCol, today)) changedNames.push(dateCol || '验收日期');
+    changed = changedNames.length > 0;
+    if (changed) toast('已自动填入：' + changedNames.join('、'));
   } else {
     changed = setCol('验收人', '') || changed;
     changed = setCol(dateCol, '') || changed;

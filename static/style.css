@@ -84,6 +84,10 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .shot-item { background: #fff; border: 1px solid #e3e7ea; border-radius: 8px;
              padding: 8px 12px; font-size: 13px; display: flex; align-items: center; gap: 10px; }
 .shot-item > span:first-child { word-break: break-all; }
+
+/* ── 验收结果字段 label 突出显示 ── */
+td.result-label { background: #e8f3e8 !important; color: #1f4d2a; font-weight: 700; box-shadow: inset 3px 0 0 #2f8a46; }
+td.result-label::before { content: '★ '; color: #d9a300; }
 .shot-item .t { color: #8a939e; font-size: 12px; }
 .shot-group { margin-top: 6px; }
 .shot-group b { color: #2f5d3a; font-size: 13px; }

@@ -121,7 +121,9 @@ def api_login():
         return jsonify(error='用户名或密码错误'), 401
     session['user'] = row['username']
     session['role'] = row['role']
-    return jsonify(ok=True, role=row['role'])
+    # 返回 user：登录是 fetch 静默完成（页面不刷新），前端需回写 #whoami 的 data-user，
+    # 否则验收联动/{{拍照人}} 拿到的用户名为空（v0.8.2 修复）
+    return jsonify(ok=True, role=row['role'], user=row['username'])
 
 
 @bp.route('/api/logout', methods=['POST'])
