@@ -475,7 +475,7 @@ function renderTpl(tpl, row, now) {
   });
 }
 
-/* ── 拍摄记录（C07：相片不落服务器，仅本地记录文件名提示） ──
+/* ── 拍摄记录（C07：相片不落服务器，仅本地记录完整文件 path 提示，无预览） ──
    localStorage 按 workbook 记录 {文件名, 小班号, 时间}，页面只提示「已拍过什么」，不提供预览。 */
 function getShots() {
   try { return JSON.parse(localStorage.getItem('hqz_sup_shots_' + cur.id) || '[]'); }
@@ -647,8 +647,11 @@ $('#photoInput').addEventListener('change', async (e) => {
       savedWhere = `已下载：${filename}.jpg（${(blob.size / 1024).toFixed(0)} KB）`;
     }
 
-    // ③ 仅记录拍摄文件名提示（本机 localStorage，不上传）
-    recordShot(filename + '.jpg', xh);
+    // ③ 仅记录完整文件路径提示（本机 localStorage，不上传；C07：无预览，只看 path）
+    const dispPath = isNativeApp()
+      ? `Pictures/${subdir || '验收照片'}/${filename}.jpg`
+      : `${filename}.jpg`;
+    recordShot(dispPath, xh);
     toast(savedWhere);
     renderShotList();
   } catch (err) { toast('拍照处理失败：' + err.message, true); }
