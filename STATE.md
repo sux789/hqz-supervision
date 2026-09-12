@@ -2,16 +2,14 @@
 
 > 每次迭代后更新，≤25 行。跨会话恢复先读本文件，不翻 doc/ 归档。
 
-- **版本**：v0.8.2 ｜ **更新**：2026-09-12
-- **能跑**：`python main.py` → http://127.0.0.1:8720（雷华雄/lhx123 登录）：上传 Excel→列表选择→参数驱动网格填表→保存；后台 /admin 模板管理+下载 Excel+轨迹下载+验收变更日志
-- **v0.8.2 变化**：修复验收人不联动（根因：fetch 静默登录页面不刷新，#whoami data-user 恒空 → 联动填了空用户名；/api/login 返回 user + 前端回写）；联动 toast 只报真实填入字段；验收结果 label ★绿底突出；列表页新增工作簿⬇导出按钮（详情页原有）；缓存熔断 v=0.8.2
-- **v0.8.1 变化**：拍摄记录显示完整文件 path（Pictures/{目录}/{文件名}.jpg），强化 C07 无预览（修复线上 v0.7.x 相册预览大图致 WebView 死机）
-- **v0.8 变化**：相片不落服务器（App 存相册/浏览器下载）；导出按上传模板回填（格式全保留）；验收联动（选结果填人/日期，选空清三字段）；验收4字段变更日志；图片压缩 1600px/0.85；{{拍照人}} 占位符
-- **已知问题**：v0.8 前上传的旧工作簿无 source 模板，导出需重新上传；轨迹记录不支持后台运行；v0.8.1 前的旧拍摄记录只存文件名；v0.8.2 前已保存的行验收人为空（需重新选一次验收结果补填）
-- **能跑**：https://forest.bibook.top/supervision 已上线 v0.8.2（2026-09-12 ./deploy.sh 部署并 curl 验证）；账号 雷华雄/lhx123
-- **下一步**：1. [x] ./deploy.sh 上线 v0.8（含 v0.8.1/v0.8.2） 2. [ ] 相片云同步：doc/007 设计评审稿（服务器→COS 暂存→百度网盘，状态机 received/cos_ok/baidu_ok），待用户确认开放问题后排期 M1-M3 3. [ ] GitHub Secrets 配置（KEYSTORE_BASE64/KEY_ALIAS/KEYSTORE_PASSWORD/KEY_PASSWORD）→ tag 触发 CI 出正式签名 APK 4. [ ] APP 备案（阿里云/域名备案主体入口，填包名 top.bibook.supervision + SHA256 指纹，见 android/keystore-info.txt）
-- **最近迭代文档**：doc/006-v0.8_拍照本地化与验收联动.md
-- **活跃约束**：C01–C07（详见 CONSTRAINTS.md）
+- **版本**：v0.9 ｜ **更新**：2026-09-12（深夜）
+- **能跑**：`python main.py` → http://127.0.0.1:8720（雷华雄/lhx123 登录）：上传 Excel→列表选择→参数驱动网格填表→保存；后台 /admin 模板管理+下载 Excel+轨迹下载+验收变更日志+**相片云同步设置/状态面板**
+- **v0.9 变化**：相片云同步上线（doc/007 实现）——App 拍照在开关开启时 POST /api/photo 中转：七牛 zz-1 暂存 + data/pending 缓冲 → 百度网盘 /apps/book_translator/supervision/{参数目录}/{文件名}.jpg（与手机相册 Pictures/ 镜像）；状态机 received→qiniu_ok→baidu_ok，百度成功删 pending、七牛副本按保留期（30 天）清理；后台同步设置卡（开关/凭证/token 导入/状态面板/手动重推）；参数 sheet 新增「压缩最长边/压缩质量」；纯标准库实现（服务器 shared_venv 无 requests/qiniu）；本地与线上均 curl 全链路验证 state=baidu_ok
+- **已知问题**：v0.8 前上传的旧工作簿无 source 模板，导出需重新上传；轨迹记录不支持后台运行；v0.8.2 前已保存的行验收人为空；七牛 io 回读域名未开放（需绑定下载域名），当前回读兜底不可用——pending 缓冲为主回读源；百度 mkdir 对已存在目录偶发产生 `名字_时间戳` 副本目录（无害，生产文件名带时间戳不碰撞）
+- **能跑**：https://forest.bibook.top/supervision 已上线 v0.9（2026-09-12 ./deploy.sh 部署；云凭证已配置、同步开关已开启；线上拍照实测 baidu_ok）；账号 雷华雄/lhx123
+- **下一步**：1. [x] 相片云同步上线（doc/007） 2. [ ] GitHub Secrets 配置（KEYSTORE_BASE64/KEY_ALIAS/KEYSTORE_PASSWORD/KEY_PASSWORD）→ tag 触发 CI 出正式签名 APK 3. [ ] APP 备案（阿里云/域名备案主体入口，填包名 top.bibook.supervision + SHA256 指纹，见 android/keystore-info.txt）
+- **最近迭代文档**：doc/007-相片云同步设计.md
+- **活跃约束**：C01–C08（详见 CONSTRAINTS.md）
 
 ## 资产活跃度（每 5 版评审时更新）
 
