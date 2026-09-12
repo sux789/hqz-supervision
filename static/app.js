@@ -584,31 +584,42 @@ async function drawWatermark(file, remark, coords, opts) {
     + ` ${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}`;
   const lines = [`时间：${stamp}`];
   if (coords) lines.push(`坐标：${coords}`);
-  for (const [i, seg] of (remark.match(/[\s\S]{1,22}/g) || []).entries()) {
+  for (const [i, seg] of (remark.match(/[\s\S]{1,26}/g) || []).entries()) {
     lines.push((i === 0 ? '备注：' : '') + seg);
   }
 
   // 水印版式（省比特版式）：半透明白底块 + 实心黑字。
   // 旧版「白描边黑字」的描边是高频边缘，JPEG 要为它花大量比特；改成底块后
   // 同等质量下体积更小、文字更清晰（无彩边/马赛克）。
-  const fs = Math.max(18, Math.round(canvas.width / 34));
-  const lh = Math.round(fs * 1.35);
-  const padX = Math.round(fs * 0.45);
-  const padY = Math.round(fs * 0.34);
-  const margin = Math.round(fs * 0.5);
+  // 字号与留白：底块内边距/行距给足呼吸空间；若行数过多导致底块过高
+  //（>画面 55%），整体按比例缩字号（下限 14px），保证文字完整不被裁切
+  let fs = Math.max(18, Math.round(canvas.width / 34));
+  let lh = Math.round(fs * 1.45);
+  let padX = Math.round(fs * 0.7);
+  let padY = Math.round(fs * 0.5);
+  let margin = Math.round(fs * 0.55);
+  const maxH = canvas.height * 0.55;
+  let boxH = lines.length * lh + padY * 2;
+  if (boxH > maxH) {
+    const k = maxH / boxH;
+    fs = Math.max(14, Math.round(fs * k));
+    lh = Math.round(fs * 1.45); padX = Math.round(fs * 0.7);
+    padY = Math.round(fs * 0.5); margin = Math.round(fs * 0.55);
+    boxH = lines.length * lh + padY * 2;
+  }
   ctx.font = `${fs}px system-ui,'PingFang SC','Microsoft YaHei',sans-serif`;
   ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
 
   // ① 底块尺寸 = 最长行宽 + 内边距；贴左下角（与旧版位置一致）
   let textW = 0;
   for (const ln of lines) textW = Math.max(textW, ctx.measureText(ln).width);
-  const boxW = Math.min(canvas.width - margin * 2, Math.ceil(textW) + padX * 2);
-  const boxH = lines.length * lh + padY * 2;
+  const boxW = Math.max(Math.round(canvas.width * 0.3),
+    Math.min(canvas.width - margin * 2, Math.ceil(textW) + padX * 2));
   const boxX = margin;
   const boxY = Math.max(margin, canvas.height - boxH - margin);
 
   // ② 半透明白底块（alpha 0.62：保证压住深色背景又不切断背景内容）
-  const r = Math.round(fs * 0.3);
+  const r = Math.round(fs * 0.35);
   ctx.fillStyle = 'rgba(255,255,255,.62)';
   ctx.beginPath();
   ctx.moveTo(boxX + r, boxY);
