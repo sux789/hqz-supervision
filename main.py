@@ -3,6 +3,7 @@
 
 约束：C01 参数驱动 / C02 参数语法 / C03 不影响其他业务（本地 127.0.0.1:8720）
      C04 通用无调查业务 / C05 账号（雷华雄 admin）/ C06 水印日期不参数化
+     C07 相片不落服务器（App 存系统相册 / 浏览器下载，前端仅记录文件名提示）
 启动：python main.py  →  http://127.0.0.1:8720
 """
 import hashlib
@@ -52,6 +53,15 @@ def init_db():
             headers TEXT NOT NULL, rows TEXT NOT NULL,
             config TEXT NOT NULL, param_rows TEXT NOT NULL,
             uploaded_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS accept_logs(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workbook_id INTEGER NOT NULL,
+            row_idx INTEGER NOT NULL,
+            xiaoban TEXT,
+            field TEXT NOT NULL,
+            old_value TEXT, new_value TEXT,
+            operator TEXT NOT NULL,
+            created_at TEXT NOT NULL);
     ''')
     if not con.execute('SELECT 1 FROM users').fetchone():
         con.execute(
@@ -194,8 +204,9 @@ def api_upload():
     fs = request.files.get('file')
     if not fs or not fs.filename.lower().endswith(('.xlsx', '.xlsm')):
         return jsonify(error='请上传 .xlsx 文件'), 400
+    blob = fs.read()   # 先读全量字节：既供解析，也原样留存作导出模板
     try:
-        sheet_name, headers, rows, config, param_rows = parse_workbook_storage(fs.stream)
+        sheet_name, headers, rows, config, param_rows = parse_workbook_storage(io.BytesIO(blob))
     except ParamError as e:
         return jsonify(error=str(e)), 400
     con = db()
@@ -209,6 +220,11 @@ def api_upload():
     wid = cur.lastrowid
     con.commit()
     con.close()
+    # 原始模板留存（导出按上传模板回填，保留全部格式）
+    src_dir = UPLOAD_DIR / str(wid)
+    src_dir.mkdir(parents=True, exist_ok=True)
+    ext = '.xlsm' if fs.filename.lower().endswith('.xlsm') else '.xlsx'
+    (src_dir / f'source{ext}').write_bytes(blob)
     return jsonify(ok=True, id=wid, rows=len(rows))
 
 
@@ -235,24 +251,51 @@ def api_delete(wid):
     return jsonify(ok=True)
 
 
+# 变更日志覆盖的字段（列名在模板中存在才记录，通用不硬编码业务模板）
+ACCEPT_LOG_FIELDS = ('验收人', '验收日期', '验收时间', '验收结果', '验收备注')
+
+
 @bp.route('/api/workbooks/<int:wid>/rows/<int:ridx>', methods=['POST'])
 @login_required
 def api_save_row(wid, ridx):
-    """单行自动保存（前端两列表单 onchange 触发，对齐 hqz-survey 编辑体验）。"""
+    """单行自动保存（前端两列表单 onchange 触发，对齐 hqz-survey 编辑体验）。
+    验收相关字段的每次变化写入 accept_logs（操作人+时间）。"""
     vals = (request.get_json(silent=True) or {}).get('values')
     if not isinstance(vals, list):
         return jsonify(error='values 必须为数组'), 400
     con = db()
     try:
-        r = con.execute('SELECT rows FROM workbooks WHERE id=?', (wid,)).fetchone()
+        r = con.execute('SELECT headers, rows FROM workbooks WHERE id=?', (wid,)).fetchone()
         if not r:
             abort(404)
+        headers = json.loads(r['headers'])
         rows = json.loads(r['rows'])
         if not (0 <= ridx < len(rows)):
             abort(404)
         if len(vals) != len(rows[ridx]):
             return jsonify(error=f'列数不匹配：期望 {len(rows[ridx])} 列，收到 {len(vals)}'), 400
+        old_row = rows[ridx]
         rows[ridx] = [_norm_cell(v) for v in vals]
+
+        # 验收字段变更日志：仅记录验收4字段（验收人/验收日期(时间)/验收结果/验收备注）的变化
+        logs = []
+        for i, h in enumerate(headers):
+            if h not in ACCEPT_LOG_FIELDS:
+                continue
+            ov = '' if old_row[i] is None else str(old_row[i]).strip()
+            nv = '' if rows[ridx][i] is None else str(rows[ridx][i]).strip()
+            if ov != nv:
+                logs.append((h, ov, nv))
+        if logs:
+            hi = headers.index('小班号') if '小班号' in headers else -1
+            xiaoban = '' if hi < 0 else str(old_row[hi] or '').strip()
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            op = session.get('user') or ''
+            con.executemany(
+                'INSERT INTO accept_logs(workbook_id,row_idx,xiaoban,field,old_value,new_value,operator,created_at)'
+                ' VALUES(?,?,?,?,?,?,?,?)',
+                [(wid, ridx, xiaoban, f, ov, nv, op, now) for f, ov, nv in logs])
+
         con.execute('UPDATE workbooks SET rows=? WHERE id=?',
                     (json.dumps(rows, ensure_ascii=False), wid))
         con.commit()
@@ -292,99 +335,48 @@ def api_track():
     return jsonify(ok=True, file=path.name)
 
 
-# ────────────────────────── 相片（B2：参数化目录/文件名，前端水印） ──────────────────────────
+# ────────────────────────── 导出（按上传模板回填，保留原始格式） ──────────────────────────
+# C07：相片不落服务器，原相片上传/预览/zip 路由已移除（v0.8）。
 
-def _safe_segments(rel):
-    """校验相对路径：按 / 拆段，每段清洗非法字符，禁止 .. 与空段。返回清洗后的段列表，违规抛 ValueError。"""
-    segs = []
-    for seg in (rel or '').split('/'):
-        seg = re.sub(r'[\\/:*?"<>|]+', '_', seg).strip(' .')
-        if not seg or seg == '..':
-            raise ValueError(f'非法路径段「{seg}」')
-        segs.append(seg)
-    if len(segs) > 8:
-        raise ValueError('目录层级过深（最多 8 层）')
-    return segs
+_XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+_XLSM_MIME = 'application/vnd.ms-excel.sheet.macroEnabled.12'
 
 
-def _photo_root(wid):
-    return UPLOAD_DIR / str(wid) / 'photos'
-
-
-@bp.route('/api/workbooks/<int:wid>/photos', methods=['POST'])
-@login_required
-def api_photo_upload(wid):
+def _export_workbook(wid):
+    """用上传时留存的原始模板（source.xlsx/xlsm）回填数据行，保留模板全部格式。
+    返回 (BytesIO, 下载文件名, mimetype)；模板缺失 404。"""
     con = db()
-    if not con.execute('SELECT 1 FROM workbooks WHERE id=?', (wid,)).fetchone():
-        con.close()
-        abort(404)
+    r = con.execute('SELECT * FROM workbooks WHERE id=?', (wid,)).fetchone()
     con.close()
-    fs = request.files.get('file')
-    if not fs:
-        return jsonify(error='缺少相片文件'), 400
-    try:
-        segs = _safe_segments(request.form.get('subdir', ''))
-        name_segs = _safe_segments(request.form.get('filename', 'photo'))
-    except ValueError as e:
-        return jsonify(error=str(e)), 400
-    fname = '_'.join(name_segs)
-    if not fname.lower().endswith(('.jpg', '.jpeg')):
-        fname += '.jpg'
-    d = _photo_root(wid)
-    if segs:
-        d = d.joinpath(*segs)
-    d.mkdir(parents=True, exist_ok=True)
-    path = d / fname
-    i = 2
-    stem, ext = path.stem, path.suffix
-    while path.exists():
-        path = d / f'{stem}_{i}{ext}'
-        i += 1
-    fs.save(path)
-    rel = path.relative_to(_photo_root(wid)).as_posix()
-    return jsonify(ok=True, path=rel)
-
-
-@bp.route('/api/workbooks/<int:wid>/photos', methods=['GET'])
-@login_required
-def api_photo_list(wid):
-    root = _photo_root(wid)
-    photos = []
-    if root.exists():
-        for p in sorted(root.rglob('*.jpg')) + sorted(root.rglob('*.jpeg')):
-            rel = p.relative_to(root).as_posix()
-            photos.append({'path': rel, 'size': p.stat().st_size,
-                           'mtime': datetime.fromtimestamp(p.stat().st_mtime).strftime('%Y-%m-%d %H:%M')})
-    return jsonify(photos=photos)
-
-
-@bp.route('/api/workbooks/<int:wid>/photos/file/<path:rel>', methods=['GET'])
-@login_required
-def api_photo_file(wid, rel):
-    try:
-        segs = _safe_segments(rel)
-    except ValueError:
-        abort(400)
-    path = _photo_root(wid).joinpath(*segs)
-    if not path.is_file():
+    if not r:
         abort(404)
-    return send_file(path, mimetype='image/jpeg')
-
-
-@bp.route('/api/workbooks/<int:wid>/photos.zip', methods=['GET'])
-@login_required
-def api_photo_zip(wid):
-    root = _photo_root(wid)
+    ext = '.xlsm' if r['name'].lower().endswith('.xlsm') else '.xlsx'
+    src = UPLOAD_DIR / str(wid) / f'source{ext}'
+    if not src.exists():
+        abort(404, description='原始模板文件缺失（该工作簿为旧版上传），请重新上传后导出')
+    headers = json.loads(r['headers'])
+    rows = json.loads(r['rows'])
+    wb = openpyxl.load_workbook(src, keep_vba=(ext == '.xlsm'))
+    if r['sheet_name'] not in wb.sheetnames:
+        abort(500, description=f'模板中找不到数据 sheet「{r["sheet_name"]}」')
+    ws = wb[r['sheet_name']]
+    if ws.max_row > 1:
+        ws.delete_rows(2, ws.max_row - 1)   # 清掉模板里的示例/旧数据行，表头及格式保留
+    for row in rows:
+        ws.append((list(row) + [''] * len(headers))[:len(headers)])
     buf = io.BytesIO()
-    n = 0
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-        if root.exists():
-            for p in sorted(root.rglob('*.jpg')) + sorted(root.rglob('*.jpeg')):
-                zf.write(p, p.relative_to(root).as_posix())
-                n += 1
+    wb.save(buf)
     buf.seek(0)
-    return send_file(buf, as_attachment=True, download_name=f'工作簿{wid}_相片.zip',
-                     mimetype='application/zip') if n else (jsonify(error='该工作簿暂无相片'), 404)
+    stem = re.sub(r'\.xlsxm?$', '', r['name'], flags=re.IGNORECASE)
+    return buf, f'{stem}_导出{ext}', _XLSM_MIME if ext == '.xlsm' else _XLSX_MIME
+
+
+@bp.route('/api/workbooks/<int:wid>/export', methods=['GET'])
+@login_required
+def api_export(wid):
+    """前端导出：登录用户即可按上传模板导出当前数据。"""
+    buf, name, mime = _export_workbook(wid)
+    return send_file(buf, as_attachment=True, download_name=name, mimetype=mime)
 
 
 # ────────────────────────── 管理后台 API ──────────────────────────
@@ -415,33 +407,23 @@ def admin_list():
 @bp.route('/admin/api/workbooks/<int:wid>/download', methods=['GET'])
 @admin_required
 def admin_download(wid):
+    """后台下载：与前端导出同链路（按上传模板回填，保留格式）。"""
+    buf, name, mime = _export_workbook(wid)
+    return send_file(buf, as_attachment=True, download_name=name, mimetype=mime)
+
+
+@bp.route('/admin/api/accept-logs', methods=['GET'])
+@admin_required
+def admin_accept_logs():
+    """验收字段变更日志（最近 300 条，新在前）。"""
     con = db()
-    r = con.execute('SELECT * FROM workbooks WHERE id=?', (wid,)).fetchone()
+    rows = con.execute(
+        'SELECT l.id, l.workbook_id, w.name AS wb_name, l.row_idx, l.xiaoban,'
+        ' l.field, l.old_value, l.new_value, l.operator, l.created_at'
+        ' FROM accept_logs l LEFT JOIN workbooks w ON w.id = l.workbook_id'
+        ' ORDER BY l.id DESC LIMIT 300').fetchall()
     con.close()
-    if not r:
-        abort(404)
-    headers = json.loads(r['headers'])
-    rows = json.loads(r['rows'])
-    param_rows = json.loads(r['param_rows'])
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = r['sheet_name'][:31]
-    ws.append(headers)
-    for row in rows:
-        ws.append(row)
-    ws_p = wb.create_sheet('参数')
-    ws_p.append(['key', 'value', '类型', '默认值', '说明', '示例'])
-    for row in param_rows:
-        ws_p.append(row)
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    stem = re.sub(r'\.xlsx$', '', r['name'])
-    return send_file(buf, as_attachment=True,
-                     download_name=f'{stem}_导出.xlsx',
-                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    return jsonify(logs=[dict(x) for x in rows])
 
 
 @bp.route('/admin/api/tracks', methods=['GET'])

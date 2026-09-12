@@ -32,7 +32,6 @@ async function loadWorkbooks() {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${w.name}</td><td>${w.sheet_name}</td><td class="param-cell">${param}</td><td>${w.uploaded_at}</td>
       <td><a class="btn" href="${window.SUP_BASE || ''}/admin/api/workbooks/${w.id}/download">下载 Excel</a>
-          <a class="btn" href="${window.SUP_BASE || ''}/api/workbooks/${w.id}/photos.zip">下载相片</a>
           <button class="btn danger" data-del="${w.id}">删除</button></td>`;
     tb.appendChild(tr);
   }
@@ -58,6 +57,26 @@ async function loadTracks() {
       <td><a class="btn" href="${window.SUP_BASE || ''}/admin/api/tracks/${encodeURIComponent(t.file)}">下载</a></td>`;
     tb.appendChild(tr);
   }
+}
+
+async function loadLogs() {
+  const data = await api('/admin/api/accept-logs');
+  const tb = $('#tblLogs tbody');
+  tb.innerHTML = '';
+  if (!data.logs.length) {
+    tb.innerHTML = '<tr><td colspan="7" class="muted">暂无验收变更记录</td></tr>';
+    return;
+  }
+  for (const l of data.logs) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${l.created_at}</td><td>${l.wb_name || l.workbook_id}</td><td>${l.xiaoban || '-'}</td>
+      <td>${l.field}</td><td>${escape(l.old_value || '')}</td><td>${escape(l.new_value || '')}</td><td>${l.operator}</td>`;
+    tb.appendChild(tr);
+  }
+}
+
+function escape(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 $('#adminFile').addEventListener('change', async (e) => {
@@ -86,3 +105,4 @@ $('#btnLogout').addEventListener('click', async () => {
 
 loadWorkbooks().catch((e) => toast(e.message, true));
 loadTracks().catch(() => {});
+loadLogs().catch(() => {});

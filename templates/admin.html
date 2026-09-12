@@ -38,10 +38,19 @@
         <tbody></tbody>
       </table>
     </section>
+
+    <section class="card">
+      <h2>验收变更日志</h2>
+      <p class="muted">验收人 / 验收日期（时间）/ 验收结果 / 验收备注 的每次修改（最近 300 条）。</p>
+      <table class="tbl" id="tblLogs">
+        <thead><tr><th>时间</th><th>工作簿</th><th>小班</th><th>字段</th><th>旧值</th><th>新值</th><th>操作人</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
   </main>
 
   <div id="toast" class="toast hidden"></div>
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
-  <script src="{{ url_for('static', filename='admin.js') }}"></script>
+  <script src="{{ url_for('static', filename='admin.js') }}?v=0.8"></script>
 </body>
 </html>

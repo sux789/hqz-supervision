@@ -14,7 +14,7 @@
   <div id="viewLogin" class="center-wrap hidden">
     <form id="loginForm" class="login-card">
       <h1>网格填表</h1>
-      <p class="muted">监督验收 · 中幼林抚育</p>
+      <p class="muted">监理验收 · 中幼林抚育</p>
       <input id="loginUser" placeholder="用户名" autocomplete="username" required>
       <input id="loginPass" type="password" placeholder="密码" autocomplete="current-password" required>
       <button type="submit" class="btn primary">登录</button>
@@ -46,29 +46,29 @@
       <div class="detail-toolbar">
         <span id="saveStatus" class="save-status ok">✓ 已保存</span>
         <span class="spacer"></span>
+        <button id="btnExport" class="btn ghost">⬇ 导出</button>
         <button id="btnPhoto" class="btn primary hidden">📷 拍照</button>
         <button id="btnTrack" class="btn primary hidden">◎ 轨迹</button>
-        <button id="btnAlbum" class="btn ghost hidden">相册</button>
+        <button id="btnAlbum" class="btn ghost hidden">拍摄记录</button>
       </div>
       <div id="formEl"></div>
       <div id="photoHint" class="muted photo-hint"></div>
-      <div id="rowPhotos" class="album-grid"></div>
+      <div id="rowPhotos" class="shot-wrap"></div>
     </section>
   </div>
 
   <input type="file" id="photoInput" accept="image/*" capture="environment" hidden>
 
-  <!-- 相册弹层（全部相片） -->
+  <!-- 拍摄记录弹层（仅本机记录的文件名提示，C07 不预览图片） -->
   <div id="albumMask" class="album-mask hidden">
     <div class="album-panel">
       <header class="album-head">
-        <b>相册</b>
+        <b>拍摄记录</b>
         <span id="albumMeta" class="muted"></span>
         <span class="spacer"></span>
-        <a id="albumZip" class="btn ghost" href="#">下载 zip</a>
         <button id="albumClose" class="btn ghost">关闭</button>
       </header>
-      <div id="albumGrid" class="album-grid"></div>
+      <div id="shotAll" class="album-grid"></div>
     </div>
   </div>
 
@@ -77,6 +77,7 @@
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
   <script src="{{ url_for('static', filename='vendor/jsuites.min.js') }}"></script>
   <script src="{{ url_for('static', filename='vendor/jspreadsheet.min.js') }}"></script>
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <!-- ?v= 版本号熔断：静态 JS 更新后 WebView/浏览器强制拉新（曾致 APK 端验收联动代码不生效） -->
+  <script src="{{ url_for('static', filename='app.js') }}?v=0.8"></script>
 </body>
 </html>

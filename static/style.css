@@ -79,6 +79,15 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .album-item img { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: 6px; cursor: zoom-in; background: #f2f2f2; }
 .album-item figcaption { font-size: 11px; color: #666; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ── 拍摄记录（C07：仅文件名提示，无图片预览） ── */
+.shot-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 14px; }
+.shot-item { background: #fff; border: 1px solid #e3e7ea; border-radius: 8px;
+             padding: 8px 12px; font-size: 13px; display: flex; align-items: center; gap: 10px; }
+.shot-item .t { color: #8a939e; font-size: 12px; }
+.shot-group { margin-top: 6px; }
+.shot-group b { color: #2f5d3a; font-size: 13px; }
+#shotAll { display: block; }
+
 /* ── 轨迹记录中（B3） ── */
 #btnTrack.recording { background: #c62828; color: #fff; animation: recPulse 1.6s ease-in-out infinite; }
 @keyframes recPulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }

@@ -1,6 +1,6 @@
 {
   "appId": "top.bibook.supervision",
-  "appName": "监督验收",
+  "appName": "监理验收",
   "webDir": "www",
   "backgroundColor": "#2e7d32",
   "server": {

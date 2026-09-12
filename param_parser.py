@@ -27,7 +27,8 @@ KEYS = {
 REQUIRED = ['相片备注', '相片文件名', '目录', '可编辑列', '功能']
 
 # 占位符中的保留字（不要求是数据表头）
-RESERVED_PH = {'sheet名称', '时间'}
+# sheet名称=当前数据sheet名；时间=YYYYMMDD_HHMMSS；拍照人=当前登录用户
+RESERVED_PH = {'sheet名称', '时间', '拍照人'}
 
 FULLWIDTH = {'｜': '|', '；': ';', '，': ','}
 

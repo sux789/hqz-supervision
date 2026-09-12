@@ -271,7 +271,7 @@ function jumpRow(idx) {
   curIdx = idx;
   syncSelectorToRow(idx);
   renderForm();
-  renderRowPhotos();
+  renderShotList();
   rememberLast();
   $('#pageName').textContent = `${rowVal('小班号') || '详情'} · ${cur.name}`;
 }
@@ -283,7 +283,7 @@ function openDetail(idx) {
   if (!selCfg.length) parseSelCfg();
   syncSelectorToRow(idx);
   renderForm();
-  renderRowPhotos();
+  renderShotList();
   rememberLast();
   const feats = cfgList('功能');
   $('#btnPhoto').classList.toggle('hidden', !feats.includes('拍照'));
@@ -365,9 +365,16 @@ function renderForm() {
   if (jss) { jss.style.overflow = 'visible'; jss.style.maxHeight = 'none'; jss.style.height = 'auto'; }
   const tbl = el0.querySelector('table');
   if (tbl) tbl.style.height = 'auto';
-  $('#photoHint').textContent = (isNativeApp() ? '📁 相册保存目录：Pictures/' : '📁 服务器保存目录：')
-    + (rowSubdir() || '(参数未配置目录)');
+  $('#photoHint').textContent = (isNativeApp()
+    ? '📁 拍照仅存本机系统相册 Pictures/' + (rowSubdir() || '(参数未配置目录)')
+    : '📁 拍照仅下载到本机（服务器不留存）');
 }
+
+/* ── 导出 Excel（按上传模板回填） ── */
+$('#btnExport').addEventListener('click', () => {
+  if (!cur) return;
+  window.open((window.SUP_BASE || '') + `/api/workbooks/${cur.id}/export`, '_blank');
+});
 
 /* 解析下拉选项键：形如「XX选项」且 XX 是真实表头列（排除「搜索选项」控件映射键）。
    坑：简单 endsWith('选项') 会先命中「搜索选项」（v0.7 遗留 bug，下拉从未弹出） */
@@ -399,34 +406,48 @@ document.addEventListener('click', (e) => {
     cell.textContent = v;
     allRows[curIdx][oy] = v;
     try { formGrid.setValueFromCoords(1, oy, v); } catch (e) {}   // 同步内部数据（否则网格数据与 allRows 脱节）
-    if (v) autoFillOnResult(oy);      // 内置规则：选中结果选项 → 自动填验收人+验收日期
+    syncAcceptCols(oy, v);            // 内置规则：选结果→自动填验收人+验收日期；选空→三字段全清
     scheduleRowSave();
   });
   sel.addEventListener('blur', () => { cell.textContent = allRows[curIdx][oy] || ''; });
 });
 
 /* 内置联动规则（通用，非本模板硬编码）：
-   任何「*选项」下拉列选中非空值时，自动填充：
-   - 验收人 = 当前登录用户（存在该列时）
-   - 验收日期（或 验收时间）= 今天 YYYY-MM-DD（存在该列时）
-   已有值会被覆盖（选结果的人即验收人，最后操作者生效） */
-function autoFillOnResult(resultColIdx) {
+   「*选项」下拉列选中非空值 → 验收人=当前登录用户、验收日期（或验收时间）=今天（列存在才填，覆盖旧值）
+   选中空（视为未验收）     → 验收人 / 验收日期（或验收时间）/ 验收备注 全部清空（列存在才清） */
+function syncAcceptCols(resultColIdx, v) {
   const user = ($('#whoami').dataset.user || '').trim();
   const today = new Date().toLocaleDateString('sv-SE');
-  const fill = (colName, val) => {
+  let di = cur.headers.indexOf('验收日期');
+  if (di < 0) di = cur.headers.indexOf('验收时间');
+  const dateCol = di >= 0 ? cur.headers[di] : null;
+
+  const setCol = (colName, val) => {
+    if (!colName) return false;
     const ci = cur.headers.indexOf(colName);
     if (ci < 0 || ci === resultColIdx) return false;
     if (allRows[curIdx][ci] === val) return false;
     allRows[curIdx][ci] = val;
     try { formGrid.setValueFromCoords(1, ci, val); } catch (e) {}
+    // 双保险：setValueFromCoords 后强制刷新单元格 DOM（历史问题：程序赋值后界面未更新）
+    try {
+      const cellEl = formGrid.getCell('B' + (ci + 1));
+      if (cellEl && cellEl.textContent !== String(val)) cellEl.textContent = String(val);
+    } catch (e) {}
     return true;
   };
-  let filled = false;
-  if (user) filled = fill('验收人', user) || filled;
-  let di = cur.headers.indexOf('验收日期');
-  if (di < 0) di = cur.headers.indexOf('验收时间');
-  if (di >= 0) filled = fill(di >= 0 ? cur.headers[di] : '', today) || filled;
-  if (filled) toast('已自动填入验收人/验收日期');
+
+  let changed = false;
+  if (v) {
+    changed = setCol('验收人', user) || changed;
+    changed = setCol(dateCol, today) || changed;
+    if (changed) toast('已自动填入验收人/验收日期');
+  } else {
+    changed = setCol('验收人', '') || changed;
+    changed = setCol(dateCol, '') || changed;
+    changed = setCol('验收备注', '') || changed;
+    if (changed) toast('验收结果已清空：验收人/验收日期/验收备注 一并清空');
+  }
 }
 
 /* 该小班的相片子目录（参数「目录」模板渲染 + 与后端 _safe_segments 同规则清洗） */
@@ -441,63 +462,73 @@ function rowSubdir() {
     .map((s) => sanitizeSeg(renderTpl(s, row, ''))).filter(Boolean).join('/');
 }
 
-/* 模板渲染：{{列名}}→行值；{{sheet名称}}→当前sheet；{{时间}}→YYYYMMDD_HHMMSS（C02 保留字） */
+/* 模板渲染：{{列名}}→行值；{{sheet名称}}→当前sheet；{{时间}}→YYYYMMDD_HHMMSS；
+   {{拍照人}}→当前登录用户（C02 保留字） */
 function renderTpl(tpl, row, now) {
   return (tpl || '').replace(/\{\{(.+?)\}\}/g, (_, key) => {
     key = key.trim();
     if (key === 'sheet名称') return cur.sheet_name;
     if (key === '时间') return now;
+    if (key === '拍照人') return ($('#whoami').dataset.user || '').trim();
     const i = cur.headers.indexOf(key);
     return i >= 0 ? String(row[i] == null ? '' : row[i]).trim() : '';
   });
 }
 
-/* 该小班相片墙：按参数目录过滤 */
-async function renderRowPhotos() {
-  const g = $('#rowPhotos');
-  g.innerHTML = '<span class="muted">相片加载中…</span>';
-  try {
-    const data = await api(`/api/workbooks/${cur.id}/photos`);
-    const prefix = rowSubdir();
-    const mine = data.photos.filter((p) => !prefix || p.path.startsWith(prefix + '/'));
-    g.innerHTML = '';
-    if (!mine.length) { g.innerHTML = '<span class="muted">该小班暂无相片，点「📷 拍照」开始。</span>'; return; }
-    for (const p of mine) {
-      const item = el(`<figure class="album-item" title="${escapeHtml(p.path)}（${(p.size / 1024).toFixed(0)} KB · ${p.mtime}）">
-        <img loading="lazy" src="${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}" alt="${escapeHtml(p.path)}">
-        <figcaption>${escapeHtml(p.path.split('/').pop())}</figcaption></figure>`);
-      item.querySelector('img').addEventListener('click', () =>
-        window.open(`${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}`, '_blank'));
-      g.appendChild(item);
-    }
-  } catch (e) { g.innerHTML = `<span class="err">${e.message}</span>`; }
+/* ── 拍摄记录（C07：相片不落服务器，仅本地记录文件名提示） ──
+   localStorage 按 workbook 记录 {文件名, 小班号, 时间}，页面只提示「已拍过什么」，不提供预览。 */
+function getShots() {
+  try { return JSON.parse(localStorage.getItem('hqz_sup_shots_' + cur.id) || '[]'); }
+  catch (e) { return []; }
 }
 
-/* ── 相册弹层（全部相片 + zip） ── */
-$('#btnAlbum').addEventListener('click', openAlbum);
+function recordShot(name, xh) {
+  const list = getShots();
+  list.unshift({ n: name, xh: xh || '', t: new Date().toLocaleString('sv-SE') });
+  try { localStorage.setItem('hqz_sup_shots_' + cur.id, JSON.stringify(list.slice(0, 500))); } catch (e) {}
+}
+
+/* 当前小班的拍摄提示列表（按小班号过滤，无小班号列时显示全部） */
+function renderShotList() {
+  const g = $('#rowPhotos');
+  const xh = rowVal('小班号');
+  const shots = getShots().filter((s) => (s.xh || '') === (xh || ''));
+  if (!shots.length) {
+    g.innerHTML = '<span class="muted">该小班还没有拍摄记录，点「📷 拍照」开始。</span>';
+    return;
+  }
+  g.innerHTML = '<div class="shot-list">' + shots.map((s) =>
+    `<div class="shot-item"><span>📷 ${escapeHtml(s.n)}</span><span class="spacer"></span><span class="t">${escapeHtml(s.t)}</span></div>`
+  ).join('') + '</div>';
+}
+
+/* ── 拍摄记录弹层（本工作簿全部记录，按小班分组展示） ── */
+$('#btnAlbum').addEventListener('click', openShots);
 $('#albumClose').addEventListener('click', () => $('#albumMask').classList.add('hidden'));
 $('#albumMask').addEventListener('click', (e) => { if (e.target === $('#albumMask')) $('#albumMask').classList.add('hidden'); });
 
-async function openAlbum() {
+function openShots() {
   const mask = $('#albumMask');
   mask.classList.remove('hidden');
-  $('#albumZip').href = `${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos.zip`;
-  $('#albumGrid').innerHTML = '<span class="muted">加载中…</span>';
-  try {
-    const data = await api(`/api/workbooks/${cur.id}/photos`);
-    $('#albumMeta').textContent = `${data.photos.length} 张`;
-    const g = $('#albumGrid');
-    g.innerHTML = '';
-    if (!data.photos.length) { g.innerHTML = '<span class="muted">暂无相片。</span>'; return; }
-    for (const p of data.photos) {
-      const item = el(`<figure class="album-item" title="${escapeHtml(p.path)}">
-        <img loading="lazy" src="${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}" alt="${escapeHtml(p.path)}">
-        <figcaption>${escapeHtml(p.path)}</figcaption></figure>`);
-      item.querySelector('img').addEventListener('click', () =>
-        window.open(`${window.SUP_BASE || ''}/api/workbooks/${cur.id}/photos/file/${encodeURIComponent(p.path)}`, '_blank'));
-      g.appendChild(item);
+  const shots = getShots();
+  $('#albumMeta').textContent = `${shots.length} 条拍摄记录（仅本机）`;
+  const g = $('#shotAll');
+  g.innerHTML = '';
+  if (!shots.length) { g.innerHTML = '<span class="muted">本机还没有拍摄记录。</span>'; return; }
+  const groups = new Map();
+  for (const s of shots) {
+    const k = s.xh || '(未编号)';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(s);
+  }
+  for (const [xh, items] of groups) {
+    g.appendChild(el(`<div class="shot-group"><b>小班 ${escapeHtml(xh)}</b> <span class="muted">${items.length} 张</span></div>`));
+    const box = el(`<div class="shot-list"></div>`);
+    for (const s of items) {
+      box.appendChild(el(`<div class="shot-item"><span>📷 ${escapeHtml(s.n)}</span><span class="spacer"></span><span class="t">${escapeHtml(s.t)}</span></div>`));
     }
-  } catch (err) { $('#albumGrid').innerHTML = `<span class="err">${err.message}</span>`; }
+    g.appendChild(box);
+  }
 }
 
 /* ── 拍照（B2）：参数化模板 + 固定日期水印 + 上传到参数目录（照片保留本地） ── */
@@ -512,15 +543,20 @@ function getCoords() {
   });
 }
 
-// 水印（黑字白边左下角 JPEG 0.92）；日期行固定输出（C06：水印日期不参数化）
+// 水印（黑字白边左下角）；压缩：最长边 1600px / JPEG 0.85；日期行固定输出（C06：水印日期不参数化）
+const PHOTO_MAX_SIDE = 1600;
+const PHOTO_QUALITY = 0.85;
+
 async function drawWatermark(file, remark, coords) {
   let bmp;
   try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
   catch (e) { bmp = await createImageBitmap(file); }
   const canvas = document.createElement('canvas');
-  canvas.width = bmp.width; canvas.height = bmp.height;
+  const scale = Math.min(1, PHOTO_MAX_SIDE / Math.max(bmp.width, bmp.height));
+  canvas.width = Math.max(1, Math.round(bmp.width * scale));
+  canvas.height = Math.max(1, Math.round(bmp.height * scale));
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(bmp, 0, 0);
+  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
   bmp.close && bmp.close();
 
   const lines = [`日期：${new Date().toLocaleDateString('sv-SE')}`];
@@ -542,7 +578,7 @@ async function drawWatermark(file, remark, coords) {
     y -= lh;
   }
   return new Promise((res, rej) =>
-    canvas.toBlob((b) => (b ? res(b) : rej(new Error('水印编码失败'))), 'image/jpeg', 0.92));
+    canvas.toBlob((b) => (b ? res(b) : rej(new Error('水印编码失败'))), 'image/jpeg', PHOTO_QUALITY));
 }
 
 $('#btnPhoto').addEventListener('click', () => {
@@ -581,10 +617,11 @@ $('#photoInput').addEventListener('change', async (e) => {
     const blob = await drawWatermark(file, remark, coords);
     const filename = sanitizeSeg(renderTpl(cur.config['相片文件名'] || '', row, ts)) || 'photo';
     const subdir = rowSubdir();
+    const xh = rowVal('小班号');
 
     // ① App 内：原生 MediaStore 存入系统相册 Pictures/{参数「目录」}/（多级子目录，相册立即可见）
-    //    与 hqz-survey 行为一致；Android 10+ 自有媒体免存储权限
-    let albumPath = '';
+    //    Android 10+ 自有媒体免存储权限；C07：不经过服务器。失败时回退为浏览器下载，不丢图
+    let savedWhere = '';
     if (isNativeApp()) {
       try {
         const plugin = window.Capacitor.Plugins.AppPermissions;
@@ -594,20 +631,27 @@ $('#photoInput').addEventListener('change', async (e) => {
             name: filename + '.jpg',
             subdir: subdir || '验收照片',
           });
-          albumPath = (r && r.path) || '';
+          savedWhere = (r && r.path) ? `已存入相册：${r.path}` : '已存入系统相册';
         }
-      } catch (err) { /* 相册保存失败不阻断，继续走服务器存档 */ }
+      } catch (err) { savedWhere = ''; }
+    }
+    if (!savedWhere) {
+      // ② 浏览器端 / App 相册保存失败回退：水印压缩后直接下载到本机
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename + '.jpg';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      savedWhere = `已下载：${filename}.jpg（${(blob.size / 1024).toFixed(0)} KB）`;
     }
 
-    // ② 上传服务器存档（管理端相片 zip/相片墙依赖；浏览器端唯一通道）
-    const fd = new FormData();
-    fd.append('file', blob, 'photo.jpg');
-    fd.append('filename', filename);
-    fd.append('subdir', subdir);
-    const r = await api(`/api/workbooks/${cur.id}/photos`, { method: 'POST', body: fd });
-    toast(albumPath ? `已存入相册：${albumPath}` : `已上传：${r.path}`);
-    renderRowPhotos();
-  } catch (err) { toast('拍照上传失败：' + err.message, true); }
+    // ③ 仅记录拍摄文件名提示（本机 localStorage，不上传）
+    recordShot(filename + '.jpg', xh);
+    toast(savedWhere);
+    renderShotList();
+  } catch (err) { toast('拍照处理失败：' + err.message, true); }
 });
 
 /* ── 轨迹（B3）：watchPosition 采集 → GPX 生成 → 上传后台 ── */

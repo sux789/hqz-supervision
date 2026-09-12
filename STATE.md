@@ -2,13 +2,14 @@
 
 > 每次迭代后更新，≤25 行。跨会话恢复先读本文件，不翻 doc/ 归档。
 
-- **版本**：v0.6 ｜ **更新**：2026-09-11
-- **能跑**：`python main.py` → http://127.0.0.1:8720（雷华雄/lhx123 登录）：上传 Excel→列表选择→参数驱动网格填表→保存；后台 /admin 模板管理+下载 Excel+轨迹下载
-- **已知问题**：admin 端无相片/轨迹在线预览（仅 zip 下载）；轨迹记录不支持后台运行（页面切换即停）
-- **能跑**：https://forest.bibook.top/supervision 已上线（gateway 挂载，账号 雷华雄/lhx123）；./deploy.sh 一键部署
-- **下一步**：1. [ ] 正式签名 keystore + CI release 构建 2. [ ] 网格交互打磨 3. [ ] 轨迹后台运行（Capacitor 插件，可选）
-- **最近迭代文档**：doc/004-后台与账号需求.md（轻后端架构反转 doc/003、账号 C05、水印日期 C06）
-- **活跃约束**：C01–C06（详见 CONSTRAINTS.md）
+- **版本**：v0.8 ｜ **更新**：2026-09-12
+- **能跑**：`python main.py` → http://127.0.0.1:8720（雷华雄/lhx123 登录）：上传 Excel→列表选择→参数驱动网格填表→保存；后台 /admin 模板管理+下载 Excel+轨迹下载+验收变更日志
+- **v0.8 变化**：相片不落服务器（App 存相册/浏览器下载，页面仅文件名提示，C07）；导出按上传模板回填（前端 /export + 后台 download 同链路，格式全保留）；验收联动（选结果填人/日期，选空清三字段）；验收4字段变更日志（accept_logs，后台可查）；图片压缩 1600px/0.85；{{拍照人}} 占位符；app.js?v=0.8 缓存熔断
+- **已知问题**：v0.8 前上传的旧工作簿无 source 模板，导出需重新上传；轨迹记录不支持后台运行（页面切换即停）
+- **能跑**：https://forest.bibook.top/supervision 已上线（v0.8 待 ./deploy.sh 部署）；账号 雷华雄/lhx123
+- **下一步**：1. [ ] ./deploy.sh 上线 v0.8 2. [ ] GitHub Secrets 配置（KEYSTORE_BASE64/KEY_ALIAS/KEYSTORE_PASSWORD/KEY_PASSWORD）→ tag 触发 CI 出正式签名 APK 3. [ ] APP 备案（阿里云/域名备案主体入口，填包名 top.bibook.supervision + SHA256 指纹，见 android/keystore-info.txt）
+- **最近迭代文档**：doc/006-v0.8_拍照本地化与验收联动.md
+- **活跃约束**：C01–C07（详见 CONSTRAINTS.md）
 
 ## 资产活跃度（每 5 版评审时更新）
 

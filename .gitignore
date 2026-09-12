@@ -12,3 +12,13 @@ android/build/
 android/local.properties
 android/.idea/
 android/capacitor-cordova-android-plugins/
+
+# 签名身份：绝不入库
+android/*.jks
+android/*.keystore
+android/keystore.properties
+android/keystore-info.txt
+
+# WPS/Excel 锁文件与 AI 生成图
+data/.~*
+generated-images/
