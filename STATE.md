@@ -9,7 +9,7 @@
 - **v0.8 变化**：相片不落服务器（App 存相册/浏览器下载）；导出按上传模板回填（格式全保留）；验收联动（选结果填人/日期，选空清三字段）；验收4字段变更日志；图片压缩 1600px/0.85；{{拍照人}} 占位符
 - **已知问题**：v0.8 前上传的旧工作簿无 source 模板，导出需重新上传；轨迹记录不支持后台运行；v0.8.1 前的旧拍摄记录只存文件名；v0.8.2 前已保存的行验收人为空（需重新选一次验收结果补填）
 - **能跑**：https://forest.bibook.top/supervision 已上线 v0.8.2（2026-09-12 ./deploy.sh 部署并 curl 验证）；账号 雷华雄/lhx123
-- **下一步**：1. [x] ./deploy.sh 上线 v0.8（含 v0.8.1/v0.8.2） 2. [ ] GitHub Secrets 配置（KEYSTORE_BASE64/KEY_ALIAS/KEYSTORE_PASSWORD/KEY_PASSWORD）→ tag 触发 CI 出正式签名 APK 3. [ ] APP 备案（阿里云/域名备案主体入口，填包名 top.bibook.supervision + SHA256 指纹，见 android/keystore-info.txt）
+- **下一步**：1. [x] ./deploy.sh 上线 v0.8（含 v0.8.1/v0.8.2） 2. [ ] 相片云同步：doc/007 设计评审稿（服务器→COS 暂存→百度网盘，状态机 received/cos_ok/baidu_ok），待用户确认开放问题后排期 M1-M3 3. [ ] GitHub Secrets 配置（KEYSTORE_BASE64/KEY_ALIAS/KEYSTORE_PASSWORD/KEY_PASSWORD）→ tag 触发 CI 出正式签名 APK 4. [ ] APP 备案（阿里云/域名备案主体入口，填包名 top.bibook.supervision + SHA256 指纹，见 android/keystore-info.txt）
 - **最近迭代文档**：doc/006-v0.8_拍照本地化与验收联动.md
 - **活跃约束**：C01–C07（详见 CONSTRAINTS.md）
 
