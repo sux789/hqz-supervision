@@ -577,7 +577,12 @@ async function drawWatermark(file, remark, coords, opts) {
   ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
   bmp.close && bmp.close();
 
-  const lines = [`日期：${new Date().toLocaleDateString('sv-SE')}`];
+  // 首行：完整时间戳 yyyy-MM-dd HH:mm:ss（本地时区；C06：水印时间不参数化）
+  const now = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  const stamp = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`
+    + ` ${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}`;
+  const lines = [`时间：${stamp}`];
   if (coords) lines.push(`坐标：${coords}`);
   for (const [i, seg] of (remark.match(/[\s\S]{1,22}/g) || []).entries()) {
     lines.push((i === 0 ? '备注：' : '') + seg);
