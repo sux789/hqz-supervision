@@ -421,8 +421,9 @@ def try_push_pending(con, limit: int = 3, pending_dir=None) -> int:
     return ok
 
 
-def purge_expired(con) -> int:
-    """清理七牛副本：baidu_ok 且 synced_at 超过保留期（keep_days=0 立即清）。"""
+def purge_expired(con, limit: int = 20) -> int:
+    """清理七牛副本：baidu_ok 且 synced_at 超过保留期（keep_days=0 立即清）。
+    limit 单次上限（后台线程分批跑，避免单次网络请求过多）。"""
     s = get_settings(con)
     try:
         keep = int(s.get('sync_keep_days') or 30)
@@ -432,7 +433,8 @@ def purge_expired(con) -> int:
         return 0
     rows = con.execute(
         "SELECT id, qiniu_key FROM photo_sync WHERE state='baidu_ok' AND purged_at IS NULL"
-        " AND synced_at <= datetime('now', ?)", (f'-{keep} days',)).fetchall()
+        " AND synced_at <= datetime('now', ?) ORDER BY id LIMIT ?",
+        (f'-{keep} days', limit)).fetchall()
     if not rows:
         return 0
     try:

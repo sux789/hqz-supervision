@@ -11,6 +11,7 @@ import io
 import json
 import re
 import sqlite3
+import threading
 import zipfile
 from datetime import datetime
 from functools import wraps
@@ -435,8 +436,18 @@ def api_photo():
             con.execute("UPDATE photo_sync SET retry_count=retry_count+1, last_error=?"
                         " WHERE id=?", (str(e)[:500], pid))
             con.commit()
+        # 积压补推 + 七牛副本清理：放后台 daemon 线程（不阻塞拍照响应；
+        # 线程用独立 sqlite 连接，gunicorn worker 退出被杀也无害——下次触发自动续做）
         if pushed:
-            sync_cloud.try_push_pending(con, limit=2, pending_dir=PENDING_DIR)  # 顺手补推少量积压
+            def _bg_sync():
+                try:
+                    c = db()
+                    sync_cloud.try_push_pending(c, limit=2, pending_dir=PENDING_DIR)
+                    sync_cloud.purge_expired(c, limit=20)
+                    c.close()
+                except Exception:
+                    pass
+            threading.Thread(target=_bg_sync, daemon=True).start()
         row = con.execute('SELECT state, last_error FROM photo_sync WHERE id=?', (pid,)).fetchone()
         return jsonify(ok=True, id=pid, state=row['state'],
                        error=row['last_error'] or None)
