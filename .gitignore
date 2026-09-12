@@ -22,3 +22,6 @@ android/keystore-info.txt
 # WPS/Excel 锁文件与 AI 生成图
 data/.~*
 generated-images/
+
+# 本地调试产物（playwright 快照/日志）
+.playwright-cli/

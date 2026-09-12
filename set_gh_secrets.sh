@@ -12,7 +12,7 @@ ALIAS=$(awk '/^keyAlias:/{print $2}' "$P")
 SP=$(awk '/^storePassword:/{print $2}' "$P")
 KP=$(awk '/^keyPassword:/{print $2}' "$P")
 
-base64 -i android/supervision-release.jks | gh secret set KEYSTORE_BASE64 -R "$REPO" --body-file -
+base64 -i android/supervision-release.jks | gh secret set KEYSTORE_BASE64 -R "$REPO"
 gh secret set KEY_ALIAS         -R "$REPO" --body "$ALIAS"
 gh secret set KEYSTORE_PASSWORD -R "$REPO" --body "$SP"
 gh secret set KEY_PASSWORD      -R "$REPO" --body "$KP"
