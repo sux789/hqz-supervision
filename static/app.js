@@ -558,16 +558,19 @@ function getCoords() {
   });
 }
 
-// 水印（黑字白边左下角）；压缩：最长边 1600px / JPEG 0.85；日期行固定输出（C06：水印日期不参数化）
+// 水印（黑字白边左下角）；压缩默认 1600px / 0.85，可由参数 sheet「压缩最长边/压缩质量」下发（doc/007 §6）
+// 日期行固定输出（C06：水印日期不参数化）
 const PHOTO_MAX_SIDE = 1600;
 const PHOTO_QUALITY = 0.85;
 
-async function drawWatermark(file, remark, coords) {
+async function drawWatermark(file, remark, coords, opts) {
+  const maxSide = (opts && opts.maxSide) || PHOTO_MAX_SIDE;
+  const quality = (opts && opts.quality) || PHOTO_QUALITY;
   let bmp;
   try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
   catch (e) { bmp = await createImageBitmap(file); }
   const canvas = document.createElement('canvas');
-  const scale = Math.min(1, PHOTO_MAX_SIDE / Math.max(bmp.width, bmp.height));
+  const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
   canvas.width = Math.max(1, Math.round(bmp.width * scale));
   canvas.height = Math.max(1, Math.round(bmp.height * scale));
   const ctx = canvas.getContext('2d');
@@ -629,7 +632,10 @@ $('#photoInput').addEventListener('change', async (e) => {
       String(now.getMinutes()).padStart(2, '0') + String(now.getSeconds()).padStart(2, '0');
     const coords = await getCoords();
     const remark = renderTpl(cur.config['相片备注'] || '', row, ts);
-    const blob = await drawWatermark(file, remark, coords);
+    // 压缩参数：参数 sheet 可下发「压缩最长边/压缩质量」，缺省 1600/0.85
+    const maxSide = parseInt(cur.config['压缩最长边'], 10) || PHOTO_MAX_SIDE;
+    const quality = Math.min(1, Math.max(0.1, parseFloat(cur.config['压缩质量']) || PHOTO_QUALITY));
+    const blob = await drawWatermark(file, remark, coords, { maxSide, quality });
     const filename = sanitizeSeg(renderTpl(cur.config['相片文件名'] || '', row, ts)) || 'photo';
     const subdir = rowSubdir();
     const xh = rowVal('小班号');
