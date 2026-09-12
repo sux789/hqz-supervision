@@ -558,10 +558,10 @@ function getCoords() {
   });
 }
 
-// 水印（黑字白边左下角）；压缩默认 1600px / 0.85，可由参数 sheet「压缩最长边/压缩质量」下发（doc/007 §6）
+// 水印（半透明白底块 + 实心黑字，左下角）；压缩默认 1440px / 0.80，可由参数 sheet「压缩最长边/压缩质量」下发（doc/007 §6）
 // 日期行固定输出（C06：水印日期不参数化）
-const PHOTO_MAX_SIDE = 1600;
-const PHOTO_QUALITY = 0.85;
+const PHOTO_MAX_SIDE = 1440;
+const PHOTO_QUALITY = 0.80;
 
 async function drawWatermark(file, remark, coords, opts) {
   const maxSide = (opts && opts.maxSide) || PHOTO_MAX_SIDE;
@@ -583,17 +583,42 @@ async function drawWatermark(file, remark, coords, opts) {
     lines.push((i === 0 ? '备注：' : '') + seg);
   }
 
+  // 水印版式（省比特版式）：半透明白底块 + 实心黑字。
+  // 旧版「白描边黑字」的描边是高频边缘，JPEG 要为它花大量比特；改成底块后
+  // 同等质量下体积更小、文字更清晰（无彩边/马赛克）。
   const fs = Math.max(18, Math.round(canvas.width / 34));
   const lh = Math.round(fs * 1.35);
+  const padX = Math.round(fs * 0.45);
+  const padY = Math.round(fs * 0.34);
+  const margin = Math.round(fs * 0.5);
   ctx.font = `${fs}px system-ui,'PingFang SC','Microsoft YaHei',sans-serif`;
   ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
-  ctx.lineWidth = Math.max(3, Math.round(fs / 8));
-  ctx.strokeStyle = 'rgba(255,255,255,.92)'; ctx.fillStyle = '#111';
-  let y = canvas.height - Math.round(fs * 0.6);
+
+  // ① 底块尺寸 = 最长行宽 + 内边距；贴左下角（与旧版位置一致）
+  let textW = 0;
+  for (const ln of lines) textW = Math.max(textW, ctx.measureText(ln).width);
+  const boxW = Math.min(canvas.width - margin * 2, Math.ceil(textW) + padX * 2);
+  const boxH = lines.length * lh + padY * 2;
+  const boxX = margin;
+  const boxY = Math.max(margin, canvas.height - boxH - margin);
+
+  // ② 半透明白底块（alpha 0.62：保证压住深色背景又不切断背景内容）
+  const r = Math.round(fs * 0.3);
+  ctx.fillStyle = 'rgba(255,255,255,.62)';
+  ctx.beginPath();
+  ctx.moveTo(boxX + r, boxY);
+  ctx.lineTo(boxX + boxW - r, boxY); ctx.quadraticCurveTo(boxX + boxW, boxY, boxX + boxW, boxY + r);
+  ctx.lineTo(boxX + boxW, boxY + boxH - r); ctx.quadraticCurveTo(boxX + boxW, boxY + boxH, boxX + boxW - r, boxY + boxH);
+  ctx.lineTo(boxX + r, boxY + boxH); ctx.quadraticCurveTo(boxX, boxY + boxH, boxX, boxY + boxH - r);
+  ctx.lineTo(boxX, boxY + r); ctx.quadraticCurveTo(boxX, boxY, boxX + r, boxY);
+  ctx.closePath();
+  ctx.fill();
+
+  // ③ 实心黑字（单色 = 低熵，压缩友好）
+  ctx.fillStyle = '#111';
   for (let i = lines.length - 1; i >= 0; i--) {
-    const x = Math.round(fs * 0.6);
-    ctx.strokeText(lines[i], x, y); ctx.fillText(lines[i], x, y);
-    y -= lh;
+    const y = boxY + boxH - padY - (lines.length - 1 - i) * lh;
+    ctx.fillText(lines[i], boxX + padX, y);
   }
   return new Promise((res, rej) =>
     canvas.toBlob((b) => (b ? res(b) : rej(new Error('水印编码失败'))), 'image/jpeg', quality));
@@ -632,7 +657,7 @@ $('#photoInput').addEventListener('change', async (e) => {
       String(now.getMinutes()).padStart(2, '0') + String(now.getSeconds()).padStart(2, '0');
     const coords = await getCoords();
     const remark = renderTpl(cur.config['相片备注'] || '', row, ts);
-    // 压缩参数：参数 sheet 可下发「压缩最长边/压缩质量」，缺省 1600/0.85
+    // 压缩参数：参数 sheet 可下发「压缩最长边/压缩质量」，缺省 1440/0.80（方案 A）
     const maxSide = parseInt(cur.config['压缩最长边'], 10) || PHOTO_MAX_SIDE;
     const quality = Math.min(1, Math.max(0.1, parseFloat(cur.config['压缩质量']) || PHOTO_QUALITY));
     const blob = await drawWatermark(file, remark, coords, { maxSide, quality });
