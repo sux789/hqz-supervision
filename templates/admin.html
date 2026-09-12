@@ -40,6 +40,41 @@
     </section>
 
     <section class="card">
+      <h2>相片云同步（七牛暂存 → 百度网盘）</h2>
+      <p class="muted">
+        链路：App 拍照 → 服务器中转 → 七牛 zz-1 暂存 → 百度网盘 <span id="syncPath" class="mono"></span>（与手机相册 Pictures/ 目录镜像）。
+        开关关闭时拍照仅存手机相册，不经过服务器。
+      </p>
+      <label style="display:inline-flex;align-items:center;gap:8px;font-weight:600;margin-bottom:8px;">
+        <input type="checkbox" id="syncEnabled"> 启用云同步
+        <span id="syncReady" class="muted"></span>
+      </label>
+      <div class="sync-grid">
+        <label>七牛 AccessKey<input id="syncQiniuAk" placeholder="AK"></label>
+        <label>七牛 SecretKey<input id="syncQiniuSk" type="password" placeholder="留空保持不变"></label>
+        <label>七牛 Bucket<input id="syncQiniuBucket" placeholder="zz-1"></label>
+        <label>百度 AppKey<input id="syncBaiduAppKey" placeholder="app_key"></label>
+        <label>百度 SecretKey<input id="syncBaiduSecretKey" type="password" placeholder="留空保持不变"></label>
+        <label>网盘应用目录<input id="syncBaiduAppDir" placeholder="/apps/...（由百度应用固定）"></label>
+        <label>网盘子目录<input id="syncBaiduPrefix" placeholder="supervision"></label>
+        <label>七牛副本保留（天，0=百度成功即删，-1=永久）<input id="syncKeepDays" type="number"></label>
+      </div>
+      <label>百度 token 导入（直接粘贴 trans_v2 的 .baidu_pan_token.json 内容，凭证须与 token 签发应用成套一致）</label>
+      <textarea id="syncBaiduToken" rows="3" placeholder='{"expires_in":..., "refresh_token":"...", "access_token":"...", ...}'></textarea>
+      <div class="btnrow">
+        <button id="btnSyncSave" class="btn primary">保存同步设置</button>
+        <button id="btnSyncRetry" class="btn">重推全部待推送</button>
+        <span id="syncMsg" class="err"></span>
+      </div>
+      <h3 style="margin:14px 0 6px;">同步状态 <button id="btnSyncRefresh" class="btn ghost">刷新</button></h3>
+      <div id="syncCounts" class="sync-counts"></div>
+      <table class="tbl" id="tblSync">
+        <thead><tr><th>ID</th><th>工作簿</th><th>小班</th><th>文件</th><th>状态</th><th>重试</th><th>时间</th><th>错误</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section class="card">
       <h2>验收变更日志</h2>
       <p class="muted">验收人 / 验收日期（时间）/ 验收结果 / 验收备注 的每次修改（最近 300 条）。</p>
       <table class="tbl" id="tblLogs">
@@ -51,6 +86,6 @@
 
   <div id="toast" class="toast hidden"></div>
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
-  <script src="{{ url_for('static', filename='admin.js') }}?v=0.8"></script>
+  <script src="{{ url_for('static', filename='admin.js') }}?v=0.8.3"></script>
 </body>
 </html>

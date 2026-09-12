@@ -20,14 +20,16 @@ import openpyxl
 from flask import (Blueprint, Flask, abort, jsonify, redirect, render_template,
                    request, send_file, session, url_for)
 
+import sync_cloud
 from param_parser import ParamError, _s, parse_params, split_list
 
 BASE = Path(__file__).resolve().parent
 DATA_DIR = BASE / 'data'
 UPLOAD_DIR = DATA_DIR / 'workbooks'
 TRACK_DIR = DATA_DIR / 'tracks'
+PENDING_DIR = DATA_DIR / 'pending'  # 云同步待推送缓冲（百度成功即删，C07 不长期存储）
 DB_PATH = DATA_DIR / 'app.sqlite3'
-for d in (UPLOAD_DIR, TRACK_DIR):
+for d in (UPLOAD_DIR, TRACK_DIR, PENDING_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 PORT = 8720  # 独立端口（C03：不与 hqz-survey / hqz-cam-app 冲突）
@@ -62,11 +64,30 @@ def init_db():
             old_value TEXT, new_value TEXT,
             operator TEXT NOT NULL,
             created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS settings(
+            key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS photo_sync(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workbook_id INTEGER NOT NULL,
+            xiaoban TEXT DEFAULT '',
+            filename TEXT NOT NULL,
+            remote_path TEXT NOT NULL,
+            qiniu_key TEXT NOT NULL,
+            size INTEGER NOT NULL DEFAULT 0,
+            state TEXT NOT NULL DEFAULT 'received',
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            synced_at TEXT, purged_at TEXT);
+        CREATE INDEX IF NOT EXISTS idx_photo_state ON photo_sync(state);
     ''')
     if not con.execute('SELECT 1 FROM users').fetchone():
         con.execute(
             'INSERT INTO users VALUES(?,?,?)',
             ('雷华雄', hashlib.sha256('lhx123'.encode()).hexdigest(), 'admin'))
+    # settings 非密钥默认值预置（真实 AK/SK / 百度凭证由一次性脚本写入，不进代码）
+    for k, v in sync_cloud.SYNC_DEFAULTS.items():
+        con.execute('INSERT OR IGNORE INTO settings(key, value) VALUES(?,?)', (k, v))
     con.commit()
     con.close()
 
@@ -337,6 +358,92 @@ def api_track():
     return jsonify(ok=True, file=path.name)
 
 
+# ────────────────────────── 相片云同步（doc/007） ──────────────────────────
+# C07 修订：服务器不长期存储——照片只在七牛 zz-1 暂存，百度成功后按保留期清理。
+# 仅 App 端调用（浏览器端不拍照）；开关关闭 → 423，前端静默跳过。
+
+_PHOTO_MAX = 2 * 1024 * 1024  # 2MB（App 端压缩后 300-500KB）
+
+
+@bp.route('/api/sync/enabled', methods=['GET'])
+@login_required
+def api_sync_enabled():
+    con = db()
+    s = sync_cloud.get_settings(con)
+    con.close()
+    return jsonify(enabled=s.get('sync_enabled') == '1')
+
+
+@bp.route('/api/photo', methods=['POST'])
+@login_required
+def api_photo():
+    con = db()
+    try:
+        s = sync_cloud.get_settings(con)
+        if s.get('sync_enabled') != '1':
+            return jsonify(error='云同步未开启（后台「同步设置」）'), 423
+        fs = request.files.get('file')
+        if not fs:
+            return jsonify(error='缺少 file'), 400
+        data = fs.read()
+        if not data or len(data) > _PHOTO_MAX:
+            return jsonify(error=f'照片大小超出限制（≤{_PHOTO_MAX // 1024}KB）'), 400
+        r = request.form
+        try:
+            wid = int(r.get('workbook_id') or 0)
+        except ValueError:
+            return jsonify(error='workbook_id 无效'), 400
+        filename = re.sub(r'[\\/:*?"<>|]+', '_', (r.get('filename') or '').strip())
+        if not filename.lower().endswith('.jpg'):
+            filename += '.jpg'
+        subdir = re.sub(r'^/+|/+$', '', r.get('subdir') or '')
+        if not all(re.match(r'^[^\\/:*?"<>|]+$', seg) for seg in subdir.split('/') if seg):
+            return jsonify(error='subdir 含非法字符'), 400
+        xiaoban = (r.get('xiaoban') or '').strip()[:64]
+
+        qiniu_key, remote_path = sync_cloud.photo_paths(s, subdir, filename)
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cur = con.execute(
+            'INSERT INTO photo_sync(workbook_id, xiaoban, filename, remote_path,'
+            ' qiniu_key, size, state, created_at) VALUES(?,?,?,?,?,?,?,?)',
+            (wid, xiaoban, filename, remote_path, qiniu_key, len(data), 'received', now))
+        pid = cur.lastrowid
+        con.commit()
+        # 待推送缓冲（data/pending/{id}.jpg）：百度成功即删（C07 修订：不长期存储）
+        (PENDING_DIR / f'{pid}.jpg').write_bytes(data)
+
+        # 第一跳：七牛暂存（异地备份；失败不阻塞——本地缓冲可支撑后续推送）
+        try:
+            sync_cloud.QiniuClient(s['sync_qiniu_ak'], s['sync_qiniu_sk'],
+                                   s['sync_qiniu_bucket']).put_bytes(
+                qiniu_key, data, mime='image/jpeg')
+            con.execute("UPDATE photo_sync SET state='qiniu_ok' WHERE id=?", (pid,))
+            con.commit()
+        except sync_cloud.SyncError as e:
+            con.execute('UPDATE photo_sync SET retry_count=retry_count+1, last_error=?'
+                        ' WHERE id=?', (str(e)[:500], pid))
+            con.commit()
+
+        # 第二跳（懒触发）：立即尝试一次百度推送，失败留给积压等后台手动重推
+        pushed = False
+        try:
+            row = con.execute('SELECT * FROM photo_sync WHERE id=?', (pid,)).fetchone()
+            sync_cloud.push_to_baidu(con, row, PENDING_DIR)
+            con.commit()
+            pushed = True
+        except sync_cloud.SyncError as e:
+            con.execute("UPDATE photo_sync SET retry_count=retry_count+1, last_error=?"
+                        " WHERE id=?", (str(e)[:500], pid))
+            con.commit()
+        if pushed:
+            sync_cloud.try_push_pending(con, limit=2, pending_dir=PENDING_DIR)  # 顺手补推少量积压
+        row = con.execute('SELECT state, last_error FROM photo_sync WHERE id=?', (pid,)).fetchone()
+        return jsonify(ok=True, id=pid, state=row['state'],
+                       error=row['last_error'] or None)
+    finally:
+        con.close()
+
+
 # ────────────────────────── 导出（按上传模板回填，保留原始格式） ──────────────────────────
 # C07：相片不落服务器，原相片上传/预览/zip 路由已移除（v0.8）。
 
@@ -426,6 +533,120 @@ def admin_accept_logs():
         ' ORDER BY l.id DESC LIMIT 300').fetchall()
     con.close()
     return jsonify(logs=[dict(x) for x in rows])
+
+
+# ────────────────────────── 后台：同步设置与状态（doc/007 §5/§7） ──────────────────────────
+
+_SYNC_EDITABLE = set(sync_cloud.SYNC_DEFAULTS)  # 允许后台写入的键
+_SYNC_SECRET = sync_cloud.SECRET_KEYS
+
+
+def _mask(s: dict) -> dict:
+    out = dict(s)
+    out['has_qiniu_sk'] = bool(s.get('sync_qiniu_sk'))
+    out['has_baidu_secret'] = bool(s.get('sync_baidu_secret_key'))
+    tok = sync_cloud._load_token(s)
+    out['has_token'] = bool(tok.get('access_token'))
+    out['token_expires_at'] = (int(tok['expires_at']) if tok.get('expires_at') else None)
+    for k in _SYNC_SECRET:
+        out.pop(k, None)
+    return out
+
+
+@bp.route('/admin/api/sync/settings', methods=['GET'])
+@admin_required
+def admin_sync_get():
+    con = db()
+    s = sync_cloud.get_settings(con)
+    con.close()
+    ready, missing = sync_cloud.sync_ready(s)
+    return jsonify(settings=_mask(s), ready=ready, missing=missing)
+
+
+@bp.route('/admin/api/sync/settings', methods=['POST'])
+@admin_required
+def admin_sync_set():
+    data = request.get_json(force=True)
+    con = db()
+    try:
+        for k, v in (data.get('settings') or {}).items():
+            if k not in _SYNC_EDITABLE:
+                return jsonify(error=f'未知配置键：{k}'), 400
+            v = str(v).strip()
+            if k in _SYNC_SECRET and not v:
+                continue  # secret 留空 = 保持原值
+            if k == 'sync_baidu_token' and v:
+                try:
+                    tok = json.loads(v)
+                    assert tok.get('access_token') and tok.get('refresh_token')
+                except Exception:
+                    return jsonify(error='token JSON 无效：需含 access_token 与 refresh_token'), 400
+                tok.setdefault('expires_at', __import__('time').time() + tok.get('expires_in', 2592000))
+                v = json.dumps(tok, ensure_ascii=False)
+            if k == 'sync_enabled' and v == '1':
+                s = sync_cloud.get_settings(con)
+                probe = dict(s)
+                probe.update({kk: str(vv).strip() for kk, vv in (data.get('settings') or {}).items()})
+                ok, missing = sync_cloud.sync_ready(probe)
+                if not ok:
+                    return jsonify(error='开启失败，缺配置：' + '、'.join(missing)), 400
+            sync_cloud.set_setting(con, k, v)
+        con.commit()
+        s = sync_cloud.get_settings(con)
+        return jsonify(ok=True, settings=_mask(s))
+    finally:
+        con.close()
+
+
+@bp.route('/admin/api/sync/status', methods=['GET'])
+@admin_required
+def admin_sync_status():
+    con = db()
+    try:
+        counts = {r['state']: r['n'] for r in con.execute(
+            'SELECT state, COUNT(*) AS n FROM photo_sync GROUP BY state')}
+        recent = con.execute(
+            'SELECT p.id, p.workbook_id, w.name AS wb_name, p.xiaoban, p.filename,'
+            ' p.state, p.retry_count, p.last_error, p.created_at, p.synced_at'
+            ' FROM photo_sync p LEFT JOIN workbooks w ON w.id = p.workbook_id'
+            ' ORDER BY p.id DESC LIMIT 30').fetchall()
+        purged = sync_cloud.purge_expired(con)  # 顺手做生命周期清理
+        s = sync_cloud.get_settings(con)
+        return jsonify(counts=counts, purged=purged,
+                       recent=[dict(x) for x in recent],
+                       token_expires_at=_mask(s).get('token_expires_at'))
+    finally:
+        con.close()
+
+
+@bp.route('/admin/api/sync/retry', methods=['POST'])
+@admin_required
+def admin_sync_retry():
+    ids = (request.get_json(silent=True) or {}).get('ids') or []
+    con = db()
+    try:
+        if ids:
+            rows = con.execute(
+                "SELECT * FROM photo_sync WHERE state IN ('received','qiniu_ok')"
+                " AND id IN (%s)" % ','.join('?' * len(ids)), ids).fetchall()
+        else:
+            rows = con.execute(
+                "SELECT * FROM photo_sync WHERE state IN ('received','qiniu_ok')"
+                " ORDER BY id LIMIT 100").fetchall()
+        ok = fail = 0
+        for row in rows:
+            try:
+                sync_cloud.push_to_baidu(con, row, PENDING_DIR)
+                con.commit()
+                ok += 1
+            except sync_cloud.SyncError as e:
+                con.execute("UPDATE photo_sync SET retry_count=retry_count+1, last_error=?"
+                            " WHERE id=?", (str(e)[:500], row['id']))
+                con.commit()
+                fail += 1
+        return jsonify(ok=ok, fail=fail)
+    finally:
+        con.close()
 
 
 @bp.route('/admin/api/tracks', methods=['GET'])

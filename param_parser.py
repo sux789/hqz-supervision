@@ -6,7 +6,8 @@
 - 多值用半角 ';'；项内子字段用半角 '|'；目录 '/'；文件名段 '_'；占位符 '{{}}'
 - 未知 key / 全角分隔符 / 占位符列名不在数据表头 → ParamError（带行号），不静默跳过
 
-8 键：相片备注 / 相片文件名 / 目录 / 验收结果选项 / 可编辑列 / 不显示列 / 功能 / 搜索选项
+10 键：相片备注 / 相片文件名 / 目录 / 验收结果选项 / 可编辑列 / 不显示列 / 功能 / 搜索选项 /
+     压缩最长边 / 压缩质量（doc/007 §6，可选，仅影响新拍照片）
 """
 import re
 
@@ -22,6 +23,8 @@ KEYS = {
     '不显示列': '列表',
     '功能': '列表',
     '搜索选项': '控件映射',
+    '压缩最长边': '数值',
+    '压缩质量': '数值',
 }
 
 REQUIRED = ['相片备注', '相片文件名', '目录', '可编辑列', '功能']
@@ -111,6 +114,17 @@ def parse_params(param_rows, headers):
                     raise ParamError(f'参数 sheet 第{rno}行 key「搜索选项」：字段「{parts[0]}」不在数据 sheet 表头中')
                 if parts[1] not in ('select', 'search'):
                     raise ParamError(f'参数 sheet 第{rno}行 key「搜索选项」：控件类型「{parts[1]}」不支持（select=search / select=下拉）')
+
+        # 数值类：正整数 / 0-1 小数
+        if KEYS[key] == '数值' and value:
+            try:
+                n = float(value)
+            except ValueError:
+                raise ParamError(f'参数 sheet 第{rno}行 key「{key}」：value「{value}」不是数值')
+            if key == '压缩最长边' and not (300 <= n <= 8000):
+                raise ParamError(f'参数 sheet 第{rno}行 key「压缩最长边」：应在 300-8000 之间')
+            if key == '压缩质量' and not (0.1 <= n <= 1):
+                raise ParamError(f'参数 sheet 第{rno}行 key「压缩质量」：应在 0.1-1 之间')
 
         cfg[key] = value
         seen[key] = rno

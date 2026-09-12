@@ -593,7 +593,7 @@ async function drawWatermark(file, remark, coords) {
     y -= lh;
   }
   return new Promise((res, rej) =>
-    canvas.toBlob((b) => (b ? res(b) : rej(new Error('水印编码失败'))), 'image/jpeg', PHOTO_QUALITY));
+    canvas.toBlob((b) => (b ? res(b) : rej(new Error('水印编码失败'))), 'image/jpeg', quality));
 }
 
 $('#btnPhoto').addEventListener('click', () => {
@@ -667,7 +667,26 @@ $('#photoInput').addEventListener('change', async (e) => {
       ? `Pictures/${subdir || '验收照片'}/${filename}.jpg`
       : `${filename}.jpg`;
     recordShot(dispPath, xh);
-    toast(savedWhere);
+
+    // ④ 云同步中转（doc/007）：后台开关开启时 → POST /api/photo（七牛暂存→百度网盘）。
+    //    本地保存永远是第一优先，云同步失败只提示，不丢图
+    let syncMsg = '';
+    try {
+      const st = await api('/api/sync/enabled');
+      if (st.enabled) {
+        const fd = new FormData();
+        fd.append('file', blob, filename + '.jpg');
+        fd.append('workbook_id', cur.id);
+        fd.append('filename', filename + '.jpg');
+        fd.append('subdir', subdir || '');
+        fd.append('xiaoban', xh || '');
+        const r = await api('/api/photo', { method: 'POST', body: fd });
+        syncMsg = (r.state === 'baidu_ok') ? '；已同步百度网盘'
+          : (r.state === 'qiniu_ok') ? '；已暂存云端（待推送）' : '；云同步失败：' + (r.error || '稍后自动重试');
+      }
+    } catch (err) { syncMsg = '；云同步失败：' + err.message; }
+
+    toast(savedWhere + syncMsg);
     renderShotList();
   } catch (err) { toast('拍照处理失败：' + err.message, true); }
 });

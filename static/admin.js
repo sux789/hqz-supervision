@@ -98,6 +98,98 @@ $('#adminFile').addEventListener('change', async (e) => {
 
 $('#btnZip').addEventListener('click', () => { location.href = (window.SUP_BASE || '') + '/admin/api/tracks.zip'; });
 
+/* ── 相片云同步（doc/007） ── */
+function fmtTokenExp(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  const days = Math.round((ts * 1000 - Date.now()) / 86400000);
+  return `${d.toLocaleDateString('sv-SE')}（剩 ${days} 天）`;
+}
+
+async function loadSyncSettings() {
+  const data = await api('/admin/api/sync/settings');
+  const s = data.settings;
+  $('#syncEnabled').checked = s.sync_enabled === '1';
+  $('#syncQiniuAk').value = s.sync_qiniu_ak || '';
+  $('#syncQiniuBucket').value = s.sync_qiniu_bucket || '';
+  $('#syncBaiduAppKey').value = s.sync_baidu_app_key || '';
+  $('#syncBaiduAppDir').value = s.sync_baidu_app_dir || '';
+  $('#syncBaiduPrefix').value = s.sync_baidu_prefix || '';
+  $('#syncKeepDays').value = s.sync_keep_days != null ? s.sync_keep_days : '30';
+  $('#syncReady').textContent = data.ready
+    ? '✓ 配置齐全' : '⚠ 缺配置：' + data.missing.join('、');
+  $('#syncPath').textContent = `${s.sync_baidu_app_dir}/${s.sync_baidu_prefix}/{参数目录}/{文件名}.jpg`;
+}
+
+async function loadSyncStatus() {
+  const data = await api('/admin/api/sync/status');
+  const c = data.counts || {};
+  const order = ['received', 'qiniu_ok', 'baidu_ok'];
+  $('#syncCounts').innerHTML = order.map((k) =>
+    `<span class="cnt cnt-${k}">${({received: '接收', qiniu_ok: '已暂存', baidu_ok: '已同步百度'})[k]} <b>${c[k] || 0}</b></span>`
+  ).join('') + (data.token_expires_at ? `<span class="cnt muted">token 有效期至 ${fmtTokenExp(data.token_expires_at)}</span>` : '')
+    + (data.purged ? `<span class="cnt muted">本次清理七牛副本 ${data.purged} 个</span>` : '');
+  const tb = $('#tblSync tbody');
+  tb.innerHTML = '';
+  if (!data.recent.length) {
+    tb.innerHTML = '<tr><td colspan="8" class="muted">暂无同步记录（开启同步后拍照即产生）</td></tr>';
+    return;
+  }
+  for (const p of data.recent) {
+    const st = ({received: '接收', qiniu_ok: '已暂存', baidu_ok: '✓已同步'})[p.state] || p.state;
+    const t = p.state === 'baidu_ok' ? p.synced_at : p.created_at;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${p.id}</td><td>${escape(p.wb_name || p.workbook_id)}</td>
+      <td>${escape(p.xiaoban || '-')}</td><td>${escape(p.filename)}</td>
+      <td class="st-${p.state}">${st}</td><td>${p.retry_count}</td><td>${escape(t || '')}</td>
+      <td class="err-cell">${escape((p.last_error || '').slice(0, 120))}</td>`;
+    tb.appendChild(tr);
+  }
+}
+
+$('#btnSyncSave').addEventListener('click', async () => {
+  $('#syncMsg').textContent = '';
+  const settings = {
+    sync_enabled: $('#syncEnabled').checked ? '1' : '0',
+    sync_qiniu_ak: $('#syncQiniuAk').value,
+    sync_qiniu_sk: $('#syncQiniuSk').value,
+    sync_qiniu_bucket: $('#syncQiniuBucket').value,
+    sync_baidu_app_key: $('#syncBaiduAppKey').value,
+    sync_baidu_secret_key: $('#syncBaiduSecretKey').value,
+    sync_baidu_app_dir: $('#syncBaiduAppDir').value,
+    sync_baidu_prefix: $('#syncBaiduPrefix').value,
+    sync_keep_days: $('#syncKeepDays').value,
+  };
+  const tok = $('#syncBaiduToken').value.trim();
+  if (tok) settings.sync_baidu_token = tok;
+  try {
+    const r = await api('/admin/api/sync/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings }),
+    });
+    $('#syncBaiduToken').value = '';
+    $('#syncQiniuSk').value = '';
+    $('#syncBaiduSecretKey').value = '';
+    toast('同步设置已保存');
+    await loadSyncSettings();
+    await loadSyncStatus().catch(() => {});
+  } catch (err) {
+    $('#syncMsg').textContent = err.message;
+  }
+});
+
+$('#btnSyncRetry').addEventListener('click', async () => {
+  try {
+    const r = await api('/admin/api/sync/retry', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    toast(`重推完成：成功 ${r.ok}，失败 ${r.fail}`);
+    await loadSyncStatus();
+  } catch (err) { toast(err.message, true); }
+});
+
+$('#btnSyncRefresh').addEventListener('click', () => loadSyncStatus().catch((e) => toast(e.message, true)));
+
 $('#btnLogout').addEventListener('click', async () => {
   await api('/api/logout', { method: 'POST' }).catch(() => {});
   location.href = '/';
@@ -106,3 +198,5 @@ $('#btnLogout').addEventListener('click', async () => {
 loadWorkbooks().catch((e) => toast(e.message, true));
 loadTracks().catch(() => {});
 loadLogs().catch(() => {});
+loadSyncSettings().catch(() => {});
+loadSyncStatus().catch(() => {});

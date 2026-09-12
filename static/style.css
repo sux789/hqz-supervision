@@ -129,3 +129,18 @@ td.result-label::before { content: '★ '; color: #d9a300; }
 #formEl .jss thead td { font-weight: 600; }
 #formEl .jss tbody td:first-child { background: #f7f7f7; color: #555; }
 #formEl .jss tbody td.locked { background: #f3f3f3; color: #999; }
+
+/* ── 相片云同步（doc/007） ── */
+.sync-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 16px; margin: 10px 0; }
+.sync-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #4a5560; }
+.sync-grid input, textarea#syncBaiduToken { padding: 7px 10px; border: 1px solid #d4d9de; border-radius: 6px; font-size: 14px; width: 100%; box-sizing: border-box; }
+textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size: 12px; width: 100%; box-sizing: border-box; }
+.btnrow { display: flex; align-items: center; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
+.sync-counts { display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0; }
+.sync-counts .cnt { font-size: 13px; color: #4a5560; }
+.sync-counts .cnt b { font-size: 16px; color: #1b3a24; }
+.st-baidu_ok { color: #1b7a3d; font-weight: 600; }
+.st-qiniu_ok { color: #b26a00; }
+.st-received { color: #c62828; }
+.err-cell { color: #c62828; font-size: 12px; max-width: 260px; overflow-wrap: anywhere; }
+.mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }

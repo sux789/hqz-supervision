@@ -6,9 +6,9 @@ REMOTE=${REMOTE:-www@forest.bibook.top}
 DEST=${DEST:-/home/www/bibook_deploy/apps/supervision}
 APPSPEC=${APPSPEC:-./deploy/supervision.appspec}
 
-# 1. 同步应用代码（main.py / param_parser.py / templates / static；数据目录不覆盖）
+# 1. 同步应用代码（main.py / param_parser.py / sync_cloud.py / templates / static；数据目录不覆盖）
 rsync -avz --exclude '__pycache__/' --exclude '*.pyc' --exclude '.DS_Store' \
-  ./main.py ./param_parser.py "$REMOTE:$DEST/"
+  ./main.py ./param_parser.py ./sync_cloud.py "$REMOTE:$DEST/"
 rsync -avz --exclude '__pycache__/' --exclude '.DS_Store' ./templates/ "$REMOTE:$DEST/templates/"
 rsync -avz --exclude '__pycache__/' --exclude '.DS_Store' ./static/ "$REMOTE:$DEST/static/"
 
