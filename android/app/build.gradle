@@ -38,9 +38,11 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-            // 有签名文件才用 release 签名，否则保持 debug 签名（本地无凭据也能出包）
+            // 有签名文件用 release 签名；否则回退 debug 签名（保证产物始终可安装）
             if (keystorePropertiesFile.exists()) {
                 signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
             }
         }
     }
