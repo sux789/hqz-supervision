@@ -79,15 +79,23 @@ def init_db():
             retry_count INTEGER NOT NULL DEFAULT 0,
             last_error TEXT DEFAULT '',
             created_at TEXT NOT NULL,
-            synced_at TEXT, purged_at TEXT);
+            synced_at TEXT, purged_at TEXT,
+            kind TEXT NOT NULL DEFAULT 'photo',
+            orig_size INTEGER NOT NULL DEFAULT 0);
         CREATE INDEX IF NOT EXISTS idx_photo_state ON photo_sync(state);
     ''')
+    # 轻量迁移：v0.10 前建的 photo_sync 无 kind/orig_size 列
+    cols = {r[1] for r in con.execute('PRAGMA table_info(photo_sync)')}
+    if 'kind' not in cols:
+        con.execute("ALTER TABLE photo_sync ADD COLUMN kind TEXT NOT NULL DEFAULT 'photo'")
+    if 'orig_size' not in cols:
+        con.execute('ALTER TABLE photo_sync ADD COLUMN orig_size INTEGER NOT NULL DEFAULT 0')
     if not con.execute('SELECT 1 FROM users').fetchone():
         con.execute(
             'INSERT INTO users VALUES(?,?,?)',
             ('雷华雄', hashlib.sha256('lhx123'.encode()).hexdigest(), 'admin'))
     # settings 非密钥默认值预置（真实 AK/SK / 百度凭证由一次性脚本写入，不进代码）
-    for k, v in sync_cloud.SYNC_DEFAULTS.items():
+    for k, v in {**sync_cloud.SYNC_DEFAULTS, **sync_cloud.VIDEO_DEFAULTS}.items():
         con.execute('INSERT OR IGNORE INTO settings(key, value) VALUES(?,?)', (k, v))
     con.commit()
     con.close()
@@ -455,6 +463,115 @@ def api_photo():
         con.close()
 
 
+# ────────────────────────── 视频（v0.10）：服务器压缩 → 七牛 → 百度 ──────────────────────────
+# 浏览器/WebView 无法转码视频，压缩统一在服务器用 ffmpeg 完成（参数见后台「视频压缩」）。
+# 视频体积大：接收即返回（state=received），压缩+推送在后台线程进行，不阻塞手机。
+
+def _video_name(base: str) -> str:
+    """视频文件名 = 相片文件名模板渲染结果 + `_视频` 标记（与照片命名区分）。"""
+    name = re.sub(r'[\\/:*?"<>|]+', '_', (base or '').strip()) or 'video'
+    if not name.endswith('_视频'):
+        name += '_视频'
+    return name
+
+
+def _process_video(pid: int) -> None:
+    """后台：ffmpeg 压缩 → 七牛暂存 → 百度网盘；任一步失败留状态待重推。"""
+    con = db()
+    try:
+        row = con.execute('SELECT * FROM photo_sync WHERE id=?', (pid,)).fetchone()
+        if not row:
+            return
+        s = sync_cloud.get_settings(con)
+        raw = PENDING_DIR / f'{pid}.mp4'
+        comp = PENDING_DIR / f'{pid}_c.mp4'
+        if not raw.exists():
+            con.execute('UPDATE photo_sync SET last_error=? WHERE id=?',
+                        ('原始视频缓冲丢失（无法重推）', pid))
+            con.commit()
+            return
+        ok, msg = sync_cloud.compress_video(raw, comp, s)
+        src = comp if ok else raw
+        if ok:
+            con.execute('UPDATE photo_sync SET size=? WHERE id=?', (comp.stat().st_size, pid))
+        else:
+            con.execute('UPDATE photo_sync SET last_error=? WHERE id=?',
+                        (f'压缩失败（改用原文件）：{msg}'[:400], pid))
+        con.commit()
+        # 七牛暂存（异地备份）
+        try:
+            sync_cloud.QiniuClient(s['sync_qiniu_ak'], s['sync_qiniu_sk'],
+                                   s['sync_qiniu_bucket']).put_bytes(
+                row['qiniu_key'], src.read_bytes(), mime='video/mp4')
+            con.execute("UPDATE photo_sync SET state='qiniu_ok' WHERE id=?", (pid,))
+            con.commit()
+        except sync_cloud.SyncError as e:
+            con.execute('UPDATE photo_sync SET retry_count=retry_count+1, last_error=? WHERE id=?',
+                        (str(e)[:500], pid))
+            con.commit()
+        # 百度推送
+        row = con.execute('SELECT * FROM photo_sync WHERE id=?', (pid,)).fetchone()
+        try:
+            sync_cloud.push_to_baidu(con, row, PENDING_DIR)
+            con.commit()
+            sync_cloud.try_push_pending(con, limit=1, pending_dir=PENDING_DIR)
+            sync_cloud.purge_expired(con, limit=20)
+        except sync_cloud.SyncError as e:
+            con.execute('UPDATE photo_sync SET retry_count=retry_count+1, last_error=? WHERE id=?',
+                        (str(e)[:500], pid))
+            con.commit()
+    except Exception:
+        pass
+    finally:
+        con.close()
+
+
+@bp.route('/api/video', methods=['POST'])
+@login_required
+def api_video():
+    con = db()
+    try:
+        s = sync_cloud.get_settings(con)
+        if s.get('sync_enabled') != '1':
+            return jsonify(error='视频需先开启云同步（后台「同步设置」）'), 423
+        fs = request.files.get('file')
+        if not fs:
+            return jsonify(error='缺少 file'), 400
+        try:
+            max_mb = int(s.get('video_max_mb') or 300)
+        except ValueError:
+            max_mb = 300
+        data = fs.read()
+        if not data:
+            return jsonify(error='视频为空'), 400
+        if len(data) > max_mb * 1024 * 1024:
+            return jsonify(error=f'视频超出上限 {max_mb}MB（后台「视频压缩」可调）'), 400
+        r = request.form
+        try:
+            wid = int(r.get('workbook_id') or 0)
+        except ValueError:
+            return jsonify(error='workbook_id 无效'), 400
+        subdir = re.sub(r'^/+|/+$', '', r.get('subdir') or '')
+        if not all(re.match(r'^[^\\/:*?"<>|]+$', seg) for seg in subdir.split('/') if seg):
+            return jsonify(error='subdir 含非法字符'), 400
+        xiaoban = (r.get('xiaoban') or '').strip()[:64]
+        fname = _video_name(r.get('filename') or '') + '.mp4'
+        qiniu_key, remote_path = sync_cloud.photo_paths(s, subdir, fname)
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cur = con.execute(
+            'INSERT INTO photo_sync(workbook_id, xiaoban, filename, remote_path, qiniu_key,'
+            ' size, state, created_at, kind, orig_size) VALUES(?,?,?,?,?,?,?,?,?,?)',
+            (wid, xiaoban, fname, remote_path, qiniu_key, 0, 'received', now, 'video', len(data)))
+        pid = cur.lastrowid
+        con.commit()
+        (PENDING_DIR / f'{pid}.mp4').write_bytes(data)
+        threading.Thread(target=_process_video, args=(pid,), daemon=True).start()
+        return jsonify(ok=True, id=pid, state='received',
+                       note='视频已接收，云端压缩同步中')
+    finally:
+        con.close()
+
+
 # ────────────────────────── 导出（按上传模板回填，保留原始格式） ──────────────────────────
 # C07：相片不落服务器，原相片上传/预览/zip 路由已移除（v0.8）。
 
@@ -548,7 +665,7 @@ def admin_accept_logs():
 
 # ────────────────────────── 后台：同步设置与状态（doc/007 §5/§7） ──────────────────────────
 
-_SYNC_EDITABLE = set(sync_cloud.SYNC_DEFAULTS)  # 允许后台写入的键
+_SYNC_EDITABLE = set(sync_cloud.SYNC_DEFAULTS) | set(sync_cloud.VIDEO_DEFAULTS)  # 允许后台写入的键
 _SYNC_SECRET = sync_cloud.SECRET_KEYS
 
 
@@ -618,7 +735,8 @@ def admin_sync_status():
             'SELECT state, COUNT(*) AS n FROM photo_sync GROUP BY state')}
         recent = con.execute(
             'SELECT p.id, p.workbook_id, w.name AS wb_name, p.xiaoban, p.filename,'
-            ' p.state, p.retry_count, p.last_error, p.created_at, p.synced_at'
+            ' p.state, p.retry_count, p.last_error, p.created_at, p.synced_at,'
+            ' p.kind, p.size, p.orig_size'
             ' FROM photo_sync p LEFT JOIN workbooks w ON w.id = p.workbook_id'
             ' ORDER BY p.id DESC LIMIT 30').fetchall()
         purged = sync_cloud.purge_expired(con)  # 顺手做生命周期清理

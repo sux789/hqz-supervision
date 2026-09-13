@@ -48,6 +48,7 @@
         <span class="spacer"></span>
         <button id="btnExport" class="btn ghost">⬇ 导出</button>
         <button id="btnPhoto" class="btn primary hidden">📷 拍照</button>
+        <button id="btnVideo" class="btn primary hidden">🎬 视频</button>
         <button id="btnTrack" class="btn primary hidden">◎ 轨迹</button>
         <button id="btnAlbum" class="btn ghost hidden">拍摄记录</button>
       </div>
@@ -58,6 +59,7 @@
   </div>
 
   <input type="file" id="photoInput" accept="image/*" capture="environment" hidden>
+  <input type="file" id="videoInput" accept="video/*" capture="camcorder" hidden>
 
   <!-- 拍摄记录弹层（仅本机记录的文件名提示，C07 不预览图片） -->
   <div id="albumMask" class="album-mask hidden">
@@ -78,6 +80,6 @@
   <script src="{{ url_for('static', filename='vendor/jsuites.min.js') }}"></script>
   <script src="{{ url_for('static', filename='vendor/jspreadsheet.min.js') }}"></script>
   <!-- ?v= 版本号熔断：静态 JS 更新后 WebView/浏览器强制拉新（曾致 APK 端验收联动代码不生效） -->
-  <script src="{{ url_for('static', filename='app.js') }}?v=0.8.7"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=0.10"></script>
 </body>
 </html>

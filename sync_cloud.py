@@ -44,6 +44,59 @@ SYNC_DEFAULTS = {
 }
 SECRET_KEYS = {'sync_qiniu_sk', 'sync_baidu_secret_key', 'sync_baidu_token'}
 
+# 视频压缩默认参数（后台「视频压缩」可改；实现为服务器 ffmpeg 转码）
+VIDEO_DEFAULTS = {
+    'video_max_height': '720',      # 最长边（高）上限，竖屏视频同样按高度限制
+    'video_crf': '28',              # x264 质量（18-32，越大越小越糊）
+    'video_maxrate_k': '2500',      # 最大码率 kbps
+    'video_audio_k': '96',          # 音频码率 kbps
+    'video_max_mb': '300',          # 单文件上传上限 MB
+    'video_ffmpeg': '',             # ffmpeg 可执行路径（空=自动探测）
+}
+
+_VIDEO_EXTS = ('.mp4', '.mov', '.m4v', '.3gp', '.avi', '.mkv')
+
+
+def find_ffmpeg(s: dict) -> str:
+    """ffmpeg 路径：settings 指定 → 项目 bin/ffmpeg → PATH。"""
+    p = (s.get('video_ffmpeg') or '').strip()
+    if p and Path(p).exists():
+        return p
+    local = Path(__file__).resolve().parent / 'bin' / 'ffmpeg'
+    if local.exists():
+        return str(local)
+    return 'ffmpeg'
+
+
+def compress_video(raw_path, out_path, s: dict, timeout: int = 900):
+    """服务器端 ffmpeg 转码（H.264 + AAC，faststart 便于在线播放）。
+    返回 (ok, msg)；失败时 msg 为原因，调用方可降级直接上传原文件。"""
+    import subprocess
+    try:
+        h = int(s.get('video_max_height') or 720)
+        crf = int(s.get('video_crf') or 28)
+        maxrate = int(s.get('video_maxrate_k') or 2500)
+        abr = int(s.get('video_audio_k') or 96)
+    except ValueError:
+        h, crf, maxrate, abr = 720, 28, 2500, 96
+    ffmpeg = find_ffmpeg(s)
+    cmd = [ffmpeg, '-y', '-hide_banner', '-loglevel', 'error', '-i', str(raw_path),
+           '-vf', f"scale=-2:'min({h},ih)'",
+           '-c:v', 'libx264', '-preset', 'veryfast', '-crf', str(crf),
+           '-maxrate', f'{maxrate}k', '-bufsize', f'{maxrate * 2}k',
+           '-pix_fmt', 'yuv420p',
+           '-c:a', 'aac', '-b:a', f'{abr}k',
+           '-movflags', '+faststart', str(out_path)]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=timeout)
+    except FileNotFoundError:
+        return False, f'ffmpeg 不可用（{ffmpeg}）'
+    except subprocess.TimeoutExpired:
+        return False, f'ffmpeg 超时（>{timeout}s）'
+    if r.returncode != 0 or not Path(out_path).exists():
+        return False, 'ffmpeg 失败：' + (r.stderr or b'').decode('utf-8', 'replace')[:300]
+    return True, ''
+
 
 class SyncError(Exception):
     """同步链路错误，message 可直接给后台提示。"""
@@ -383,23 +436,50 @@ def _load_token(s: dict) -> dict:
         return {}
 
 
+def row_kind(row) -> str:
+    try:
+        return (row['kind'] or 'photo') if 'kind' in row.keys() else 'photo'
+    except Exception:
+        return 'photo'
+
+
+def _ensure_pushed_copy(con, row, pending_dir) -> Path:
+    """待推送源文件：视频若只有原始文件则先 ffmpeg 压缩（{id}.mp4 → {id}_c.mp4）。"""
+    pd = Path(pending_dir)
+    pid = row['id']
+    if row_kind(row) == 'video':
+        comp, raw = pd / f'{pid}_c.mp4', pd / f'{pid}.mp4'
+        if not comp.exists() and raw.exists():
+            s = get_settings(con)
+            ok, msg = compress_video(raw, comp, s)
+            if ok:
+                con.execute('UPDATE photo_sync SET size=? WHERE id=?',
+                            (comp.stat().st_size, pid))
+            else:
+                con.execute('UPDATE photo_sync SET last_error=? WHERE id=?',
+                            (f'压缩失败（改用原文件）：{msg}'[:400], pid))
+            con.commit()
+        return comp if comp.exists() else (raw if raw.exists() else None)
+    p = pd / f'{pid}.jpg'
+    return p if p.exists() else None
+
+
 def push_to_baidu(con, row, pending_dir=None) -> None:
     """(received|qiniu_ok) → baidu_ok。失败抛 SyncError（调用方记 last_error/retry_count）。"""
     s, q, pan = _clients(con)
-    data = None
-    if pending_dir:
-        p = Path(pending_dir) / f"{row['id']}.jpg"
-        if p.exists():
-            data = p.read_bytes()
+    src = _ensure_pushed_copy(con, row, pending_dir) if pending_dir else None
+    data = src.read_bytes() if src else None
     if data is None:
         data = q.fetch_bytes(row['qiniu_key'])  # 兜底：七牛回读（需绑定下载域名）
     pan.upload_bytes(data, row['remote_path'])
     con.execute("UPDATE photo_sync SET state='baidu_ok', synced_at=?, last_error='' WHERE id=?",
                 (time.strftime('%Y-%m-%d %H:%M:%S'), row['id']))
+    # 成功即清本地缓冲（原始 + 压缩产物），C07 不长期存储
     if pending_dir:
-        p = Path(pending_dir) / f"{row['id']}.jpg"
-        if p.exists():
-            p.unlink()
+        for name in (f"{row['id']}.jpg", f"{row['id']}.mp4", f"{row['id']}_c.mp4"):
+            p = Path(pending_dir) / name
+            if p.exists():
+                p.unlink()
 
 
 def try_push_pending(con, limit: int = 3, pending_dir=None) -> int:

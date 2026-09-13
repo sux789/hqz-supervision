@@ -144,3 +144,14 @@ textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size
 .st-received { color: #c62828; }
 .err-cell { color: #c62828; font-size: 12px; max-width: 260px; overflow-wrap: anywhere; }
 .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+
+/* ── 拍摄记录：照片 / 视频 条目区分（v0.10） ── */
+.shot-item .k-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px;
+                    background: #eef2ea; color: #4a6b52; border: 1px solid #dde5d6; white-space: nowrap; }
+.shot-item.video { background: #eef4fb; border-color: #cfe0f3; }
+.shot-item.video .k-tag { background: #dbeafe; color: #1d4ed8; border-color: #c7ddf7; }
+.shot-item.video > span:first-child { color: #14395f; }
+.admin-wrap .k-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px;
+                     background: #eef2ea; color: #4a6b52; border: 1px solid #dde5d6; white-space: nowrap; }
+.admin-wrap .k-tag.v { background: #dbeafe; color: #1d4ed8; border-color: #c7ddf7; }
+.admin-wrap td.nowrap { white-space: nowrap; font-size: 12px; }

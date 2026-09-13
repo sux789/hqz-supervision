@@ -295,7 +295,8 @@ function openDetail(idx) {
   rememberLast();
   const feats = cfgList('功能');
   $('#btnPhoto').classList.toggle('hidden', !feats.includes('拍照'));
-  $('#btnAlbum').classList.toggle('hidden', !feats.includes('拍照'));
+  $('#btnAlbum').classList.toggle('hidden', !(feats.includes('拍照') || feats.includes('视频')));
+  $('#btnVideo').classList.toggle('hidden', !feats.includes('视频'));
   $('#btnTrack').classList.toggle('hidden', !feats.includes('轨迹'));
   $('#btnTrack').classList.toggle('recording', trackWatch !== null);
 }
@@ -379,9 +380,11 @@ function renderForm() {
   if (jss) { jss.style.overflow = 'visible'; jss.style.maxHeight = 'none'; jss.style.height = 'auto'; }
   const tbl = el0.querySelector('table');
   if (tbl) tbl.style.height = 'auto';
+  const hasVideo = cfgList('功能').includes('视频');
   $('#photoHint').textContent = (isNativeApp()
     ? '📁 拍照仅存本机系统相册 Pictures/' + (rowSubdir() || '(参数未配置目录)')
-    : '📁 拍照仅下载到本机（服务器不留存）');
+    : '📁 拍照仅下载到本机（服务器不留存）')
+    + (hasVideo ? '；🎬 视频上传后由服务器压缩并同步云盘（本地不留视频）' : '');
 }
 
 /* ── 导出 Excel（按上传模板回填） ── */
@@ -497,10 +500,22 @@ function getShots() {
   catch (e) { return []; }
 }
 
-function recordShot(name, xh) {
+function recordShot(name, xh, kind) {
   const list = getShots();
-  list.unshift({ n: name, xh: xh || '', t: new Date().toLocaleString('sv-SE') });
+  list.unshift({ n: name, xh: xh || '', k: kind || 'photo',
+                 t: new Date().toLocaleString('sv-SE') });
   try { localStorage.setItem('hqz_sup_shots_' + cur.id, JSON.stringify(list.slice(0, 500))); } catch (e) {}
+}
+
+/* 拍摄记录条目：照片与视频样式区分（图标 + 类型标签 + 配色） */
+function shotItemHtml(s) {
+  const isVideo = s.k === 'video';
+  const name = escapeHtml(s.n);
+  return isVideo
+    ? `<div class="shot-item video"><span>🎬 ${name}</span><span class="spacer"></span>`
+      + `<span class="k-tag">视频</span><span class="t">${escapeHtml(s.t)}</span></div>`
+    : `<div class="shot-item"><span>📷 ${name}</span><span class="spacer"></span>`
+      + `<span class="k-tag photo">照片</span><span class="t">${escapeHtml(s.t)}</span></div>`;
 }
 
 /* 当前小班的拍摄提示列表（按小班号过滤，无小班号列时显示全部） */
@@ -512,9 +527,7 @@ function renderShotList() {
     g.innerHTML = '<span class="muted">该小班还没有拍摄记录，点「📷 拍照」开始。</span>';
     return;
   }
-  g.innerHTML = '<div class="shot-list">' + shots.map((s) =>
-    `<div class="shot-item"><span>📷 ${escapeHtml(s.n)}</span><span class="spacer"></span><span class="t">${escapeHtml(s.t)}</span></div>`
-  ).join('') + '</div>';
+  g.innerHTML = '<div class="shot-list">' + shots.map(shotItemHtml).join('') + '</div>';
 }
 
 /* ── 拍摄记录弹层（本工作簿全部记录，按小班分组展示） ── */
@@ -526,7 +539,8 @@ function openShots() {
   const mask = $('#albumMask');
   mask.classList.remove('hidden');
   const shots = getShots();
-  $('#albumMeta').textContent = `${shots.length} 条拍摄记录（仅本机）`;
+  const nV = shots.filter((x) => x.k === 'video').length;
+  $('#albumMeta').textContent = `${shots.length} 条拍摄记录（照片 ${shots.length - nV} · 视频 ${nV}，仅本机）`;
   const g = $('#shotAll');
   g.innerHTML = '';
   if (!shots.length) { g.innerHTML = '<span class="muted">本机还没有拍摄记录。</span>'; return; }
@@ -540,7 +554,7 @@ function openShots() {
     g.appendChild(el(`<div class="shot-group"><b>小班 ${escapeHtml(xh)}</b> <span class="muted">${items.length} 张</span></div>`));
     const box = el(`<div class="shot-list"></div>`);
     for (const s of items) {
-      box.appendChild(el(`<div class="shot-item"><span>📷 ${escapeHtml(s.n)}</span><span class="spacer"></span><span class="t">${escapeHtml(s.t)}</span></div>`));
+      box.appendChild(el(shotItemHtml(s)));
     }
     g.appendChild(box);
   }
@@ -736,6 +750,43 @@ $('#photoInput').addEventListener('change', async (e) => {
     toast(savedWhere + syncMsg);
     renderShotList();
   } catch (err) { toast('拍照处理失败：' + err.message, true); }
+});
+
+/* ── 视频（v0.10）：拍摄/选取 → 上传服务器（压缩在云端 ffmpeg，参数见后台「视频压缩」）──
+   视频体积大，接口接收即返回；压缩与云同步在服务器后台进行，手机上立即完成。 */
+$('#btnVideo').addEventListener('click', () => {
+  if (curIdx < 0 || !allRows[curIdx]) { toast('请先选择小班', true); return; }
+  $('#videoInput').click();
+});
+
+$('#videoInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file || curIdx < 0) return;
+  const row = allRows[curIdx];
+  const mb = file.size / 1048576;
+  toast(`视频上传中（${mb.toFixed(1)} MB）…`);
+  try {
+    const st = await api('/api/sync/enabled');
+    if (!st.enabled) { toast('视频需先开启云同步（后台「同步设置」）', true); return; }
+    const now = new Date();
+    const ts = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') +
+      String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') +
+      String(now.getMinutes()).padStart(2, '0') + String(now.getSeconds()).padStart(2, '0');
+    const base = sanitizeSeg(renderTpl(cur.config['相片文件名'] || '', row, ts)) || 'video';
+    const subdir = rowSubdir();
+    const xh = rowVal('小班号');
+    const fd = new FormData();
+    fd.append('file', file, `${base}_视频.mp4`);
+    fd.append('workbook_id', cur.id);
+    fd.append('filename', base);
+    fd.append('subdir', subdir || '');
+    fd.append('xiaoban', xh || '');
+    await api('/api/video', { method: 'POST', body: fd });
+    recordShot(subdir ? `${subdir}/${base}_视频.mp4` : `${base}_视频.mp4`, xh, 'video');
+    toast(`视频已上传（${mb.toFixed(1)} MB），云端压缩同步中`);
+    renderShotList();
+  } catch (err) { toast('视频上传失败：' + err.message, true); }
 });
 
 /* ── 轨迹（B3）：watchPosition 采集 → GPX 生成 → 上传后台 ── */

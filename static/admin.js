@@ -118,6 +118,12 @@ async function loadSyncSettings() {
   $('#syncKeepDays').value = s.sync_keep_days != null ? s.sync_keep_days : '30';
   $('#syncReady').textContent = data.ready
     ? '✓ 配置齐全' : '⚠ 缺配置：' + data.missing.join('、');
+  $('#vMaxHeight').value = s.video_max_height ?? '720';
+  $('#vCrf').value = s.video_crf ?? '28';
+  $('#vMaxrate').value = s.video_maxrate_k ?? '2500';
+  $('#vAudio').value = s.video_audio_k ?? '96';
+  $('#vMaxMb').value = s.video_max_mb ?? '300';
+  $('#vFfmpeg').value = s.video_ffmpeg || '';
   $('#syncPath').textContent = `${s.sync_baidu_app_dir}/${s.sync_baidu_prefix}/{参数目录}/{文件名}.jpg`;
 }
 
@@ -132,15 +138,22 @@ async function loadSyncStatus() {
   const tb = $('#tblSync tbody');
   tb.innerHTML = '';
   if (!data.recent.length) {
-    tb.innerHTML = '<tr><td colspan="8" class="muted">暂无同步记录（开启同步后拍照即产生）</td></tr>';
+    tb.innerHTML = '<tr><td colspan="10" class="muted">暂无同步记录（开启同步后拍照/视频即产生）</td></tr>';
     return;
   }
+  const kb = (n) => (!n ? '-' : n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.round(n / 1024) + ' KB');
   for (const p of data.recent) {
     const st = ({received: '接收', qiniu_ok: '已暂存', baidu_ok: '✓已同步'})[p.state] || p.state;
     const t = p.state === 'baidu_ok' ? p.synced_at : p.created_at;
+    const isV = p.kind === 'video';
+    const size = isV && p.orig_size
+      ? `${kb(p.size)}<br><span class="muted">原始 ${kb(p.orig_size)}</span>` : kb(p.size);
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${p.id}</td><td>${escape(p.wb_name || p.workbook_id)}</td>
+    tr.innerHTML = `<td>${p.id}</td>
+      <td><span class="k-tag${isV ? ' v' : ''}">${isV ? '视频' : '照片'}</span></td>
+      <td>${escape(p.wb_name || p.workbook_id)}</td>
       <td>${escape(p.xiaoban || '-')}</td><td>${escape(p.filename)}</td>
+      <td class="nowrap">${size}</td>
       <td class="st-${p.state}">${st}</td><td>${p.retry_count}</td><td>${escape(t || '')}</td>
       <td class="err-cell">${escape((p.last_error || '').slice(0, 120))}</td>`;
     tb.appendChild(tr);
@@ -159,6 +172,12 @@ $('#btnSyncSave').addEventListener('click', async () => {
     sync_baidu_app_dir: $('#syncBaiduAppDir').value,
     sync_baidu_prefix: $('#syncBaiduPrefix').value,
     sync_keep_days: $('#syncKeepDays').value,
+    video_max_height: $('#vMaxHeight').value,
+    video_crf: $('#vCrf').value,
+    video_maxrate_k: $('#vMaxrate').value,
+    video_audio_k: $('#vAudio').value,
+    video_max_mb: $('#vMaxMb').value,
+    video_ffmpeg: $('#vFfmpeg').value,
   };
   const tok = $('#syncBaiduToken').value.trim();
   if (tok) settings.sync_baidu_token = tok;

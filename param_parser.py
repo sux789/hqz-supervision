@@ -8,6 +8,7 @@
 
 10 键：相片备注 / 相片文件名 / 目录 / 验收结果选项 / 可编辑列 / 不显示列 / 功能 / 搜索选项 /
      压缩最长边 / 压缩质量（doc/007 §6，可选，仅影响新拍照片）
+功能可选值：拍照、视频（v0.10）、轨迹、打卡
 """
 import re
 
@@ -98,8 +99,8 @@ def parse_params(param_rows, headers):
                     continue
                 if key in ('可编辑列', '不显示列') and item not in headerset:
                     raise ParamError(f'参数 sheet 第{rno}行 key「{key}」：列「{item}」不在数据 sheet 表头中')
-                if key == '功能' and item not in ('拍照', '轨迹', '打卡'):
-                    raise ParamError(f'参数 sheet 第{rno}行 key「功能」：未知功能「{item}」（可选：拍照、轨迹、打卡）')
+                if key == '功能' and item not in ('拍照', '视频', '轨迹', '打卡'):
+                    raise ParamError(f'参数 sheet 第{rno}行 key「功能」：未知功能「{item}」（可选：拍照、视频、轨迹、打卡）')
 
         # 控件映射：字段|控件类型
         if key == '搜索选项' and value:

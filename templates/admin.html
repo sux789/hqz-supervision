@@ -59,6 +59,16 @@
         <label>网盘子目录<input id="syncBaiduPrefix" placeholder="supervision"></label>
         <label>七牛副本保留（天，0=百度成功即删，-1=永久）<input id="syncKeepDays" type="number"></label>
       </div>
+      <h3 style="margin:16px 0 6px;">视频压缩（服务器 ffmpeg 转码）</h3>
+      <p class="muted">视频无法在手机端转码，统一由服务器压缩后上传（H.264 + AAC，faststart 便于在线播放）。失败会自动降级为直传原文件。</p>
+      <div class="sync-grid">
+        <label>最长边（高，px）<input id="vMaxHeight" type="number" placeholder="720"></label>
+        <label>质量 CRF（18-32，越大越小）<input id="vCrf" type="number" placeholder="28"></label>
+        <label>最大码率（kbps）<input id="vMaxrate" type="number" placeholder="2500"></label>
+        <label>音频码率（kbps）<input id="vAudio" type="number" placeholder="96"></label>
+        <label>单文件上限（MB）<input id="vMaxMb" type="number" placeholder="300"></label>
+        <label>ffmpeg 路径（空=自动探测）<input id="vFfmpeg" placeholder="项目 bin/ffmpeg"></label>
+      </div>
       <label>百度 token 导入（直接粘贴 trans_v2 的 .baidu_pan_token.json 内容，凭证须与 token 签发应用成套一致）</label>
       <textarea id="syncBaiduToken" rows="3" placeholder='{"expires_in":..., "refresh_token":"...", "access_token":"...", ...}'></textarea>
       <div class="btnrow">
@@ -69,7 +79,7 @@
       <h3 style="margin:14px 0 6px;">同步状态 <button id="btnSyncRefresh" class="btn ghost">刷新</button></h3>
       <div id="syncCounts" class="sync-counts"></div>
       <table class="tbl" id="tblSync">
-        <thead><tr><th>ID</th><th>工作簿</th><th>小班</th><th>文件</th><th>状态</th><th>重试</th><th>时间</th><th>错误</th></tr></thead>
+        <thead><tr><th>ID</th><th>类型</th><th>工作簿</th><th>小班</th><th>文件</th><th>体积</th><th>状态</th><th>重试</th><th>时间</th><th>错误</th></tr></thead>
         <tbody></tbody>
       </table>
     </section>
@@ -86,6 +96,6 @@
 
   <div id="toast" class="toast hidden"></div>
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
-  <script src="{{ url_for('static', filename='admin.js') }}?v=0.8.7"></script>
+  <script src="{{ url_for('static', filename='admin.js') }}?v=0.10"></script>
 </body>
 </html>
