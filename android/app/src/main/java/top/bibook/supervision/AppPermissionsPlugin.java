@@ -304,10 +304,11 @@ public class AppPermissionsPlugin extends Plugin {
             MediaItem item = MediaItem.fromUri(src);
             EditedMediaItem.Builder itemBuilder = new EditedMediaItem.Builder(item);
             if (scale < 1f) {
+                // 注意参数顺序：Effects(audioProcessors, videoEffects)（已按 media3 1.4.1 类签名核对）
                 itemBuilder.setEffects(new Effects(
+                        Collections.emptyList(),
                         Arrays.asList(new ScaleAndRotateTransformation.Builder()
-                                .setScale(scale, scale).build()),
-                        Collections.emptyList()));
+                                .setScale(scale, scale).build())));
             }
             Transformer transformer = new Transformer.Builder(getContext())
                     .setVideoMimeType(MimeTypes.VIDEO_H264)
