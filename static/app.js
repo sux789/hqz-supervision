@@ -1122,36 +1122,90 @@ async function saveVideoLocal(blob, fname, subdir) {
   return `已下载：${fname}（${(blob.size / 1048576).toFixed(1)} MB）`;
 }
 
-/* ── 轨迹（B3）：watchPosition 采集 → GPX 生成 → 上传后台 ── */
-let trackWatch = null;
+/* ── 轨迹（v0.19）：**原生后台定位优先**（BgLocation 插件，仅 GPS_PROVIDER，location 型前台服务 →
+   息屏/切后台继续记录），浏览器或插件缺失时回退 WebView watchPosition（仅前台）。
+   轨迹点实时存 localStorage：页面被系统重载/进程被杀也不丢已采点位。 ── */
+let trackWatch = null;        // 'bg' = 原生插件模式；number = web watchPosition id
+let trackBgPlugin = null;
 let trackPts = [];
+const TRACK_LS_KEY = 'hqz_sup_track_pts';
+
+function bgLocationPlugin() {
+  try {
+    return (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BgLocation)
+      ? window.Capacitor.Plugins.BgLocation : null;
+  } catch (e) { return null; }
+}
+function saveTrackPts() {
+  try { localStorage.setItem(TRACK_LS_KEY, JSON.stringify(trackPts.slice(-5000))); } catch (e) {}
+}
+function loadSavedTrackPts() {
+  try { return JSON.parse(localStorage.getItem(TRACK_LS_KEY) || '[]'); } catch (e) { return []; }
+}
+function clearSavedTrackPts() { try { localStorage.removeItem(TRACK_LS_KEY); } catch (e) {} }
+
+/* 采集一个点（原生/wweb 两种来源共用；t 为毫秒时间戳） */
+function trackPush(lat, lng, ele, t) {
+  trackPts.push({
+    lat,
+    lng,
+    ele: (ele == null ? null : ele),
+    t: new Date(t || Date.now()).toISOString().replace(/\.\d+Z$/, 'Z'),
+  });
+  $('#btnTrack').textContent = `● 记录中 ${trackPts.length} 点`;
+  saveTrackPts();       // 边录边落盘（页面重载/被杀不丢点）
+}
 
 $('#btnTrack').addEventListener('click', () => (trackWatch === null ? startTrack() : stopTrack()));
 
 function startTrack() {
-  if (!navigator.geolocation) { toast('当前环境不支持定位', true); return; }
   trackPts = [];
-  trackWatch = navigator.geolocation.watchPosition((p) => {
-    trackPts.push({
-      lat: p.coords.latitude, lng: p.coords.longitude,
-      ele: p.coords.altitude == null ? null : p.coords.altitude,
-      t: new Date(p.timestamp).toISOString().replace(/\.\d+Z$/, 'Z'),
-    });
-    $('#btnTrack').textContent = `● 记录中 ${trackPts.length} 点`;
-  }, (err) => toast('定位失败：' + err.message, true),
+  const plugin = bgLocationPlugin();
+  if (plugin && typeof plugin.startWatcher === 'function') {
+    trackBgPlugin = plugin;
+    trackWatch = 'bg';
+    try {
+      // 回调式：插件每次定位 resolve 一次
+      plugin.startWatcher({
+        title: '轨迹记录中',
+        message: '正在后台记录验收轨迹（仅 GPS，息屏继续）',
+      }, (loc, err) => {
+        if (trackWatch !== 'bg') return;              // 已停止 → 丢弃
+        if (err) { toast('定位失败：' + (err.message || err), true); return; }
+        if (!loc) return;
+        trackPush(loc.latitude, loc.longitude, null, loc.time);
+      });
+      $('#btnTrack').classList.add('recording');
+      $('#btnTrack').textContent = '● 记录中 0 点';
+      toast('已启用原生后台定位（只收 GPS 卫星定位，息屏/切后台继续记录）');
+      return;
+    } catch (e) {
+      trackBgPlugin = null;
+      trackWatch = null;                              // 落回 watchPosition
+    }
+  }
+  if (!navigator.geolocation) { toast('当前环境不支持定位', true); return; }
+  trackWatch = navigator.geolocation.watchPosition(
+    (p) => trackPush(p.coords.latitude, p.coords.longitude, p.coords.altitude, p.timestamp),
+    (err) => toast('定位失败：' + err.message, true),
     { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 });
   $('#btnTrack').classList.add('recording');
   $('#btnTrack').textContent = '● 记录中 0 点';
-  toast('轨迹记录已开始，走完点「◎ 轨迹」停止并上传');
+  toast('轨迹记录已开始（WebView 模式，仅前台有效）');
 }
 
 function stopTrack() {
-  navigator.geolocation.clearWatch(trackWatch);
+  if (trackWatch === 'bg') {
+    try { trackBgPlugin && trackBgPlugin.stopWatcher().catch(() => {}); } catch (e) {}
+    trackBgPlugin = null;
+  } else if (trackWatch !== null) {
+    navigator.geolocation.clearWatch(trackWatch);
+  }
   trackWatch = null;
   $('#btnTrack').classList.remove('recording');
   $('#btnTrack').textContent = '◎ 轨迹';
   const n = trackPts.length;
-  if (n < 2) { trackPts = []; toast('有效定位点不足 2 个，未上传', true); return; }
+  if (n < 2) { trackPts = []; clearSavedTrackPts(); toast('有效定位点不足 2 个，未上传', true); return; }
   const gpx = buildGpx(trackPts);
   const cls = rowVal('小班号') || '无小班';
   const name = `轨迹_${sanitizeSeg(cls)}_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '')}.gpx`;
@@ -1161,6 +1215,26 @@ function stopTrack() {
     .then((r) => toast(`轨迹已上传：${r.file}（${n} 点）`))
     .catch((err) => toast('轨迹上传失败：' + err.message, true));
   trackPts = [];
+  clearSavedTrackPts();
+}
+
+/* 页面被系统重载后：若本机还存着未上传的轨迹点 → 接着录（原生模式则重启 watcher） */
+async function restoreTrackIfAny() {
+  const saved = loadSavedTrackPts();
+  if (!saved || saved.length < 1) return;
+  trackPts = saved;
+  const plugin = bgLocationPlugin();
+  if (plugin && typeof plugin.startWatcher === 'function') {
+    try { await plugin.stopWatcher(); } catch (e) {}     // 清掉旧页面残留的 watcher
+    trackWatch = null;
+    startTrack();
+    trackPts = saved;                                   // startTrack 会清空，恢复已采点
+    saveTrackPts();
+    $('#btnTrack').textContent = `● 记录中 ${trackPts.length} 点`;
+    toast(`已恢复未上传的轨迹记录（${saved.length} 点），继续采集中`);
+  } else {
+    toast(`本机有未上传的轨迹记录（${saved.length} 点），点「◎ 轨迹」可上传`, true);
+  }
 }
 
 function buildGpx(pts) {
@@ -1190,6 +1264,7 @@ async function boot() {
     await route();
     ensurePermissionsUpfront();           // 登录后一次性申请权限（见函数注释）
     await recoverPendingVideo();          // 相机返回导致页面重载时，补记录像结果
+    await restoreTrackIfAny();            // 轨迹：页面被重载后接着录（原生在跑则续采）
   } catch (e) {
     setToken('');
     show('login');

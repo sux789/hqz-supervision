@@ -12,6 +12,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // 注册原生能力插件（同 hqz-survey）：savePhoto 写系统相册 Pictures/{参数目录}/
         registerPlugin(AppPermissionsPlugin.class);
+        registerPlugin(BgLocationPlugin.class);   // 后台轨迹记录（仅 GPS，息屏继续）
         super.onCreate(savedInstanceState);
 
         // 强制所有导航留在 App WebView 内，不调起系统浏览器（hqz-survey 踩坑：

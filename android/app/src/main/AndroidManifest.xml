@@ -34,6 +34,12 @@
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
 
+        <!-- 后台轨迹记录：location 型前台服务（灭屏/后台持续采集 GPS） -->
+        <service
+            android:name=".BgLocationService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
         <!-- 录像保活服务：只有服务在录像期间短暂运行 -->
         <service
             android:name=".KeepAliveService"
@@ -57,6 +63,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 后台轨迹记录（BgLocationPlugin + BgLocationService，location 型前台服务；仅 GPS 源） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <!-- 申请加入电池优化白名单（后台运行），通过系统对话框请求，无需静默授权 -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- 轨迹/拍照坐标水印（Web geolocation 需要） -->
