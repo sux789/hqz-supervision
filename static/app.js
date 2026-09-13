@@ -71,6 +71,11 @@ async function route() {
     openDetail(idx);
     return;
   }
+  const rc = getReturnContext();
+  if (rc) {                       // 刚从相机/相册返回（页面被重载）：回到原来那一行
+    nav(`#/wb/${rc.wb}/r/${rc.idx || 0}`);
+    return;
+  }
   show('list');
   await loadList();
 }
@@ -127,6 +132,24 @@ function rememberLast() {
     localStorage.setItem('hqz_sup_last', JSON.stringify(
       { wb: cur.id, idx: curIdx, name: cur.name, xh: rowVal('小班号') }));
   } catch (e) {}
+}
+
+/* ── 相机返回上下文（v0.17）：相机是独立 Activity，系统可能重载 WebView（URL 里的 hash 会丢），
+     用 localStorage 记下"在哪个工作簿/哪一行"，回来后自动回到详情页并补记录像结果。 ── */
+function markReturnContext() {
+  try {
+    localStorage.setItem('hqz_sup_return', JSON.stringify({ wb: cur && cur.id, idx: curIdx, t: Date.now() }));
+  } catch (e) {}
+}
+function getReturnContext() {
+  try {
+    const o = JSON.parse(localStorage.getItem('hqz_sup_return') || 'null');
+    if (!o || !o.wb || Date.now() - (o.t || 0) > 10 * 60 * 1000) return null;
+    return o;
+  } catch (e) { return null; }
+}
+function clearReturnContext() {
+  try { localStorage.removeItem('hqz_sup_return'); } catch (e) {}
 }
 
 function loadLast() {
@@ -863,6 +886,7 @@ $('#btnVideo').addEventListener('click', async () => {
 /* 系统相机录制（保证 MP4/H.264）：录完按同一命名规则另存到手机 */
 async function useSystemCamera(why) {
   toast(why ? `${why} → 用系统相机录制（MP4，保证可播放）` : '用系统相机录制（MP4，保证可播放）');
+  markReturnContext();                 // 记下当前工作簿/行：相机返回即使页面重载也能回到详情页
   const plugin = nativePlugin();
   // 新版 APK：原生录像（startActivityForResult → 复制到 Pictures/{目录}/），不经过 WebView 文件回传，
   // 避免"相机顶掉 WebView → 页面重载 → 文件结果丢失"
@@ -882,13 +906,15 @@ async function useSystemCamera(why) {
         quality: p.cam_quality === 0 ? 0 : 1,     // 相机录制质量（1=最高，保证源码率）
       });
       if (r && r.path) {
-        recordShot(`Pictures/${rowSubdir() || '验收照片'}/${base}_视频.mp4`, rowVal('小班号'), 'video');
-        toast(`视频已保存：Pictures/${rowSubdir() || '验收照片'}/${base}_视频.mp4`);
+        const dispPath = `Pictures/${rowSubdir() || '验收照片'}/${base}_视频.mp4`;
+        recordShot(dispPath, rowVal('小班号'), 'video');
+        toast(`视频已保存：${dispPath}${videoSizeNote(r)}`);
         renderShotList();
+        clearReturnContext();
         return;
       }
     } catch (e) {
-      if (/取消/.test(e.message || '')) { toast('已取消录制'); return; }
+      if (/取消/.test(e.message || '')) { toast('已取消录制'); clearReturnContext(); return; }
       // 原生失败 → 回退文件选择
     }
   }
@@ -1163,10 +1189,37 @@ async function boot() {
     $('#whoami').textContent = me.user || '';
     await route();
     ensurePermissionsUpfront();           // 登录后一次性申请权限（见函数注释）
+    await recoverPendingVideo();          // 相机返回导致页面重载时，补记录像结果
   } catch (e) {
     setToken('');
     show('login');
   }
+}
+
+/* 视频体积/压缩说明文案（v0.17）：区分"已压缩/未压缩/App 版本过旧" */
+function videoSizeNote(v) {
+  const mb = (n) => (n ? (n / 1048576).toFixed(1) + 'MB' : '');
+  if (v.transcoded === true) return `（已压缩 ${mb(v.origSize)} → ${mb(v.size)}）`;
+  if (v.transcoded === false) return `（未压缩，原片 ${mb(v.size)}）`;
+  return '（当前 App 版本不支持压缩，请安装最新 APK）';
+}
+
+/* 相机返回后页面若被系统重载 → 从原生取回"最近一次录像"，补进拍摄记录（v0.17） */
+async function recoverPendingVideo() {
+  const rc = getReturnContext();
+  const plugin = nativePlugin();
+  if (!rc || !plugin || typeof plugin.getLastVideo !== 'function') { if (rc) clearReturnContext(); return; }
+  try {
+    const r = await plugin.getLastVideo({ consume: true });
+    const v = (r && r.video) || null;
+    if (v && v.path) {
+      const dispPath = `Pictures/${v.subdir || '验收照片'}/${v.name || ''}`;
+      recordShot(dispPath, rowVal('小班号'), 'video');
+      renderShotList();
+      toast(`视频已保存：${dispPath}${videoSizeNote(v)}`);
+    }
+  } catch (e) { /* 取不到就算了（可能用户取消了录制） */ }
+  clearReturnContext();
 }
 
 /* 启动时一次性申请权限（v0.15）：把弹窗集中到"刚进 App"这一步，

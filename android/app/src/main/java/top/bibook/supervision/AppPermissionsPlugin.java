@@ -3,6 +3,7 @@ package top.bibook.supervision;
 import android.Manifest;
 import android.app.Activity;
 import android.content.ContentValues;
+import android.content.SharedPreferences;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
@@ -54,7 +55,8 @@ import java.io.OutputStream;
  *   - saveFile({base64,name})   导出文件（xlsx/zip/mp4）写入公共下载 Download/验收导出/，返回真实绝对路径
  *   - saveVideo({base64,name,subdir,base})  视频写入相册 Pictures/{subdir}/（与照片同目录；base 可改顶层目录）
  *   - ensureMedia()         一次性申请「相机 + 麦克风」授权（录制视频前调用）
- *   - recordVideo({name,subdir,maxSeconds,quality})  原生录像 → Pictures/{subdir}/（相机会话，不走 WebView 回传）
+ *   - recordVideo({name,subdir,maxSeconds,quality,transcode,maxHeight,bitrateK})  原生录像+转码 → Pictures/{subdir}/
+ *   - getLastVideo({consume})   取最近一次录像结果（页面被系统重载后补记文件名）
  * type: 'location' | 'camera' | 'microphone'
  */
 @CapacitorPlugin(
@@ -243,6 +245,29 @@ public class AppPermissionsPlugin extends Plugin {
      * 旧版本回退应用外部私有目录。
      */
     /**
+     * 取最近一次录像结果（v0.17）：供页面在"被系统重载后"补记文件名。
+     * 相机是独立 Activity，系统可能把 WebView 重载 → JS 回调丢失，但视频已落盘；
+     * 页面启动时调用本方法即可把结果补回拍摄记录。consume=1 时取完即清。
+     */
+    @PluginMethod
+    public void getLastVideo(PluginCall call) {
+        SharedPreferences p = prefs();
+        JSObject ret = new JSObject();
+        ret.put("pending", p.getBoolean("pending", false));
+        String raw = p.getString("last_video", "");
+        if (raw != null && !raw.isEmpty()) {
+            try {
+                ret.put("video", new JSObject(raw));
+            } catch (Exception ignored) {
+            }
+        }
+        if (call.getBoolean("consume", true)) {
+            prefs().edit().putString("last_video", "").putBoolean("pending", false).apply();
+        }
+        call.resolve(ret);
+    }
+
+    /**
      * 原生录像（v0.13.2，需重打包 APK 生效）：调系统相机录像 → **流式复制**到
      * Pictures/{subdir}/{name} → 返回真实路径。
      * 相比 WebView 的 <input capture> 文件回传：不经过页面/WebView 重载（系统相机回来后
@@ -275,13 +300,22 @@ public class AppPermissionsPlugin extends Plugin {
         Uri src = result.getData().getData();
         String subdir = sanitizeSubdir(call.getString("subdir", "验收照片"));
         String name = call.getString("name", "video.mp4");
+        long origSize = 0;
+        try (Cursor c = getContext().getContentResolver().query(src, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int idx = c.getColumnIndex(android.provider.OpenableColumns.SIZE);
+                if (idx >= 0) origSize = c.getLong(idx);
+            }
+        } catch (Exception ignored) {
+        }
+        markPending(name, subdir);
         boolean transcode = call.getInt("transcode", 1) == 1;
         int maxHeight = call.getInt("maxHeight", 720);
         int bitrateK = call.getInt("bitrateK", 2500);
         if (transcode) {
-            transcodeAndSave(call, src, subdir, name, maxHeight, bitrateK);
+            transcodeAndSave(call, src, subdir, name, maxHeight, bitrateK, origSize);
         } else {
-            saveIntoAlbum(call, src, subdir, name, null);
+            saveIntoAlbum(call, src, subdir, name, null, false, origSize);
         }
     }
 
@@ -290,7 +324,7 @@ public class AppPermissionsPlugin extends Plugin {
      * 保留声音，输出 MP4；失败自动回退「直接保存原片」，绝不丢视频。
      */
     private void transcodeAndSave(PluginCall call, Uri src, String subdir, String name,
-                                  int maxHeight, int bitrateK) {
+                                  int maxHeight, int bitrateK, long origSize) {
         final File tmp = new File(getContext().getCacheDir(), "sup_tc_" + System.currentTimeMillis() + ".mp4");
         int srcH = 0;
         try (MediaMetadataRetriever mmr = new MediaMetadataRetriever()) {
@@ -321,29 +355,31 @@ public class AppPermissionsPlugin extends Plugin {
                     .addListener(new Transformer.Listener() {
                         @Override
                         public void onCompleted(Composition composition, ExportResult result) {
-                            saveIntoAlbum(call, Uri.fromFile(tmp), subdir, name, tmp);
+                            saveIntoAlbum(call, Uri.fromFile(tmp), subdir, name, tmp, true, origSize);
                         }
 
                         @Override
                         public void onError(Composition composition, ExportResult result,
                                             ExportException exception) {
                             notifyListeners("videoStage", new JSObject().put("stage", "transcode_failed"));
-                            saveIntoAlbum(call, src, subdir, name, tmp);   // 回退：保存原片
+                            saveIntoAlbum(call, src, subdir, name, tmp, false, origSize);   // 回退：保存原片
                         }
                     })
                     .build();
             notifyListeners("videoStage", new JSObject().put("stage", "transcoding"));
             getActivity().runOnUiThread(() -> transformer.start(itemBuilder.build(), tmp.getAbsolutePath()));
         } catch (Exception e) {
-            saveIntoAlbum(call, src, subdir, name, tmp);
+            saveIntoAlbum(call, src, subdir, name, tmp, false, origSize);
         }
     }
 
-    /** 把（原片或转码产物）流式复制进 Pictures/{subdir}/{name}，并清理临时文件。 */
-    private void saveIntoAlbum(PluginCall call, Uri src, String subdir, String name, File tmpToDelete) {
+    /** 把（原片或转码产物）流式复制进 Pictures/{subdir}/{name}，写入 last_video 供页面补记。 */
+    private void saveIntoAlbum(PluginCall call, Uri src, String subdir, String name, File tmpToDelete,
+                               boolean transcoded, long origSize) {
         try {
             Uri outUri;
             String realPath;
+            long size = 0;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 ContentValues values = new ContentValues();
                 values.put(MediaStore.Video.Media.DISPLAY_NAME, name);
@@ -356,7 +392,7 @@ public class AppPermissionsPlugin extends Plugin {
                     call.reject("创建相册记录失败");
                     return;
                 }
-                copyUri(src, outUri);
+                size = copyUri(src, outUri);
                 realPath = queryFileRealPath(outUri, new File(new File(
                         Environment.getExternalStorageDirectory(),
                         Environment.DIRECTORY_PICTURES), subdir));
@@ -365,12 +401,18 @@ public class AppPermissionsPlugin extends Plugin {
                 if (!dir.exists()) dir.mkdirs();
                 File f = new File(dir, name);
                 outUri = Uri.fromFile(f);
-                copyUri(src, outUri);
+                size = copyUri(src, outUri);
                 realPath = f.getAbsolutePath();
             }
             JSObject ret = new JSObject();
             ret.put("path", realPath);
             ret.put("uri", outUri.toString());
+            ret.put("name", name);
+            ret.put("subdir", subdir);
+            ret.put("size", size);
+            ret.put("origSize", origSize);
+            ret.put("transcoded", transcoded);
+            markDone(ret);
             call.resolve(ret);
         } catch (Exception e) {
             call.reject("保存录像失败: " + e.getMessage(), e);
@@ -382,19 +424,37 @@ public class AppPermissionsPlugin extends Plugin {
         }
     }
 
-    /** 流式复制（大视频不整块读内存），并顺带触发媒体扫描。 */
-    private void copyUri(Uri src, Uri dst) throws Exception {
+    /** 流式复制（大视频不整块读内存），返回复制的字节数，并顺带触发媒体扫描。 */
+    private long copyUri(Uri src, Uri dst) throws Exception {
+        long total = 0;
         try (InputStream in = getContext().getContentResolver().openInputStream(src);
              OutputStream out = getContext().getContentResolver().openOutputStream(dst)) {
             if (in == null || out == null) throw new Exception("无法打开视频流");
             byte[] buf = new byte[256 * 1024];
             int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            while ((n = in.read(buf)) > 0) { out.write(buf, 0, n); total += n; }
             out.flush();
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             getContext().sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, dst));
         }
+        return total;
+    }
+
+    private SharedPreferences prefs() {
+        return getContext().getSharedPreferences("sup_video", android.content.Context.MODE_PRIVATE);
+    }
+
+    /** 录像前登记"进行中"（页面若被系统重载，可由 getLastVideo 补记）。 */
+    private void markPending(String name, String subdir) {
+        prefs().edit().putBoolean("pending", true)
+                .putString("p_name", name).putString("p_subdir", subdir)
+                .putLong("p_ts", System.currentTimeMillis()).apply();
+    }
+
+    private void markDone(JSObject ret) {
+        prefs().edit().putBoolean("pending", false)
+                .putString("last_video", ret.toString()).apply();
     }
 
     /**
