@@ -21,7 +21,9 @@ function toast(msg, isErr) {
 }
 
 async function api(url, opt) {
+  // 401：会话过期/被清 → 明确提示（页面重载后会自动回到登录页，登录后 hash 仍在，会回到原小班）
   const r = await fetch((window.SUP_BASE || '') + url, opt);
+  if (r.status === 401) toast('登录已过期，请重新登录', true);
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
   return body;
@@ -808,9 +810,40 @@ $('#btnVideo').addEventListener('click', async () => {
 });
 
 /* 系统相机录制（保证 MP4/H.264）：录完按同一命名规则另存到手机 */
-function useSystemCamera(why) {
+async function useSystemCamera(why) {
   toast(why ? `${why} → 用系统相机录制（MP4，保证可播放）` : '用系统相机录制（MP4，保证可播放）');
+  const plugin = nativePlugin();
+  // 新版 APK：原生录像（startActivityForResult → 复制到 Pictures/{目录}/），不经过 WebView 文件回传，
+  // 避免"相机顶掉 WebView → 页面重载 → 文件结果丢失"
+  if (plugin && typeof plugin.recordVideo === 'function') {
+    try {
+      const row = allRows[curIdx];
+      const p = await loadVideoParams(true);
+      const base = sanitizeSeg(renderTpl(cur.config['相片文件名'] || '', row, tsStamp())) || 'video';
+      const r = await plugin.recordVideo({
+        name: `${base}_视频.mp4`,
+        subdir: rowSubdir() || '验收照片',
+        maxSeconds: parseInt(p.max_seconds || 60, 10),
+      });
+      if (r && r.path) {
+        recordShot(`Pictures/${rowSubdir() || '验收照片'}/${base}_视频.mp4`, rowVal('小班号'), 'video');
+        toast(`视频已保存：Pictures/${rowSubdir() || '验收照片'}/${base}_视频.mp4`);
+        renderShotList();
+        return;
+      }
+    } catch (e) {
+      if (/取消/.test(e.message || '')) { toast('已取消录制'); return; }
+      // 原生失败 → 回退文件选择
+    }
+  }
   $('#videoInput').click();
+}
+
+/* 时间戳 YYYYMMDD_HHMMSS（文件名占位符 {{时间}} 用） */
+function tsStamp() {
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
 }
 
 $('#videoInput').addEventListener('change', async (e) => {

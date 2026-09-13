@@ -1,6 +1,7 @@
 package top.bibook.supervision;
 
 import android.Manifest;
+import android.app.Activity;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.database.Cursor;
@@ -16,12 +17,16 @@ import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
+import androidx.activity.result.ActivityResult;
+
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
 
 /**
@@ -34,6 +39,7 @@ import java.io.OutputStream;
  *   - saveFile({base64,name})   导出文件（xlsx/zip/mp4）写入公共下载 Download/验收导出/，返回真实绝对路径
  *   - saveVideo({base64,name,subdir,base})  视频写入相册 Pictures/{subdir}/（与照片同目录；base 可改顶层目录）
  *   - ensureMedia()         一次性申请「相机 + 麦克风」授权（录制视频前调用）
+ *   - recordVideo({name,subdir,maxSeconds,quality})  原生录像 → Pictures/{subdir}/（相机会话，不走 WebView 回传）
  * type: 'location' | 'camera' | 'microphone'
  */
 @CapacitorPlugin(
@@ -221,6 +227,90 @@ public class AppPermissionsPlugin extends Plugin {
      * Android 10+ 走 MediaStore Downloads（自有文件免存储权限，文件管理器立即可见）；
      * 旧版本回退应用外部私有目录。
      */
+    /**
+     * 原生录像（v0.13.2，需重打包 APK 生效）：调系统相机录像 → **流式复制**到
+     * Pictures/{subdir}/{name} → 返回真实路径。
+     * 相比 WebView 的 <input capture> 文件回传：不经过页面/WebView 重载（系统相机回来后
+     * 原方案会丢文件结果甚至要求重新登录），且容器是相机原生 **MP4/H.264**（任何相册可播）。
+     * 参数：{name, subdir, maxSeconds, quality(0/1)}
+     */
+    @PluginMethod
+    public void recordVideo(PluginCall call) {
+        Intent intent = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
+        if (intent.resolveActivity(getContext().getPackageManager()) == null) {
+            call.reject("本机没有可用的相机应用");
+            return;
+        }
+        intent.putExtra(MediaStore.EXTRA_VIDEO_QUALITY, call.getInt("quality", 1));   // 1=高质量
+        int maxSeconds = call.getInt("maxSeconds", 60);
+        if (maxSeconds > 0) {
+            intent.putExtra("android.intent.extra.durationLimit", maxSeconds);
+        }
+        startActivityForResult(call, intent, "videoCaptureResult");
+    }
+
+    @ActivityCallback
+    private void videoCaptureResult(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null
+                || result.getData().getData() == null) {
+            call.reject("已取消录制");
+            return;
+        }
+        Uri src = result.getData().getData();
+        String subdir = sanitizeSubdir(call.getString("subdir", "验收照片"));
+        String name = call.getString("name", "video.mp4");
+        try {
+            Uri outUri;
+            String realPath;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.Video.Media.DISPLAY_NAME, name);
+                values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
+                values.put(MediaStore.Video.Media.RELATIVE_PATH,
+                        Environment.DIRECTORY_PICTURES + "/" + subdir);
+                outUri = getContext().getContentResolver().insert(
+                        MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
+                if (outUri == null) {
+                    call.reject("创建相册记录失败");
+                    return;
+                }
+                copyUri(src, outUri);
+                realPath = queryFileRealPath(outUri, new File(new File(
+                        Environment.getExternalStorageDirectory(),
+                        Environment.DIRECTORY_PICTURES), subdir));
+            } else {
+                File dir = new File(getContext().getExternalFilesDir(Environment.DIRECTORY_PICTURES), subdir);
+                if (!dir.exists()) dir.mkdirs();
+                File f = new File(dir, name);
+                outUri = Uri.fromFile(f);
+                copyUri(src, outUri);
+                realPath = f.getAbsolutePath();
+            }
+            JSObject ret = new JSObject();
+            ret.put("path", realPath);
+            ret.put("uri", outUri.toString());
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("保存录像失败: " + e.getMessage(), e);
+        }
+    }
+
+    /** 流式复制（大视频不整块读内存），并顺带触发媒体扫描。 */
+    private void copyUri(Uri src, Uri dst) throws Exception {
+        try (InputStream in = getContext().getContentResolver().openInputStream(src);
+             OutputStream out = getContext().getContentResolver().openOutputStream(dst)) {
+            if (in == null || out == null) throw new Exception("无法打开视频流");
+            byte[] buf = new byte[256 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            out.flush();
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            getContext().sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, dst));
+        }
+    }
+
     /**
      * 视频写入系统相册（v0.11，需重打包 APK 生效）。
      * 默认与照片**完全同目录**：Pictures/{subdir}/（即相册中照片、视频同处一个文件夹），

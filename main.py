@@ -13,7 +13,7 @@ import re
 import sqlite3
 import threading
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
@@ -149,6 +149,7 @@ def api_login():
     con.close()
     if not row or row['password_hash'] != hashlib.sha256(password.encode()).hexdigest():
         return jsonify(error='用户名或密码错误'), 401
+    session.permanent = True          # 30 天持久会话（见 create_app 注释）
     session['user'] = row['username']
     session['role'] = row['role']
     # 返回 user：登录是 fetch 静默完成（页面不刷新），前端需回写 #whoami 的 data-user，
@@ -865,6 +866,13 @@ def create_app(prefix=''):
     """
     app = Flask(__name__)
     app.secret_key = 'hqz-supervision-local-preview-key'
+    # 会话长期有效（v0.13.2）：系统相机/相册等外部 Activity 会短暂顶掉 WebView，
+    # 若 cookie 是"会话级"，WebView 重启即丢 → 页面重载后要求重新登录（2026-09-13 实机反馈）。
+    # 改为 30 天持久 cookie；生产（有 prefix）额外开启 Secure。
+    app.permanent_session_lifetime = timedelta(days=30)
+    if prefix:
+        app.config['SESSION_COOKIE_SECURE'] = True
+        app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
     @app.after_request
     def _no_cache_html(resp):
