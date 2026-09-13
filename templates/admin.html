@@ -65,7 +65,8 @@
         <b>②选择已有视频</b>——WebView 无法转码已有文件，改由服务器 ffmpeg 压缩（用下方 CRF 等参数）。
       </p>
       <div class="sync-grid">
-        <label>允许手机端录制压缩（1=开 0=关）<input id="vPhoneRec" placeholder="1"></label>
+        <label>录制方式（system=系统相机MP4必播 / inapp=页面录制省流量）<input id="vRecMode" placeholder="system"></label>
+        <label>允许手机端录制（1=开 0=关）<input id="vPhoneRec" placeholder="1"></label>
         <label>最长边（高，px）<input id="vMaxHeight" type="number" placeholder="720"></label>
         <label>码率（kbps，录制即此码率）<input id="vMaxrate" type="number" placeholder="2500"></label>
         <label>帧率（fps）<input id="vFps" type="number" placeholder="30"></label>
@@ -102,6 +103,6 @@
 
   <div id="toast" class="toast hidden"></div>
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
-  <script src="{{ url_for('static', filename='admin.js') }}?v=0.12"></script>
+  <script src="{{ url_for('static', filename='admin.js') }}?v=0.13.1"></script>
 </body>
 </html>

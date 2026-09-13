@@ -786,23 +786,30 @@ function fmtSec(n) {
   return String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0');
 }
 
-async function loadVideoParams() {
-  if (recParams) return recParams;
-  try { recParams = await api('/api/video/params'); } catch (e) { recParams = {}; }
+async function loadVideoParams(force) {
+  // 每次点击都实时拉取（几百毫秒，用户无感）：后台改了「录制方式」立即生效，避免缓存误导
+  if (recParams && !force) return recParams;
+  try { recParams = await api('/api/video/params'); } catch (e) { recParams = recParams || {}; }
   return recParams;
 }
 
-$('#btnVideo').addEventListener('click', () => {
+$('#btnVideo').addEventListener('click', async () => {
   if (curIdx < 0 || !allRows[curIdx]) { toast('请先选择小班', true); return; }
-  if (!videoApiReady()) { useSystemCamera('当前环境不支持页面录制'); return; }
-  // 不能录 MP4 → 用系统相机（硬件 H.264，保证能播放）
-  if (!mp4RecSupported()) { useSystemCamera('本机不支持录制 MP4'); return; }
-  startRecording().catch((e) => useSystemCamera('页面录制启动失败：' + e.message));
+  const p = await loadVideoParams(true);
+  const mode = p.rec_mode || 'system';
+  if (mode === 'inapp') {
+    if (!videoApiReady()) { useSystemCamera('当前环境不支持页面录制'); return; }
+    if (!mp4RecSupported()) { useSystemCamera('本机不支持录制 MP4'); return; }
+    startRecording().catch((e) => useSystemCamera('页面录制启动失败：' + e.message));
+    return;
+  }
+  // 默认：系统相机录制（硬件 H.264 → MP4，任何相册/播放器都能播）
+  useSystemCamera('');
 });
 
 /* 系统相机录制（保证 MP4/H.264）：录完按同一命名规则另存到手机 */
 function useSystemCamera(why) {
-  toast(`${why}，改用系统相机录制（MP4，保证可播放）`);
+  toast(why ? `${why} → 用系统相机录制（MP4，保证可播放）` : '用系统相机录制（MP4，保证可播放）');
   $('#videoInput').click();
 }
 
@@ -955,10 +962,13 @@ async function finishRecording() {
     const dispPath = saved || `${fname}（${(blob.size / 1048576).toFixed(1)} MB）`;
     recordShot(dispPath, rowVal('小班号'), 'video');
     if (ext !== 'mp4') {
-      toast(`视频已保存为 ${ext.toUpperCase()}：${dispPath}｜若相册提示无法播放，请改用「系统相机录制」（MP4）`, true);
-    } else {
-      toast(`视频已保存：${dispPath}`);
+      toast(`本机只能录 ${ext.toUpperCase()}（相册常不支持），已切换系统相机，请重录一次（MP4 保证可播）`, true);
+      recordShot(`${dispPath}｜${ext.toUpperCase()}（可能无法播放）`, rowVal('小班号'), 'video');
+      renderShotList();
+      setTimeout(() => $('#videoInput').click(), 1200);   // 自动引导系统相机重录
+      return;
     }
+    toast(`视频已保存：${dispPath}`);
     renderShotList();
   } catch (err) {
     toast('视频保存失败：' + err.message, true);

@@ -544,6 +544,7 @@ def api_video_params():
             except ValueError:
                 return d
         return jsonify(rec=s.get('video_phone_rec', '1'),
+                       rec_mode=(s.get('video_rec_mode') or 'system'),
                        max_height=_i('video_max_height', 720),
                        bitrate_k=_i('video_maxrate_k', 2500),
                        fps=_i('video_fps', 30),
