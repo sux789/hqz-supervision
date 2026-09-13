@@ -11,7 +11,15 @@ function toast(msg, isErr) {
   t._h = setTimeout(() => t.classList.add('hidden'), 2600);
 }
 
+function getToken() { try { return localStorage.getItem('hqz_sup_token') || ''; } catch (e) { return ''; } }
+function withToken(url) {
+  const t = getToken();
+  return t ? url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(t) : url;
+}
+
 async function api(url, opt) {
+  const tok = getToken();
+  if (tok) { opt = opt || {}; opt.headers = Object.assign({}, opt.headers || {}, { 'X-Sup-Token': tok }); }
   const r = await fetch((window.SUP_BASE || '') + url, opt);
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
@@ -31,7 +39,7 @@ async function loadWorkbooks() {
       : '<span class="muted">参数表未配置可编辑列</span>';
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${w.name}</td><td>${w.sheet_name}</td><td class="param-cell">${param}</td><td>${w.uploaded_at}</td>
-      <td><a class="btn" href="${window.SUP_BASE || ''}/admin/api/workbooks/${w.id}/download">下载 Excel</a>
+      <td><a class="btn" href="${withToken((window.SUP_BASE || '') + `/admin/api/workbooks/${w.id}/download`)}">下载 Excel</a>
           <button class="btn danger" data-del="${w.id}">删除</button></td>`;
     tb.appendChild(tr);
   }
@@ -54,7 +62,7 @@ async function loadTracks() {
   for (const t of data.tracks) {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${t.file}</td><td>${(t.size / 1024).toFixed(1)} KB</td>
-      <td><a class="btn" href="${window.SUP_BASE || ''}/admin/api/tracks/${encodeURIComponent(t.file)}">下载</a></td>`;
+      <td><a class="btn" href="${withToken((window.SUP_BASE || '') + '/admin/api/tracks/' + encodeURIComponent(t.file))}">下载</a></td>`;
     tb.appendChild(tr);
   }
 }
@@ -96,7 +104,7 @@ $('#adminFile').addEventListener('change', async (e) => {
   await loadWorkbooks();
 });
 
-$('#btnZip').addEventListener('click', () => { location.href = (window.SUP_BASE || '') + '/admin/api/tracks.zip'; });
+$('#btnZip').addEventListener('click', () => { location.href = withToken((window.SUP_BASE || '') + '/admin/api/tracks.zip'); });
 
 /* ── 相片云同步（doc/007） ── */
 function fmtTokenExp(ts) {

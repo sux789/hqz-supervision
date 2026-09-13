@@ -6,7 +6,9 @@
      C07 相片不落服务器（App 存系统相册 / 浏览器下载，前端仅记录文件名提示）
 启动：python main.py  →  http://127.0.0.1:8720
 """
+import base64
 import hashlib
+import hmac
 import io
 import json
 import re
@@ -101,10 +103,67 @@ def init_db():
     con.close()
 
 
+# ── 长期令牌（v0.15）──────────────────────────────────────────────
+# 背景：系统相机是独立 Activity，会把 WebView 顶到后台甚至让进程被杀；此时
+# WebView 的 cookie 可能尚未落盘 → 回来页面重载变"未登录"。令牌存 localStorage
+# （写入即持久）+ 随每个请求带 X-Sup-Token，彻底摆脱 cookie 落盘时序问题。
+
+_TOKEN_DAYS = 180
+
+
+def _token_secret() -> bytes:
+    return b'hqz-supervision-token-v1'
+
+
+def make_token(user: str, days: int = _TOKEN_DAYS) -> str:
+    exp = int(datetime.now().timestamp()) + days * 86400
+    payload = f'{user}|{exp}'
+    sig = hmac.new(_token_secret(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+    return b64e(f'{payload}|{sig}'.encode())
+
+
+def verify_token(tok: str):
+    """→ 用户名 或 None（签名不符/过期/格式错）。"""
+    try:
+        user, exp, sig = b64d(tok).decode().rsplit('|', 2)
+        if not hmac.compare_digest(
+                hmac.new(_token_secret(), f'{user}|{exp}'.encode(), hashlib.sha256).hexdigest()[:32], sig):
+            return None
+        if int(exp) < datetime.now().timestamp():
+            return None
+        return user
+    except Exception:
+        return None
+
+
+def b64e(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode().rstrip('=')
+
+
+def b64d(tok: str) -> bytes:
+    return base64.urlsafe_b64decode(tok + '=' * (-len(tok) % 4))
+
+
+def auth_user():
+    """当前登录用户：优先 session，其次 X-Sup-Token / ?token= 。→ (user, role) 或 (None, None)"""
+    if session.get('user'):
+        return session['user'], session.get('role')
+    tok = request.headers.get('X-Sup-Token') or request.args.get('token') or ''
+    if not tok:
+        return None, None
+    user = verify_token(tok)
+    if not user:
+        return None, None
+    con = db()
+    row = con.execute('SELECT role FROM users WHERE username=?', (user,)).fetchone()
+    con.close()
+    return (user, row['role']) if row else (None, None)
+
+
 def login_required(f):
     @wraps(f)
     def wrap(*a, **kw):
-        if not session.get('user'):
+        if not auth_user()[0]:
             return jsonify(error='未登录'), 401
         return f(*a, **kw)
     return wrap
@@ -113,9 +172,10 @@ def login_required(f):
 def admin_required(f):
     @wraps(f)
     def wrap(*a, **kw):
-        if not session.get('user'):
+        user, role = auth_user()
+        if not user:
             return jsonify(error='未登录'), 401
-        if session.get('role') != 'admin':
+        if role != 'admin':
             return jsonify(error='需要管理员权限'), 403
         return f(*a, **kw)
     return wrap
@@ -154,7 +214,17 @@ def api_login():
     session['role'] = row['role']
     # 返回 user：登录是 fetch 静默完成（页面不刷新），前端需回写 #whoami 的 data-user，
     # 否则验收联动/{{拍照人}} 拿到的用户名为空（v0.8.2 修复）
-    return jsonify(ok=True, role=row['role'], user=row['username'])
+    return jsonify(ok=True, role=row['role'], user=row['username'],
+                   token=make_token(row['username']))
+
+
+@bp.route('/api/me', methods=['GET'])
+def api_me():
+    """当前登录身份（页面重载后用令牌恢复用户名，供 {{拍照人}} / 验收联动使用）。"""
+    user, role = auth_user()
+    if not user:
+        return jsonify(error='未登录'), 401
+    return jsonify(user=user, role=role)
 
 
 @bp.route('/api/logout', methods=['POST'])

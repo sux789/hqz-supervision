@@ -20,10 +20,29 @@ function toast(msg, isErr) {
   t._h = setTimeout(() => t.classList.add('hidden'), 2600);
 }
 
+/* ── 长期令牌（v0.15）：localStorage 持久，抗 WebView 进程被相机等挤掉 ── */
+function getToken() {
+  try { return localStorage.getItem('hqz_sup_token') || ''; } catch (e) { return ''; }
+}
+function setToken(t) {
+  try { t ? localStorage.setItem('hqz_sup_token', t) : localStorage.removeItem('hqz_sup_token'); } catch (e) {}
+}
+/* 需要浏览器直接打开（下载/导出）的链接：把令牌挂到 query，服务端同样认 */
+function withToken(url) {
+  const t = getToken();
+  if (!t) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(t);
+}
+
 async function api(url, opt) {
   // 401：会话过期/被清 → 明确提示（页面重载后会自动回到登录页，登录后 hash 仍在，会回到原小班）
+  const tok = getToken();
+  if (tok) {
+    opt = opt || {};
+    opt.headers = Object.assign({}, opt.headers || {}, { 'X-Sup-Token': tok });
+  }
   const r = await fetch((window.SUP_BASE || '') + url, opt);
-  if (r.status === 401) toast('登录已过期，请重新登录', true);
+  if (r.status === 401) { toast('登录已过期，请重新登录', true); setToken(''); }
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
   return body;
@@ -89,6 +108,7 @@ $('#loginForm').addEventListener('submit', async (e) => {
     });
     // 关键：登录不刷新页面，data-user 必须在此回写（否则验收联动/拍照人拿空用户名）
     $('#whoami').dataset.user = r.user || $('#loginUser').value.trim();
+    if (r.token) setToken(r.token);      // 长期令牌（抗进程被杀；cookie 仍作后备）
     boot();
   } catch (err) {
     $('#loginErr').textContent = err.message;
@@ -97,6 +117,7 @@ $('#loginForm').addEventListener('submit', async (e) => {
 
 $('#btnLogout').addEventListener('click', async () => {
   await api('/api/logout', { method: 'POST' }).catch(() => {});
+  setToken('');                        // 令牌一并清除
   location.href = '/';
 });
 
@@ -146,7 +167,7 @@ async function loadList() {
     // 列表页直接导出（按上传模板回填）；阻止冒泡避免触发「打开」
     n.querySelector('.wb-export').addEventListener('click', (e) => {
       e.stopPropagation();
-      window.open((window.SUP_BASE || '') + `/api/workbooks/${w.id}/export`, '_blank');
+      window.open(withToken((window.SUP_BASE || '') + `/api/workbooks/${w.id}/export`), '_blank');
     });
     box.appendChild(n);
   }
@@ -392,7 +413,7 @@ function renderForm() {
 /* ── 导出 Excel（按上传模板回填） ── */
 $('#btnExport').addEventListener('click', () => {
   if (!cur) return;
-  window.open((window.SUP_BASE || '') + `/api/workbooks/${cur.id}/export`, '_blank');
+  window.open(withToken((window.SUP_BASE || '') + `/api/workbooks/${cur.id}/export`), '_blank');
 });
 
 /* 解析下拉选项键：形如「XX选项」且 XX 是真实表头列（排除「搜索选项」控件映射键）。
@@ -1120,13 +1141,33 @@ ${seg}
 /* ── 启动 ── */
 async function boot() {
   try {
-    await api('/api/workbooks');
+    const me = await api('/api/me');      // 令牌或 cookie 任一有效即可
     loggedIn = true;
-    $('#whoami').textContent = $('#whoami').dataset.user || '';
+    $('#whoami').dataset.user = me.user || '';
+    $('#whoami').textContent = me.user || '';
     await route();
+    ensurePermissionsUpfront();           // 登录后一次性申请权限（见函数注释）
   } catch (e) {
+    setToken('');
     show('login');
   }
+}
+
+/* 启动时一次性申请权限（v0.15）：把弹窗集中到"刚进 App"这一步，
+   之后拍照/录像/轨迹都不再中途弹权限（Android 不允许安装即授权，只能首次运行时申请）。 */
+let permsAsked = false;
+async function ensurePermissionsUpfront() {
+  if (permsAsked) return;
+  permsAsked = true;
+  const plugin = (isNativeApp() && window.Capacitor && window.Capacitor.Plugins)
+    ? window.Capacitor.Plugins.AppPermissions : null;
+  if (!plugin) return;                    // 浏览器内不做原生申请
+  try {
+    if (typeof plugin.ensureMedia === 'function') await plugin.ensureMedia();   // 相机 + 麦克风
+  } catch (e) {}
+  try {
+    if (typeof plugin.request === 'function') await plugin.request({ type: 'location' });   // 轨迹/水印坐标
+  } catch (e) {}
 }
 
 boot();
