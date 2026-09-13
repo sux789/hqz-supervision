@@ -27,7 +27,7 @@
 - **已知问题**：v0.8 前上传的旧工作簿无 source 模板，导出需重新上传；轨迹记录不支持后台运行；v0.8.2 前已保存的行验收人为空；七牛 io 回读域名未开放（需绑定下载域名），当前回读兜底不可用——pending 缓冲为主回读源；百度 mkdir 对已存在目录偶发产生 `名字_时间戳` 副本目录（无害，生产文件名带时间戳不碰撞）
 - **能跑**：https://forest.bibook.top/supervision 已上线 v0.9（2026-09-12 ./deploy.sh 部署；云凭证已配置、同步开关已开启；线上拍照实测 baidu_ok）；账号 雷华雄/lhx123
 - **下一步**：1. [x] 相片云同步上线（doc/007） 2. [ ] GitHub Secrets 配置（KEYSTORE_BASE64/KEY_ALIAS/KEYSTORE_PASSWORD/KEY_PASSWORD）→ tag 触发 CI 出正式签名 APK 3. [ ] APP 备案（阿里云/域名备案主体入口，填包名 top.bibook.supervision + SHA256 指纹，见 android/keystore-info.txt）
-- **最近迭代文档**：doc/007-相片云同步设计.md（云同步）、doc/008-APK重打包指引.md（视频本地保存+录音权限）、doc/001-参数sheet配置规范.md（10 键 + 水印版式 + 视频）
+- **最近迭代文档**：doc/008-APK重打包指引.md（APK 重打包与原生能力总纲：录像压缩/保活/后台权限/图标闪屏/**轨迹原生记录**）、doc/007-相片云同步设计.md、doc/001-参数sheet配置规范.md
 - **活跃约束**：C01–C10（详见 CONSTRAINTS.md）
 
 ## 资产活跃度（每 5 版评审时更新）
