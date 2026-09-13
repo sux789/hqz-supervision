@@ -350,8 +350,18 @@ class BaiduPan:
             pass
         return None
 
+    def _dir_exists(self, remote_path: str) -> bool:
+        parent = remote_path.rsplit('/', 1)[0] or '/'
+        try:
+            return any(f.get('path') == remote_path and f.get('isdir', 0) == 1
+                       for f in self.list_dir(parent))
+        except SyncError:
+            return False
+
     def mkdir_p(self, remote_dir: str) -> None:
-        """递归建目录（rtype=1 同名不转存，-8 视为已存在——trans_v2 踩坑修复）。
+        """递归建目录。**必须先查再建**：百度的 create 即使带 rtype=1，对已存在的
+        目录仍会同名转存出 `目录名_YYYYMMDD_HHMMSS` 空副本（2026-09-13 实测踩坑），
+        因此每层先 list 父目录确认不存在才创建（trans_v2 同做法）。
         /apps 与 /apps/{应用名} 是百度应用固定层级（errno=102 无权限创建），跳过。"""
         parts = [p for p in remote_dir.split('/') if p]
         base_len = len([p for p in self.app_dir.split('/') if p]) if self.app_dir else 0
@@ -360,9 +370,11 @@ class BaiduPan:
             cur += '/' + p
             if i < base_len:
                 continue  # 应用固定前缀（/apps、/apps/xxx），视为已存在
+            if self._dir_exists(cur):
+                continue  # 已存在：绝不再 create，避免同名转存副本
             data = self._call_api('create', fields={'path': cur, 'isdir': '1',
                                                     'autoinit': '1', 'rtype': '1'})
-            if data.get('errno', -1) not in (0, -8):
+            if data.get('errno', -1) not in (0, -8) and not self._dir_exists(cur):
                 raise SyncError(f'建目录失败 {cur}: errno={data.get("errno")}')
 
     def delete_file(self, remote_path: str) -> bool:
