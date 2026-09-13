@@ -789,17 +789,48 @@ $('#btnVideo').addEventListener('click', () => {
   startRecording().catch((e) => toast('无法启动录制：' + e.message, true));
 });
 
+/* 权限（v0.11 标准化）：原生端一次性申请「相机 + 麦克风」，
+   摄像头被拒 → 中止；麦克风被拒 → 静默降级为无声录制 */
+async function ensureMediaPermissions() {
+  const plugin = nativePlugin();
+  if (!plugin || typeof plugin.ensureMedia !== 'function') return { camera: true, microphone: false };
+  try {
+    const r = await plugin.ensureMedia();
+    return { camera: !!r.camera, microphone: !!r.microphone };
+  } catch (e) {
+    return { camera: true, microphone: false };
+  }
+}
+
+function nativePlugin() {
+  return (isNativeApp() && window.Capacitor && window.Capacitor.Plugins)
+    ? window.Capacitor.Plugins.AppPermissions : null;
+}
+
 async function startRecording() {
   const p = await loadVideoParams();
+  const perm = await ensureMediaPermissions();
+  if (!perm.camera) {
+    toast('未获得相机权限：请在系统设置里允许本应用使用相机', true);
+    const plugin = nativePlugin();
+    if (plugin && plugin.openSettings) plugin.openSettings().catch(() => {});
+    return;
+  }
+  const wantAudio = perm.microphone;
   const maxH = parseInt(p.max_height || 720, 10);
   const fps = parseInt(p.fps || 30, 10);
   const bps = (parseInt(p.bitrate_k || 2500, 10)) * 1000;
   const mime = pickRecMime();
-  recStream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { ideal: 'environment' },
-             height: { ideal: maxH }, frameRate: { ideal: fps } },
-    audio: false,   // APK 未声明 RECORD_AUDIO → 无声录制
-  });
+  const vcon = { facingMode: { ideal: 'environment' },
+                 height: { ideal: maxH }, frameRate: { ideal: fps } };
+  let hasAudio = wantAudio;
+  try {
+    recStream = await navigator.mediaDevices.getUserMedia({ video: vcon, audio: wantAudio });
+  } catch (e) {
+    // 麦克风被拒/不可用 → 降级为无声录制（视频照常可拍）
+    hasAudio = false;
+    recStream = await navigator.mediaDevices.getUserMedia({ video: vcon, audio: false });
+  }
   const opts = { videoBitsPerSecond: bps };
   if (mime) opts.mimeType = mime;
   recChunks = [];
@@ -809,7 +840,8 @@ async function startRecording() {
   recRecorder.onstop = () => finishRecording();
   $('#recPreview').srcObject = recStream;
   $('#recMask').classList.remove('hidden');
-  $('#recHint').textContent = `${maxH}p · ${(bps / 1000000).toFixed(1)} Mbps · 无声 · 只存手机`;
+  $('#recHint').textContent = `${maxH}p · ${(bps / 1000000).toFixed(1)} Mbps · `
+    + `${hasAudio ? '有声' : '无声'} · 只存手机`;
   $('#recTime').textContent = '00:00';
   recStartAt = Date.now();
   recRecorder.start(1000);
@@ -880,14 +912,14 @@ async function finishRecording() {
 
 /* 本地保存链：saveVideo（Movies 相册，需新版 APK）→ saveFile（下载目录）→ 浏览器下载 */
 async function saveVideoLocal(blob, fname, subdir) {
-  const plugin = isNativeApp() && window.Capacitor && window.Capacitor.Plugins
-    ? window.Capacitor.Plugins.AppPermissions : null;
+  const plugin = nativePlugin();
   if (plugin) {
     const b64 = await blobToBase64(blob);
     if (typeof plugin.saveVideo === 'function') {
       try {
         const r = await plugin.saveVideo({ base64: b64, name: fname, subdir });
-        if (r && r.path) return `Movies/${subdir}/${fname}`;
+        // 与照片同目录（Pictures/{参数目录}/），相册里照片与视频同处一个文件夹
+        if (r && r.path) return `Pictures/${subdir}/${fname}`;
       } catch (e) { /* 落到下一档 */ }
     }
     if (typeof plugin.saveFile === 'function') {

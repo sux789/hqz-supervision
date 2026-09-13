@@ -31,8 +31,10 @@ import java.io.OutputStream;
  *   - openSettings()        打开本 App 的系统权限设置页
  *   - savePhoto({base64,name,subdir})  照片写入系统相册 Pictures/{subdir}/（多级子目录，如
  *                                      2022年度/人工造林/1号调查小班），返回真实绝对路径
- *   - saveFile({base64,name})   导出文件（xlsx/zip）写入公共下载 Download/验收导出/，返回真实绝对路径
- * type: 'location' | 'camera'
+ *   - saveFile({base64,name})   导出文件（xlsx/zip/mp4）写入公共下载 Download/验收导出/，返回真实绝对路径
+ *   - saveVideo({base64,name,subdir,base})  视频写入相册 Pictures/{subdir}/（与照片同目录；base 可改顶层目录）
+ *   - ensureMedia()         一次性申请「相机 + 麦克风」授权（录制视频前调用）
+ * type: 'location' | 'camera' | 'microphone'
  */
 @CapacitorPlugin(
     name = "AppPermissions",
@@ -43,13 +45,19 @@ import java.io.OutputStream;
         }),
         @Permission(alias = "camera", strings = {
             Manifest.permission.CAMERA
+        }),
+        @Permission(alias = "microphone", strings = {
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.MODIFY_AUDIO_SETTINGS
         })
     }
 )
 public class AppPermissionsPlugin extends Plugin {
 
     private String resolveAlias(String type) {
-        return "camera".equals(type) ? "camera" : "location";
+        if ("camera".equals(type)) return "camera";
+        if ("microphone".equals(type) || "mic".equals(type) || "audio".equals(type)) return "microphone";
+        return "location";
     }
 
     @PluginMethod
@@ -85,6 +93,38 @@ public class AppPermissionsPlugin extends Plugin {
         ret.put("type", resolveAlias(type));
         ret.put("state", state.toString());
         ret.put("granted", state == PermissionState.GRANTED);
+        call.resolve(ret);
+    }
+
+    /**
+     * 标准化媒体权限申请：一次性确保「相机 + 麦克风」都拿到授权（v0.11）。
+     * 返回 {camera, microphone, granted}；页面在调用 getUserMedia 录制视频前先调本方法，
+     * 用户只需点一次系统弹窗，避免"录到一半才弹权限"的割裂体验。
+     */
+    @PluginMethod
+    public void ensureMedia(PluginCall call) {
+        java.util.List<String> need = new java.util.ArrayList<>();
+        if (getPermissionState("camera") != PermissionState.GRANTED) need.add("camera");
+        if (getPermissionState("microphone") != PermissionState.GRANTED) need.add("microphone");
+        if (!need.isEmpty()) {
+            requestPermissionForAliases(need.toArray(new String[0]), call, "mediaCallback");
+            return;
+        }
+        resolveMediaStates(call);
+    }
+
+    @PermissionCallback
+    private void mediaCallback(PluginCall call) {
+        resolveMediaStates(call);
+    }
+
+    private void resolveMediaStates(PluginCall call) {
+        boolean cam = getPermissionState("camera") == PermissionState.GRANTED;
+        boolean mic = getPermissionState("microphone") == PermissionState.GRANTED;
+        JSObject ret = new JSObject();
+        ret.put("camera", cam);
+        ret.put("microphone", mic);
+        ret.put("granted", cam && mic);
         call.resolve(ret);
     }
 
@@ -182,8 +222,9 @@ public class AppPermissionsPlugin extends Plugin {
      * 旧版本回退应用外部私有目录。
      */
     /**
-     * 视频写入系统相册 Movies/{subdir}/（v0.11，需重打包 APK 生效）。
-     * 与 savePhoto 同构，仅换 MediaStore.Video + DIRECTORY_MOVIES，使视频在相册中可见。
+     * 视频写入系统相册（v0.11，需重打包 APK 生效）。
+     * 默认与照片**完全同目录**：Pictures/{subdir}/（即相册中照片、视频同处一个文件夹），
+     * 可用 base 参数改为 Movies 等其它顶层目录；失败由页面回退 saveFile/浏览器下载。
      */
     @PluginMethod
     public void saveVideo(PluginCall call) {
@@ -194,6 +235,10 @@ public class AppPermissionsPlugin extends Plugin {
             return;
         }
         String subdir = sanitizeSubdir(call.getString("subdir", "验收照片"));
+        // 与照片保持一致的顶层目录（默认 Pictures，可传 base=Movies 等）
+        String base = call.getString("base", Environment.DIRECTORY_PICTURES);
+        if (base == null || base.trim().isEmpty()) base = Environment.DIRECTORY_PICTURES;
+        base = base.trim();
         String lower = name.toLowerCase();
         String mime = lower.endsWith(".webm") ? "video/webm"
                 : (lower.endsWith(".mov") ? "video/quicktime" : "video/mp4");
@@ -205,8 +250,7 @@ public class AppPermissionsPlugin extends Plugin {
             Uri uri;
             String realPath;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                values.put(MediaStore.Video.Media.RELATIVE_PATH,
-                        Environment.DIRECTORY_MOVIES + "/" + subdir);
+                values.put(MediaStore.Video.Media.RELATIVE_PATH, base + "/" + subdir);
                 uri = getContext().getContentResolver().insert(
                         MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
                 if (uri == null) {
@@ -218,10 +262,9 @@ public class AppPermissionsPlugin extends Plugin {
                     os.flush();
                 }
                 realPath = queryFileRealPath(uri, new File(new File(
-                        Environment.getExternalStorageDirectory(),
-                        Environment.DIRECTORY_MOVIES), subdir));
+                        Environment.getExternalStorageDirectory(), base), subdir));
             } else {
-                File dir = new File(getContext().getExternalFilesDir(Environment.DIRECTORY_MOVIES), subdir);
+                File dir = new File(getContext().getExternalFilesDir(base), subdir);
                 if (!dir.exists()) dir.mkdirs();
                 File f = new File(dir, name);
                 try (FileOutputStream fos = new FileOutputStream(f)) {

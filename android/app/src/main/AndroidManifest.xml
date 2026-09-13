@@ -40,11 +40,15 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 拍照（hqz-survey G1 教训：缺相机权限时 input capture 受限） -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- 视频录制录音（v0.11：页面录制带声音；Capacitor WebChromeClient 会自动申请这两项） -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- 轨迹/拍照坐标水印（Web geolocation 需要） -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
     <!-- Android 11+ 包可见性：不声明则 resolveActivity 找不到相机 App，
