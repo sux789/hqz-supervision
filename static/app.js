@@ -762,13 +762,22 @@ function videoApiReady() {
   return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 }
 
+/* 录制容器：优先 MP4/H.264（兼容性最好，相册与播放器都认）。
+   注意「video/mp4」可能落到 HEVC/AV1，故首选显式 avc1（H.264）。 */
+const MP4_MIMES = ['video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1', 'video/mp4'];
+
+function mp4RecSupported() {
+  if (!window.MediaRecorder) return false;
+  return MP4_MIMES.some((m) => {
+    try { return MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m); } catch (e) { return false; }
+  });
+}
+
 function pickRecMime() {
-  const cands = ['video/mp4;codecs=avc1.42E01E', 'video/mp4',
-                 'video/webm;codecs=h264', 'video/webm;codecs=vp8', 'video/webm'];
-  for (const m of cands) {
+  for (const m of MP4_MIMES) {
     try { if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m; } catch (e) {}
   }
-  return '';
+  return '';   // 不支持 MP4 → 交给 startRecording 决策（换系统相机）
 }
 
 const mimeExt = (mime) => (/mp4/.test(mime) ? 'mp4' : 'webm');
@@ -785,9 +794,52 @@ async function loadVideoParams() {
 
 $('#btnVideo').addEventListener('click', () => {
   if (curIdx < 0 || !allRows[curIdx]) { toast('请先选择小班', true); return; }
-  if (!videoApiReady()) { toast('当前环境不支持录制（需较新系统 WebView）', true); return; }
-  startRecording().catch((e) => toast('无法启动录制：' + e.message, true));
+  if (!videoApiReady()) { useSystemCamera('当前环境不支持页面录制'); return; }
+  // 不能录 MP4 → 用系统相机（硬件 H.264，保证能播放）
+  if (!mp4RecSupported()) { useSystemCamera('本机不支持录制 MP4'); return; }
+  startRecording().catch((e) => useSystemCamera('页面录制启动失败：' + e.message));
 });
+
+/* 系统相机录制（保证 MP4/H.264）：录完按同一命名规则另存到手机 */
+function useSystemCamera(why) {
+  toast(`${why}，改用系统相机录制（MP4，保证可播放）`);
+  $('#videoInput').click();
+}
+
+$('#videoInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file || curIdx < 0) return;
+  const extRaw = (file.name.split('.').pop() || 'mp4').toLowerCase();
+  const srcExt = ['mp4', 'mov', 'webm', 'm4v', '3gp'].includes(extRaw) ? extRaw : 'mp4';
+  const ext = (srcExt === 'm4v' || srcExt === '3gp') ? 'mp4' : srcExt;   // 统一成通用后缀
+  await saveExternalVideo(file, ext);
+});
+
+/* 把外部视频（系统相机录制/相册选取）按命名规则另存到手机本地 */
+async function saveExternalVideo(file, ext) {
+  if (recSaving) { toast('正在保存上一个视频，请稍候', true); return; }
+  recSaving = true;
+  try {
+    const row = allRows[curIdx];
+    const now = new Date();
+    const ts = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') +
+      String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') +
+      String(now.getMinutes()).padStart(2, '0') + String(now.getSeconds()).padStart(2, '0');
+    const base = sanitizeSeg(renderTpl(cur.config['相片文件名'] || '', row, ts)) || 'video';
+    const fname = `${base}_视频.${ext}`;
+    const subdir = rowSubdir() || '验收照片';
+    toast(`视频保存中（${(file.size / 1048576).toFixed(1)} MB）…`);
+    const saved = await saveVideoLocal(file, fname, subdir);
+    recordShot(saved || `${fname}（${(file.size / 1048576).toFixed(1)} MB）`, rowVal('小班号'), 'video');
+    toast(`视频已保存：${saved || fname}`);
+    renderShotList();
+  } catch (err) {
+    toast('视频保存失败：' + err.message, true);
+  } finally {
+    recSaving = false;
+  }
+}
 
 /* 权限（v0.11 标准化）：原生端一次性申请「相机 + 麦克风」，
    摄像头被拒 → 中止；麦克风被拒 → 静默降级为无声录制 */
@@ -840,8 +892,9 @@ async function startRecording() {
   recRecorder.onstop = () => finishRecording();
   $('#recPreview').srcObject = recStream;
   $('#recMask').classList.remove('hidden');
+  const fmtName = /mp4/.test(mime || '') ? 'MP4' : 'WebM';
   $('#recHint').textContent = `${maxH}p · ${(bps / 1000000).toFixed(1)} Mbps · `
-    + `${hasAudio ? '有声' : '无声'} · 只存手机`;
+    + `${hasAudio ? '有声' : '无声'} · ${fmtName} · 只存手机`;
   $('#recTime').textContent = '00:00';
   recStartAt = Date.now();
   recRecorder.start(1000);
@@ -901,7 +954,11 @@ async function finishRecording() {
     const saved = await saveVideoLocal(blob, fname, subdir);
     const dispPath = saved || `${fname}（${(blob.size / 1048576).toFixed(1)} MB）`;
     recordShot(dispPath, rowVal('小班号'), 'video');
-    toast(`视频已保存：${dispPath}`);
+    if (ext !== 'mp4') {
+      toast(`视频已保存为 ${ext.toUpperCase()}：${dispPath}｜若相册提示无法播放，请改用「系统相机录制」（MP4）`, true);
+    } else {
+      toast(`视频已保存：${dispPath}`);
+    }
     renderShotList();
   } catch (err) {
     toast('视频保存失败：' + err.message, true);
@@ -912,6 +969,7 @@ async function finishRecording() {
 
 /* 本地保存链：saveVideo（Movies 相册，需新版 APK）→ saveFile（下载目录）→ 浏览器下载 */
 async function saveVideoLocal(blob, fname, subdir) {
+  // blob 可以是 Blob 或 File（系统相机录制产物）
   const plugin = nativePlugin();
   if (plugin) {
     const b64 = await blobToBase64(blob);

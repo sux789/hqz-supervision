@@ -60,6 +60,9 @@
 
   <input type="file" id="photoInput" accept="image/*" capture="environment" hidden>
 
+  <!-- 系统相机录制兜底（v0.12）：本机 WebView 不支持 MP4 录制时走这里，硬件 H.264 → 必播 -->
+  <input type="file" id="videoInput" accept="video/*" capture="camcorder" hidden>
+
   <!-- 录制遮罩（v0.11）：getUserMedia 预览 + MediaRecorder 边录边压，**只存手机本地，不上传** -->
   <div id="recMask" class="rec-mask hidden">
     <video id="recPreview" playsinline muted autoplay></video>
@@ -97,6 +100,6 @@
   <script src="{{ url_for('static', filename='vendor/jsuites.min.js') }}"></script>
   <script src="{{ url_for('static', filename='vendor/jspreadsheet.min.js') }}"></script>
   <!-- ?v= 版本号熔断：静态 JS 更新后 WebView/浏览器强制拉新（曾致 APK 端验收联动代码不生效） -->
-  <script src="{{ url_for('static', filename='app.js') }}?v=0.11.1"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=0.12"></script>
 </body>
 </html>
