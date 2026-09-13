@@ -696,6 +696,23 @@ def admin_accept_logs():
     return jsonify(logs=[dict(x) for x in rows])
 
 
+# ────────────────────────── APK 直链（手机扫码/直接下载安装） ──────────────────────────
+
+APK_DIR = BASE / 'static'   # 由 deploy.sh 同步，CI 产物放这里
+
+
+@bp.route('/apk')
+def apk_latest():
+    """最新 Android 调试包直链（短链，便于二维码/手机输入）：
+    取 static/supervision-*.apk 中文件名最大者（带版本号，天然按版本排序）。"""
+    files = sorted(APK_DIR.glob('supervision-*.apk'))
+    if not files:
+        abort(404, description='尚无 APK 产物（CI 打包后放入 static/）')
+    f = files[-1]
+    return send_file(f, as_attachment=True, download_name=f.name,
+                     mimetype='application/vnd.android.package-archive')
+
+
 # ────────────────────────── 后台：同步设置与状态（doc/007 §5/§7） ──────────────────────────
 
 _SYNC_EDITABLE = set(sync_cloud.SYNC_DEFAULTS) | set(sync_cloud.VIDEO_DEFAULTS)  # 允许后台写入的键
