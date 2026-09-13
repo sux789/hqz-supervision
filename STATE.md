@@ -4,6 +4,7 @@
 
 - **版本**：v0.15 ｜ **更新**：2026-09-13（下午）
 - **能跑**：`python main.py` → http://127.0.0.1:8720（雷华雄/lhx123 登录）：上传 Excel→列表选择→参数驱动网格填表→保存；后台 /admin 模板管理+下载 Excel+轨迹下载+验收变更日志+**相片云同步设置/状态面板**
+- **v0.14.1 变化**：启动图标重做——原前景只占画布 65%（emblem 49%）且素材带 AI 水印、超出安全区被圆形遮罩切角；改为「去水印 + 素材缩到 84%（emblem 62% 安全区内）+ 边缘延展消接缝 + 背景取素材四角绿 #215C33」，脚本固化 `tools/make_app_icons.py` 可重复生成
 - **v0.15 变化**：登录彻底不再丢——引入**长期令牌**（180 天，存 localStorage，随请求带 `X-Sup-Token`；下载/导出链接带 `?token=`），不再依赖 cookie 落盘时序（系统相机把 App 进程挤掉时 cookie 可能未落盘 → 原来会弹登录）；新增 `/api/me` 页面重载后恢复身份；登录后**一次性申请权限**（相机+麦克风+定位），拍照/录像/轨迹不再中途弹窗
 - **v0.14 变化**：原生录像**压缩**上线（像拍照一样带参数）——插件用 **Media3 Transformer** 转码：缩放到 `video_max_height`、码率 `video_maxrate_k`、保留声音 AAC、输出 MP4/H.264，落到 `Pictures/{参数目录}/{模板}_视频.mp4`（与照片同目录同命名规则）；新增后台开关 `video_transcode`（默认开，失败自动回退原片）；压缩阶段经 notifyListeners 提示前端；录制改低码率（EXTRA_VIDEO_QUALITY=0）；APK 7.3MB（media3 +2.8MB）
 - **v0.13.2 变化**：修复「录像后点确认弹出登录页」——根因是系统相机顶掉 WebView 时会话级 cookie 丢失；①服务端会话改 **30 天持久 cookie**（生产加 Secure/Lax）②插件新增 **`recordVideo()`**（startActivityForResult + 流式复制到 Pictures/{目录}/，**不再走 WebView 文件回传**，页面重载也不丢文件、容器为相机原生 MP4/H.264）③前端 401 明确提示；新 APK 已发布（/supervision/apk 自动指向 v0.13.2）
