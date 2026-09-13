@@ -181,6 +181,65 @@ public class AppPermissionsPlugin extends Plugin {
      * Android 10+ 走 MediaStore Downloads（自有文件免存储权限，文件管理器立即可见）；
      * 旧版本回退应用外部私有目录。
      */
+    /**
+     * 视频写入系统相册 Movies/{subdir}/（v0.11，需重打包 APK 生效）。
+     * 与 savePhoto 同构，仅换 MediaStore.Video + DIRECTORY_MOVIES，使视频在相册中可见。
+     */
+    @PluginMethod
+    public void saveVideo(PluginCall call) {
+        String base64 = call.getString("base64");
+        String name = call.getString("name", "video.mp4");
+        if (base64 == null || base64.isEmpty()) {
+            call.reject("缺少视频数据");
+            return;
+        }
+        String subdir = sanitizeSubdir(call.getString("subdir", "验收照片"));
+        String lower = name.toLowerCase();
+        String mime = lower.endsWith(".webm") ? "video/webm"
+                : (lower.endsWith(".mov") ? "video/quicktime" : "video/mp4");
+        try {
+            byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Video.Media.DISPLAY_NAME, name);
+            values.put(MediaStore.Video.Media.MIME_TYPE, mime);
+            Uri uri;
+            String realPath;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                values.put(MediaStore.Video.Media.RELATIVE_PATH,
+                        Environment.DIRECTORY_MOVIES + "/" + subdir);
+                uri = getContext().getContentResolver().insert(
+                        MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
+                if (uri == null) {
+                    call.reject("创建视频相册记录失败");
+                    return;
+                }
+                try (OutputStream os = getContext().getContentResolver().openOutputStream(uri)) {
+                    os.write(bytes);
+                    os.flush();
+                }
+                realPath = queryFileRealPath(uri, new File(new File(
+                        Environment.getExternalStorageDirectory(),
+                        Environment.DIRECTORY_MOVIES), subdir));
+            } else {
+                File dir = new File(getContext().getExternalFilesDir(Environment.DIRECTORY_MOVIES), subdir);
+                if (!dir.exists()) dir.mkdirs();
+                File f = new File(dir, name);
+                try (FileOutputStream fos = new FileOutputStream(f)) {
+                    fos.write(bytes);
+                    fos.flush();
+                }
+                uri = Uri.fromFile(f);
+                realPath = f.getAbsolutePath();
+            }
+            JSObject ret = new JSObject();
+            ret.put("path", realPath);
+            ret.put("uri", uri.toString());
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("保存视频失败: " + e.getMessage(), e);
+        }
+    }
+
     @PluginMethod
     public void saveFile(PluginCall call) {
         String base64 = call.getString("base64");
@@ -195,6 +254,12 @@ public class AppPermissionsPlugin extends Plugin {
             mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
         } else if (lower.endsWith(".zip")) {
             mime = "application/zip";
+        } else if (lower.endsWith(".mp4")) {
+            mime = "video/mp4";        // v0.11：视频本地保存
+        } else if (lower.endsWith(".webm")) {
+            mime = "video/webm";
+        } else if (lower.endsWith(".mov")) {
+            mime = "video/quicktime";
         } else {
             mime = "application/octet-stream";
         }

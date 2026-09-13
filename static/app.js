@@ -752,18 +752,18 @@ $('#photoInput').addEventListener('change', async (e) => {
   } catch (err) { toast('拍照处理失败：' + err.message, true); }
 });
 
-/* ── 视频（v0.10.1）：手机端 MediaRecorder 边录边压 为主，选择已有视频走服务器压缩为辅 ──
-   浏览器/WebView 无法转码已有视频，故"压缩"在手机上以"录制时按目标码率编码"实现；
-   录制参数（最长边/码率/帧率/最长时长）全部来自后台「视频压缩」设置。 */
+/* ── 视频（v0.11）：手机端边录边压 + **只存手机本地（不上传、不入云）** ──
+   点「🎬 视频」直接开始录制；录音权限未在 APK 声明，故无声；停止后保存到手机并记本机提示。
+   保存链：原生 saveVideo（写 Movies/ 相册，需新版 APK）→ 原生 saveFile（下载目录）→ 浏览器下载。 */
 let recStream = null, recRecorder = null, recChunks = [], recTimer = null;
-let recStartAt = 0, recParams = null, recUploading = false;
+let recStartAt = 0, recParams = null, recSaving = false;
 
 function videoApiReady() {
   return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 }
 
 function pickRecMime() {
-  const cands = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4',
+  const cands = ['video/mp4;codecs=avc1.42E01E', 'video/mp4',
                  'video/webm;codecs=h264', 'video/webm;codecs=vp8', 'video/webm'];
   for (const m of cands) {
     try { if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m; } catch (e) {}
@@ -779,43 +779,18 @@ function fmtSec(n) {
 
 async function loadVideoParams() {
   if (recParams) return recParams;
-  recParams = await api('/api/video/params');
+  try { recParams = await api('/api/video/params'); } catch (e) { recParams = {}; }
   return recParams;
 }
 
-$('#btnVideo').addEventListener('click', async () => {
+$('#btnVideo').addEventListener('click', () => {
   if (curIdx < 0 || !allRows[curIdx]) { toast('请先选择小班', true); return; }
-  let p = null;
-  try { p = await loadVideoParams(); } catch (e) { p = null; }
-  const canRec = p && p.rec === '1' && videoApiReady();
-  if (!p || !canRec) {
-    // 后台关闭录制或环境不支持 → 直接走文件选择（服务器压缩）
-    $('#videoInput').click();
-    return;
-  }
-  $('#vmNote').textContent = `录制参数：${p.max_height}p · ${(p.bitrate_k / 1000).toFixed(1)} Mbps · `
-    + `${p.fps}fps · 最长 ${p.max_seconds}s（后台可调）`;
-  $('#videoMenuMask').classList.remove('hidden');
-});
-
-$('#vmCancel').addEventListener('click', () => $('#videoMenuMask').classList.add('hidden'));
-$('#videoMenuMask').addEventListener('click', (e) => {
-  if (e.target === $('#videoMenuMask')) $('#videoMenuMask').classList.add('hidden');
-});
-$('#vmPick').addEventListener('click', () => {
-  $('#videoMenuMask').classList.add('hidden');
-  $('#videoInput').click();
-});
-$('#vmRec').addEventListener('click', () => {
-  $('#videoMenuMask').classList.add('hidden');
-  startRecording().catch((e) => {
-    toast('无法启动录制：' + e.message + '（已切换为选择已有视频）', true);
-    $('#videoInput').click();
-  });
+  if (!videoApiReady()) { toast('当前环境不支持录制（需较新系统 WebView）', true); return; }
+  startRecording().catch((e) => toast('无法启动录制：' + e.message, true));
 });
 
 async function startRecording() {
-  const p = recParams || {};
+  const p = await loadVideoParams();
   const maxH = parseInt(p.max_height || 720, 10);
   const fps = parseInt(p.fps || 30, 10);
   const bps = (parseInt(p.bitrate_k || 2500, 10)) * 1000;
@@ -823,28 +798,25 @@ async function startRecording() {
   recStream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: { ideal: 'environment' },
              height: { ideal: maxH }, frameRate: { ideal: fps } },
-    audio: false,   // 当前 APK 未声明 RECORD_AUDIO，先无声录制（有声需更新 APK）
+    audio: false,   // APK 未声明 RECORD_AUDIO → 无声录制
   });
   const opts = { videoBitsPerSecond: bps };
   if (mime) opts.mimeType = mime;
   recChunks = [];
-  try {
-    recRecorder = new MediaRecorder(recStream, opts);
-  } catch (e) {
-    recRecorder = new MediaRecorder(recStream);   // 兜底：不指定码率
-  }
+  try { recRecorder = new MediaRecorder(recStream, opts); }
+  catch (e) { recRecorder = new MediaRecorder(recStream); }
   recRecorder.ondataavailable = (ev) => { if (ev.data && ev.data.size) recChunks.push(ev.data); };
   recRecorder.onstop = () => finishRecording();
-  const prev = $('#recPreview');
-  prev.srcObject = recStream;
+  $('#recPreview').srcObject = recStream;
   $('#recMask').classList.remove('hidden');
-  $('#recHint').textContent = `${maxH}p · ${(bps / 1000000).toFixed(1)} Mbps · 无声`;
+  $('#recHint').textContent = `${maxH}p · ${(bps / 1000000).toFixed(1)} Mbps · 无声 · 只存手机`;
+  $('#recTime').textContent = '00:00';
   recStartAt = Date.now();
   recRecorder.start(1000);
   recTimer = setInterval(() => {
     const sec = Math.round((Date.now() - recStartAt) / 1000);
     $('#recTime').textContent = fmtSec(sec);
-    if (sec >= parseInt(p.max_seconds || 60, 10)) stopRecording();   // 到时长上限自动停
+    if (sec >= parseInt(p.max_seconds || 60, 10)) stopRecording();   // 到单段上限自动停
   }, 500);
 }
 
@@ -875,59 +847,64 @@ function releaseRec() {
 $('#recStop').addEventListener('click', stopRecording);
 $('#recCancel').addEventListener('click', cancelRecording);
 
+/* 停止 → 保存到手机（不上传） */
 async function finishRecording() {
   const mime = (recRecorder && recRecorder.mimeType) || 'video/webm';
   const blob = new Blob(recChunks, { type: mime });
   releaseRec();
   $('#recMask').classList.add('hidden');
   if (!blob.size) { toast('录制失败：没有数据', true); return; }
-  await uploadVideo(blob, mimeExt(mime), true);
-}
-
-/* 文件选择（已有视频）→ 服务器压缩后同步 */
-$('#videoInput').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  e.target.value = '';
-  if (!file || curIdx < 0) return;
-  const ext = (file.name.split('.').pop() || 'mp4').toLowerCase();
-  await uploadVideo(file, ['mp4', 'webm', 'mov'].includes(ext) ? ext : 'mp4', false);
-});
-
-/* 统一上传：precompressed=1 表示手机端已压缩（录制），服务器不再转码 */
-async function uploadVideo(blob, ext, precompressed) {
-  if (recUploading) { toast('已有视频正在上传，请稍候', true); return; }
-  const row = allRows[curIdx];
-  const mb = blob.size / 1048576;
-  if (mb > 400) { toast(`视频过大（${mb.toFixed(0)} MB），请分段录制`, true); return; }
-  recUploading = true;
-  toast(`视频上传中（${mb.toFixed(1)} MB）…`);
+  if (recSaving) return;
+  recSaving = true;
   try {
-    const st = await api('/api/sync/enabled');
-    if (!st.enabled) { toast('视频需先开启云同步（后台「同步设置」）', true); return; }
+    const row = allRows[curIdx];
     const now = new Date();
     const ts = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') +
       String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') +
       String(now.getMinutes()).padStart(2, '0') + String(now.getSeconds()).padStart(2, '0');
     const base = sanitizeSeg(renderTpl(cur.config['相片文件名'] || '', row, ts)) || 'video';
-    const subdir = rowSubdir();
-    const xh = rowVal('小班号');
-    const fd = new FormData();
-    fd.append('file', blob, `${base}_视频.${ext}`);
-    fd.append('workbook_id', cur.id);
-    fd.append('filename', base);
-    fd.append('subdir', subdir || '');
-    fd.append('xiaoban', xh || '');
-    fd.append('ext', ext);
-    if (precompressed) fd.append('precompressed', '1');
-    await api('/api/video', { method: 'POST', body: fd });
-    recordShot(subdir ? `${subdir}/${base}_视频.${ext}` : `${base}_视频.${ext}`, xh, 'video');
-    toast(`视频已上传（${mb.toFixed(1)} MB），云端同步中`);
+    const ext = mimeExt(mime);
+    const fname = `${base}_视频.${ext}`;
+    const subdir = rowSubdir() || '验收照片';
+    const saved = await saveVideoLocal(blob, fname, subdir);
+    const dispPath = saved || `${fname}（${(blob.size / 1048576).toFixed(1)} MB）`;
+    recordShot(dispPath, rowVal('小班号'), 'video');
+    toast(`视频已保存：${dispPath}`);
     renderShotList();
   } catch (err) {
-    toast('视频上传失败：' + err.message, true);
+    toast('视频保存失败：' + err.message, true);
   } finally {
-    recUploading = false;
+    recSaving = false;
   }
+}
+
+/* 本地保存链：saveVideo（Movies 相册，需新版 APK）→ saveFile（下载目录）→ 浏览器下载 */
+async function saveVideoLocal(blob, fname, subdir) {
+  const plugin = isNativeApp() && window.Capacitor && window.Capacitor.Plugins
+    ? window.Capacitor.Plugins.AppPermissions : null;
+  if (plugin) {
+    const b64 = await blobToBase64(blob);
+    if (typeof plugin.saveVideo === 'function') {
+      try {
+        const r = await plugin.saveVideo({ base64: b64, name: fname, subdir });
+        if (r && r.path) return `Movies/${subdir}/${fname}`;
+      } catch (e) { /* 落到下一档 */ }
+    }
+    if (typeof plugin.saveFile === 'function') {
+      try {
+        const r = await plugin.saveFile({ base64: b64, name: fname });
+        if (r && r.path) return r.path;
+      } catch (e) { /* 落到下一档 */ }
+    }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  return `已下载：${fname}（${(blob.size / 1048576).toFixed(1)} MB）`;
 }
 
 /* ── 轨迹（B3）：watchPosition 采集 → GPX 生成 → 上传后台 ── */
