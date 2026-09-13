@@ -46,9 +46,14 @@ SECRET_KEYS = {'sync_qiniu_sk', 'sync_baidu_secret_key', 'sync_baidu_token'}
 
 # 视频压缩默认参数（后台「视频压缩」可改；实现为服务器 ffmpeg 转码）
 VIDEO_DEFAULTS = {
-    'video_max_height': '720',      # 最长边（高）上限，竖屏视频同样按高度限制
+    # ── 手机端录制压缩（MediaRecorder 边录边压，v0.10.1 主路径）──
+    'video_phone_rec': '1',         # 1=允许手机端录制压缩（0=只能选已有视频走服务器压缩）
+    'video_max_height': '720',      # 录制/压缩的最长边（高）上限
+    'video_maxrate_k': '2500',      # 录制/压缩码率上限 kbps（手机端即录制码率）
+    'video_fps': '30',              # 录制帧率
+    'video_max_seconds': '60',      # 单段录制最长秒数（防止文件过大）
+    # ── 服务器端压缩（选择已有视频时生效，也作降级兜底）──
     'video_crf': '28',              # x264 质量（18-32，越大越小越糊）
-    'video_maxrate_k': '2500',      # 最大码率 kbps
     'video_audio_k': '96',          # 音频码率 kbps
     'video_max_mb': '300',          # 单文件上传上限 MB
     'video_ffmpeg': '',             # ffmpeg 可执行路径（空=自动探测）

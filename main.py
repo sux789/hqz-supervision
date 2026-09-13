@@ -475,8 +475,8 @@ def _video_name(base: str) -> str:
     return name
 
 
-def _process_video(pid: int) -> None:
-    """后台：ffmpeg 压缩 → 七牛暂存 → 百度网盘；任一步失败留状态待重推。"""
+def _process_video(pid: int, skip_compress: bool = False) -> None:
+    """后台：ffmpeg 压缩（手机端已压缩则跳过）→ 七牛暂存 → 百度网盘；失败留状态待重推。"""
     con = db()
     try:
         row = con.execute('SELECT * FROM photo_sync WHERE id=?', (pid,)).fetchone()
@@ -490,19 +490,24 @@ def _process_video(pid: int) -> None:
                         ('原始视频缓冲丢失（无法重推）', pid))
             con.commit()
             return
-        ok, msg = sync_cloud.compress_video(raw, comp, s)
-        src = comp if ok else raw
-        if ok:
-            con.execute('UPDATE photo_sync SET size=? WHERE id=?', (comp.stat().st_size, pid))
+        if skip_compress:
+            src = raw  # 手机端已压缩（MediaRecorder），服务器不再重复转码
+            con.execute('UPDATE photo_sync SET size=? WHERE id=?', (raw.stat().st_size, pid))
         else:
-            con.execute('UPDATE photo_sync SET last_error=? WHERE id=?',
-                        (f'压缩失败（改用原文件）：{msg}'[:400], pid))
+            ok, msg = sync_cloud.compress_video(raw, comp, s)
+            src = comp if ok else raw
+            if ok:
+                con.execute('UPDATE photo_sync SET size=? WHERE id=?', (comp.stat().st_size, pid))
+            else:
+                con.execute('UPDATE photo_sync SET last_error=? WHERE id=?',
+                            (f'压缩失败（改用原文件）：{msg}'[:400], pid))
         con.commit()
         # 七牛暂存（异地备份）
         try:
+            mime = 'video/mp4' if row['qiniu_key'].lower().endswith('.mp4') else 'video/webm'
             sync_cloud.QiniuClient(s['sync_qiniu_ak'], s['sync_qiniu_sk'],
                                    s['sync_qiniu_bucket']).put_bytes(
-                row['qiniu_key'], src.read_bytes(), mime='video/mp4')
+                row['qiniu_key'], src.read_bytes(), mime=mime)
             con.execute("UPDATE photo_sync SET state='qiniu_ok' WHERE id=?", (pid,))
             con.commit()
         except sync_cloud.SyncError as e:
@@ -522,6 +527,28 @@ def _process_video(pid: int) -> None:
             con.commit()
     except Exception:
         pass
+    finally:
+        con.close()
+
+
+@bp.route('/api/video/params', methods=['GET'])
+@login_required
+def api_video_params():
+    """手机端录制压缩参数（只读，供前端 MediaRecorder 使用）。"""
+    con = db()
+    try:
+        s = sync_cloud.get_settings(con)
+        def _i(k, d):
+            try:
+                return int(s.get(k) or d)
+            except ValueError:
+                return d
+        return jsonify(rec=s.get('video_phone_rec', '1'),
+                       max_height=_i('video_max_height', 720),
+                       bitrate_k=_i('video_maxrate_k', 2500),
+                       fps=_i('video_fps', 30),
+                       max_seconds=_i('video_max_seconds', 60),
+                       max_mb=_i('video_max_mb', 300))
     finally:
         con.close()
 
@@ -555,7 +582,13 @@ def api_video():
         if not all(re.match(r'^[^\\/:*?"<>|]+$', seg) for seg in subdir.split('/') if seg):
             return jsonify(error='subdir 含非法字符'), 400
         xiaoban = (r.get('xiaoban') or '').strip()[:64]
-        fname = _video_name(r.get('filename') or '') + '.mp4'
+        # 手机端 MediaRecorder 录制压缩后上传（precompressed=1）→ 服务器跳过转码；
+        # 后缀与真实容器一致（Chrome Android 多为 mp4/h264，旧 WebView 为 webm）
+        ext = (r.get('ext') or '').lower().strip('.')
+        if ext not in ('mp4', 'webm', 'mov'):
+            ext = 'mp4'
+        precompressed = (r.get('precompressed') or '') == '1'
+        fname = _video_name(r.get('filename') or '') + '.' + ext
         qiniu_key, remote_path = sync_cloud.photo_paths(s, subdir, fname)
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         cur = con.execute(
@@ -565,9 +598,9 @@ def api_video():
         pid = cur.lastrowid
         con.commit()
         (PENDING_DIR / f'{pid}.mp4').write_bytes(data)
-        threading.Thread(target=_process_video, args=(pid,), daemon=True).start()
+        threading.Thread(target=_process_video, args=(pid, precompressed), daemon=True).start()
         return jsonify(ok=True, id=pid, state='received',
-                       note='视频已接收，云端压缩同步中')
+                       note='视频已接收，云端压缩同步中' if not precompressed else '视频已接收，同步中')
     finally:
         con.close()
 

@@ -59,14 +59,20 @@
         <label>网盘子目录<input id="syncBaiduPrefix" placeholder="supervision"></label>
         <label>七牛副本保留（天，0=百度成功即删，-1=永久）<input id="syncKeepDays" type="number"></label>
       </div>
-      <h3 style="margin:16px 0 6px;">视频压缩（服务器 ffmpeg 转码）</h3>
-      <p class="muted">视频无法在手机端转码，统一由服务器压缩后上传（H.264 + AAC，faststart 便于在线播放）。失败会自动降级为直传原文件。</p>
+      <h3 style="margin:16px 0 6px;">视频（手机端录制压缩 · 服务器转码兜底）</h3>
+      <p class="muted">
+        App 内「🎬 视频」支持两种来源：<b>①录制（推荐）</b>——手机端边录边按下方"最长边/码率/帧率"压缩，上传的已是压缩后的小文件（服务器不再转码，最省流量）；
+        <b>②选择已有视频</b>——WebView 无法转码已有文件，改由服务器 ffmpeg 压缩（用下方 CRF 等参数）。
+      </p>
       <div class="sync-grid">
+        <label>允许手机端录制压缩（1=开 0=关）<input id="vPhoneRec" placeholder="1"></label>
         <label>最长边（高，px）<input id="vMaxHeight" type="number" placeholder="720"></label>
-        <label>质量 CRF（18-32，越大越小）<input id="vCrf" type="number" placeholder="28"></label>
-        <label>最大码率（kbps）<input id="vMaxrate" type="number" placeholder="2500"></label>
-        <label>音频码率（kbps）<input id="vAudio" type="number" placeholder="96"></label>
+        <label>码率（kbps，录制即此码率）<input id="vMaxrate" type="number" placeholder="2500"></label>
+        <label>帧率（fps）<input id="vFps" type="number" placeholder="30"></label>
+        <label>单段最长（秒）<input id="vMaxSec" type="number" placeholder="60"></label>
         <label>单文件上限（MB）<input id="vMaxMb" type="number" placeholder="300"></label>
+        <label>CRF（服务器转码，18-32）<input id="vCrf" type="number" placeholder="28"></label>
+        <label>音频码率（kbps）<input id="vAudio" type="number" placeholder="96"></label>
         <label>ffmpeg 路径（空=自动探测）<input id="vFfmpeg" placeholder="项目 bin/ffmpeg"></label>
       </div>
       <label>百度 token 导入（直接粘贴 trans_v2 的 .baidu_pan_token.json 内容，凭证须与 token 签发应用成套一致）</label>
@@ -96,6 +102,6 @@
 
   <div id="toast" class="toast hidden"></div>
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
-  <script src="{{ url_for('static', filename='admin.js') }}?v=0.10"></script>
+  <script src="{{ url_for('static', filename='admin.js') }}?v=0.10.1"></script>
 </body>
 </html>

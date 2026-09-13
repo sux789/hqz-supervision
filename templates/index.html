@@ -61,6 +61,30 @@
   <input type="file" id="photoInput" accept="image/*" capture="environment" hidden>
   <input type="file" id="videoInput" accept="video/*" capture="camcorder" hidden>
 
+  <!-- 视频来源选择菜单（v0.10.1：录制压缩 为主 / 选择已有视频 走服务器压缩 为辅） -->
+  <div id="videoMenuMask" class="album-mask hidden">
+    <div class="rec-menu">
+      <b>添加视频</b>
+      <div id="vmNote" class="muted"></div>
+      <button id="vmRec" class="btn primary">🎥 录制（边录边压，推荐）</button>
+      <button id="vmPick" class="btn">📁 选择已有视频</button>
+      <button id="vmCancel" class="btn ghost">取消</button>
+    </div>
+  </div>
+
+  <!-- 录制遮罩：getUserMedia 预览 + MediaRecorder 按后台参数边录边压 -->
+  <div id="recMask" class="rec-mask hidden">
+    <video id="recPreview" playsinline muted autoplay></video>
+    <div class="rec-bar">
+      <span id="recDot" class="rec-dot"></span>
+      <span id="recTime" class="rec-time">00:00</span>
+      <span id="recHint" class="muted"></span>
+      <span class="spacer"></span>
+      <button id="recStop" class="btn primary">■ 停止并上传</button>
+      <button id="recCancel" class="btn ghost">取消</button>
+    </div>
+  </div>
+
   <!-- 拍摄记录弹层（仅本机记录的文件名提示，C07 不预览图片） -->
   <div id="albumMask" class="album-mask hidden">
     <div class="album-panel">
@@ -80,6 +104,6 @@
   <script src="{{ url_for('static', filename='vendor/jsuites.min.js') }}"></script>
   <script src="{{ url_for('static', filename='vendor/jspreadsheet.min.js') }}"></script>
   <!-- ?v= 版本号熔断：静态 JS 更新后 WebView/浏览器强制拉新（曾致 APK 端验收联动代码不生效） -->
-  <script src="{{ url_for('static', filename='app.js') }}?v=0.10"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=0.10.1"></script>
 </body>
 </html>

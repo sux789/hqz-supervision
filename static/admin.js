@@ -118,6 +118,9 @@ async function loadSyncSettings() {
   $('#syncKeepDays').value = s.sync_keep_days != null ? s.sync_keep_days : '30';
   $('#syncReady').textContent = data.ready
     ? '✓ 配置齐全' : '⚠ 缺配置：' + data.missing.join('、');
+  $('#vPhoneRec').value = s.video_phone_rec ?? '1';
+  $('#vFps').value = s.video_fps ?? '30';
+  $('#vMaxSec').value = s.video_max_seconds ?? '60';
   $('#vMaxHeight').value = s.video_max_height ?? '720';
   $('#vCrf').value = s.video_crf ?? '28';
   $('#vMaxrate').value = s.video_maxrate_k ?? '2500';
@@ -172,7 +175,10 @@ $('#btnSyncSave').addEventListener('click', async () => {
     sync_baidu_app_dir: $('#syncBaiduAppDir').value,
     sync_baidu_prefix: $('#syncBaiduPrefix').value,
     sync_keep_days: $('#syncKeepDays').value,
+    video_phone_rec: $('#vPhoneRec').value,
     video_max_height: $('#vMaxHeight').value,
+    video_fps: $('#vFps').value,
+    video_max_seconds: $('#vMaxSec').value,
     video_crf: $('#vCrf').value,
     video_maxrate_k: $('#vMaxrate').value,
     video_audio_k: $('#vAudio').value,
