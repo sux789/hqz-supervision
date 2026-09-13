@@ -1204,23 +1204,40 @@ function videoSizeNote(v) {
   return '（当前 App 版本不支持压缩，请安装最新 APK）';
 }
 
-/* 相机返回后页面若被系统重载 → 从原生取回"最近一次录像"，补进拍摄记录（v0.17） */
+/* 相机返回后页面若被系统重载 → 从原生取回"最近一次录像"，补进拍摄记录（v0.17，v0.18 修时序）
+   时序坑：boot 里 route() 只是发起导航（工作簿要联网加载），若立刻补记，cur 还是 null 会失败；
+   且原生可能**还在转码/写盘**（last_video 尚未产生）。所以：
+   ① 等详情页就绪（cur 存在）再取；② pending=true 时短暂重试；③ 先 consume=false 查，确认有结果才清标记。 */
 async function recoverPendingVideo() {
-  const rc = getReturnContext();
-  const plugin = nativePlugin();
-  if (!rc || !plugin || typeof plugin.getLastVideo !== 'function') { if (rc) clearReturnContext(); return; }
-  try {
-    const r = await plugin.getLastVideo({ consume: true });
+  for (let attempt = 0; attempt < 20; attempt++) {
+    if (!getReturnContext()) return;                 // 没有"相机返回"标记 → 无事可做
+    const plugin = nativePlugin();
+    if (!plugin || typeof plugin.getLastVideo !== 'function') { clearReturnContext(); return; }
+    const ready = !!(cur && allRows && allRows.length);   // 详情页数据就绪
+    if (!ready) { await new Promise((r) => setTimeout(r, 300)); continue; }
+    let r = null;
+    try { r = await plugin.getLastVideo({ consume: false }); } catch (e) { return; }
     const v = (r && r.video) || null;
     if (v && v.path) {
       const dispPath = `Pictures/${v.subdir || '验收照片'}/${v.name || ''}`;
       recordShot(dispPath, rowVal('小班号'), 'video');
       renderShotList();
       toast(`视频已保存：${dispPath}${videoSizeNote(v)}`);
+      try { await plugin.getLastVideo({ consume: true }); } catch (e) {}
+      clearReturnContext();
+      return;
     }
-  } catch (e) { /* 取不到就算了（可能用户取消了录制） */ }
-  clearReturnContext();
+    if (!r || !r.pending) { clearReturnContext(); return; }   // 非"录制中"且无结果 → 用户取消了
+    await new Promise((res) => setTimeout(res, 600));         // 转码/写盘还没完 → 稍后重试
+  }
 }
+
+/* App 回到前台时再补一次（页面没被重载、但回调仍可能丢的情况） */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && getReturnContext()) {
+    setTimeout(() => recoverPendingVideo().catch(() => {}), 400);
+  }
+});
 
 /* 启动时一次性申请权限（v0.15）：把弹窗集中到"刚进 App"这一步，
    之后拍照/录像/轨迹都不再中途弹权限（Android 不允许安装即授权，只能首次运行时申请）。 */
@@ -1236,6 +1253,18 @@ async function ensurePermissionsUpfront() {
   } catch (e) {}
   try {
     if (typeof plugin.request === 'function') await plugin.request({ type: 'location' });   // 轨迹/水印坐标
+  } catch (e) {}
+  try {
+    // 后台运行相关（v0.18）：通知 + 电池优化白名单 + 厂商自启动页
+    // 目的：录像时调用系统相机，本 App 退到后台不会被省电策略杀掉（否则页面被重载、回调丢失）
+    if (typeof plugin.ensureBackground === 'function') {
+      const bg = await plugin.ensureBackground();
+      if (bg && bg.batteryWhitelisted) {
+        toast('后台运行已允许（电池优化白名单）');
+      } else if (bg && bg.batteryAsked) {
+        toast('请在系统弹窗中选择「允许」以保证录像不被中断', false);
+      }
+    }
   } catch (e) {}
 }
 

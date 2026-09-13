@@ -3,7 +3,10 @@ package top.bibook.supervision;
 import android.Manifest;
 import android.app.Activity;
 import android.content.ContentValues;
+import android.content.ComponentName;
+import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.PowerManager;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
@@ -57,6 +60,7 @@ import java.io.OutputStream;
  *   - ensureMedia()         一次性申请「相机 + 麦克风」授权（录制视频前调用）
  *   - recordVideo({name,subdir,maxSeconds,quality,transcode,maxHeight,bitrateK})  原生录像+转码 → Pictures/{subdir}/
  *   - getLastVideo({consume})   取最近一次录像结果（页面被系统重载后补记文件名）
+ *   - ensureBackground()     申请后台运行相关权限：通知 + 电池优化白名单 + 厂商自启动页（v0.18）
  * type: 'location' | 'camera' | 'microphone'
  */
 @CapacitorPlugin(
@@ -72,6 +76,9 @@ import java.io.OutputStream;
         @Permission(alias = "microphone", strings = {
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.MODIFY_AUDIO_SETTINGS
+        }),
+        @Permission(alias = "notifications", strings = {
+            Manifest.permission.POST_NOTIFICATIONS
         })
     }
 )
@@ -117,6 +124,123 @@ public class AppPermissionsPlugin extends Plugin {
         ret.put("state", state.toString());
         ret.put("granted", state == PermissionState.GRANTED);
         call.resolve(ret);
+    }
+
+    /* ── 录像保活 + 后台运行权限（v0.18） ── */
+
+    /** 录像前启动前台服务保活（国产 ROM 省电策略会杀后台进程，导致页面被重载、回调丢失）。 */
+    private void startKeepAlive() {
+        try {
+            Intent i = new Intent(getContext(), KeepAliveService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                getContext().startForegroundService(i);
+            } else {
+                getContext().startService(i);
+            }
+        } catch (Exception e) {
+            android.util.Log.e("HqzSupervision", "startKeepAlive failed", e);
+        }
+    }
+
+    private void stopKeepAlive() {
+        try {
+            getContext().stopService(new Intent(getContext(), KeepAliveService.class));
+        } catch (Exception ignored) {
+        }
+    }
+
+    /**
+     * 自动申请「后台运行」相关能力（v0.18）：Android 没有单一的"后台运行权限"，
+     * 实际由三件事组成——①通知权限（Android 13+，前台服务通知需要）②电池优化白名单
+     * （系统对话框，同意后进程不再被省电策略回收）③厂商自启动/后台运行管理页（跳转引导，无法静默授权）。
+     * 本方法依次处理，返回各项结果，页面据此提示用户。
+     */
+    @PluginMethod
+    public void ensureBackground(PluginCall call) {
+        if (Build.VERSION.SDK_INT >= 33
+                && getPermissionState("notifications") != PermissionState.GRANTED) {
+            saveCall(call);
+            requestPermissionForAlias("notifications", call, "backgroundCallback");
+            return;
+        }
+        resolveBackground(call);
+    }
+
+    @PermissionCallback
+    private void backgroundCallback(PluginCall call) {
+        resolveBackground(call);
+    }
+
+    private void resolveBackground(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("notifications", Build.VERSION.SDK_INT < 33
+                || getPermissionState("notifications") == PermissionState.GRANTED);
+        PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+        String pkg = getContext().getPackageName();
+        boolean ignoring = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && pm != null && pm.isIgnoringBatteryOptimizations(pkg);
+        ret.put("batteryWhitelisted", ignoring);
+        if (!ignoring) {
+            ret.put("batteryAsked", requestIgnoreBatteryOptimizations(pkg));
+        }
+        ret.put("autostartOpened", openAutostartSettings());
+        call.resolve(ret);
+    }
+
+    /** 弹系统对话框请求加入电池优化白名单（用户可拒绝；拒绝也不影响功能）。 */
+    private boolean requestIgnoreBatteryOptimizations(String pkg) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false;
+        try {
+            Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:" + pkg));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(i);
+            return true;
+        } catch (Exception e) {
+            try {
+                Intent i2 = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                i2.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(i2);
+                return true;
+            } catch (Exception e2) {
+                return false;
+            }
+        }
+    }
+
+    /** 跳厂商"自启动/后台运行管理"页（华为/小米/OPPO/vivo/魅族），都不匹配则退回本应用详情页。 */
+    private boolean openAutostartSettings() {
+        String[][] cands = {
+                {"com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"},
+                {"com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity"},
+                {"com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"},
+                {"com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"},
+                {"com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity"},
+                {"com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"},
+                {"com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"},
+                {"com.meizu.safe", "com.meizu.safe.security.SecureMainActivity"},
+        };
+        for (String[] c : cands) {
+            try {
+                Intent i = new Intent();
+                i.setComponent(new ComponentName(c[0], c[1]));
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                if (getContext().getPackageManager().resolveActivity(i, 0) != null) {
+                    getContext().startActivity(i);
+                    return true;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        try {   // 兜底：本应用详情页（用户可手动设置自启动/后台运行）
+            Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:" + getContext().getPackageName()));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(i);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**
@@ -286,6 +410,7 @@ public class AppPermissionsPlugin extends Plugin {
         if (maxSeconds > 0) {
             intent.putExtra("android.intent.extra.durationLimit", maxSeconds);
         }
+        startKeepAlive();      // 录像期间保活：避免本进程被省电策略杀掉（页面被重载 → 回调丢失）
         startActivityForResult(call, intent, "videoCaptureResult");
     }
 
@@ -296,6 +421,9 @@ public class AppPermissionsPlugin extends Plugin {
                 || result.getData().getData() == null) {
             call.reject("已取消录制");
             return;
+        }
+        if (result.getResultCode() != Activity.RESULT_OK) {
+            stopKeepAlive();   // 用户取消 → 立即停止保活
         }
         Uri src = result.getData().getData();
         String subdir = sanitizeSubdir(call.getString("subdir", "验收照片"));
@@ -417,6 +545,7 @@ public class AppPermissionsPlugin extends Plugin {
         } catch (Exception e) {
             call.reject("保存录像失败: " + e.getMessage(), e);
         } finally {
+            stopKeepAlive();       // 转码+写盘完成（或失败）后停止保活
             if (tmpToDelete != null && tmpToDelete.exists()) {
                 //noinspection ResultOfMethodCallIgnored
                 tmpToDelete.delete();
