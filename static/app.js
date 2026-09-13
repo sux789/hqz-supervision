@@ -795,6 +795,21 @@ async function loadVideoParams(force) {
   return recParams;
 }
 
+/* 原生录像阶段提示：转码中 / 转码失败回退原片（插件 notifyListeners 推送） */
+(function bindVideoStage() {
+  const tryBind = () => {
+    const plugin = nativePlugin();
+    if (!plugin || typeof plugin.addListener !== 'function') return false;
+    plugin.addListener('videoStage', (d) => {
+      if (!d || !d.stage) return;
+      if (d.stage === 'transcoding') toast('正在压缩视频（保留声音，稍候）…');
+      if (d.stage === 'transcode_failed') toast('本机压缩失败，已保存原始视频（体积较大）', true);
+    });
+    return true;
+  };
+  if (!tryBind()) setTimeout(tryBind, 1500);   // 原生桥可能就绪较晚
+})();
+
 $('#btnVideo').addEventListener('click', async () => {
   if (curIdx < 0 || !allRows[curIdx]) { toast('请先选择小班', true); return; }
   const p = await loadVideoParams(true);
@@ -824,6 +839,10 @@ async function useSystemCamera(why) {
         name: `${base}_视频.mp4`,
         subdir: rowSubdir() || '验收照片',
         maxSeconds: parseInt(p.max_seconds || 60, 10),
+        // 原生转码压缩（v0.14）：缩放到 video_max_height、码率 video_maxrate_k，保留声音
+        transcode: p.transcode === '0' ? 0 : 1,
+        maxHeight: parseInt(p.max_height || 720, 10),
+        bitrateK: parseInt(p.bitrate_k || 2500, 10),
       });
       if (r && r.path) {
         recordShot(`Pictures/${rowSubdir() || '验收照片'}/${base}_视频.mp4`, rowVal('小班号'), 'video');

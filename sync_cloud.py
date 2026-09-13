@@ -49,6 +49,7 @@ VIDEO_DEFAULTS = {
     # ── 手机端录制压缩（MediaRecorder 边录边压，v0.10.1 主路径）──
     'video_phone_rec': '1',         # 1=允许手机端录制（0=关闭页面录制）
     'video_rec_mode': 'system',     # 录制方式：system=系统相机（MP4/H.264，保证可播，默认）/ inapp=页面录制（省流量，部分机型为 WebM）
+    'video_transcode': '1',         # 1=原生转码压缩（Media3，缩放到 video_max_height + video_maxrate_k，保留声音）/ 0=只存原片
     'video_max_height': '720',      # 录制/压缩的最长边（高）上限
     'video_maxrate_k': '2500',      # 录制/压缩码率上限 kbps（手机端即录制码率）
     'video_fps': '30',              # 录制帧率

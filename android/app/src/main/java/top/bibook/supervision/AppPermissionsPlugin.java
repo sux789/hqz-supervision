@@ -18,6 +18,18 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import androidx.activity.result.ActivityResult;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.MimeTypes;
+import androidx.media3.effect.ScaleAndRotateTransformation;
+import androidx.media3.transformer.Composition;
+import androidx.media3.transformer.DefaultEncoderFactory;
+import androidx.media3.transformer.EditedMediaItem;
+import androidx.media3.transformer.Effects;
+import androidx.media3.transformer.ExportException;
+import androidx.media3.transformer.ExportResult;
+import androidx.media3.transformer.Transformer;
+
+import com.google.common.collect.ImmutableList;
 
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
@@ -27,6 +39,7 @@ import com.getcapacitor.annotation.PermissionCallback;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import android.media.MediaMetadataRetriever;
 import java.io.OutputStream;
 
 /**
@@ -241,7 +254,7 @@ public class AppPermissionsPlugin extends Plugin {
             call.reject("本机没有可用的相机应用");
             return;
         }
-        intent.putExtra(MediaStore.EXTRA_VIDEO_QUALITY, call.getInt("quality", 1));   // 1=高质量
+        intent.putExtra(MediaStore.EXTRA_VIDEO_QUALITY, call.getInt("quality", 0));   // 0=较低码率录制（转码后仍达标），1=最高
         int maxSeconds = call.getInt("maxSeconds", 60);
         if (maxSeconds > 0) {
             intent.putExtra("android.intent.extra.durationLimit", maxSeconds);
@@ -260,6 +273,69 @@ public class AppPermissionsPlugin extends Plugin {
         Uri src = result.getData().getData();
         String subdir = sanitizeSubdir(call.getString("subdir", "验收照片"));
         String name = call.getString("name", "video.mp4");
+        boolean transcode = call.getInt("transcode", 1) == 1;
+        int maxHeight = call.getInt("maxHeight", 720);
+        int bitrateK = call.getInt("bitrateK", 2500);
+        if (transcode) {
+            transcodeAndSave(call, src, subdir, name, maxHeight, bitrateK);
+        } else {
+            saveIntoAlbum(call, src, subdir, name, null);
+        }
+    }
+
+    /**
+     * 原生转码压缩（v0.14，Media3 Transformer）：缩放到 maxHeight 以内 + H.264 + 目标码率，
+     * 保留声音，输出 MP4；失败自动回退「直接保存原片」，绝不丢视频。
+     */
+    private void transcodeAndSave(PluginCall call, Uri src, String subdir, String name,
+                                  int maxHeight, int bitrateK) {
+        final File tmp = new File(getContext().getCacheDir(), "sup_tc_" + System.currentTimeMillis() + ".mp4");
+        int srcH = 0;
+        try (MediaMetadataRetriever mmr = new MediaMetadataRetriever()) {
+            mmr.setDataSource(getContext(), src);
+            String h = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
+            if (h != null) srcH = Integer.parseInt(h);
+        } catch (Exception ignored) {
+        }
+        float scale = (maxHeight > 0 && srcH > maxHeight) ? (float) maxHeight / srcH : 1f;
+        try {
+            MediaItem item = MediaItem.fromUri(src);
+            EditedMediaItem.Builder itemBuilder = new EditedMediaItem.Builder(item);
+            if (scale < 1f) {
+                itemBuilder.setEffects(new Effects(
+                        ImmutableList.of(new ScaleAndRotateTransformation.Builder()
+                                .setScale(scale, scale).build()),
+                        ImmutableList.of()));
+            }
+            Transformer transformer = new Transformer.Builder(getContext())
+                    .setVideoMimeType(MimeTypes.VIDEO_H264)
+                    .setAudioMimeType(MimeTypes.AUDIO_AAC)
+                    .setEncoderFactory(new DefaultEncoderFactory.Builder(getContext())
+                            .setRequestedMaxVideoBitrate(Math.max(200, bitrateK) * 1000)
+                            .build())
+                    .addListener(new Transformer.Listener() {
+                        @Override
+                        public void onCompleted(Composition composition, ExportResult result) {
+                            saveIntoAlbum(call, Uri.fromFile(tmp), subdir, name, tmp);
+                        }
+
+                        @Override
+                        public void onError(Composition composition, ExportResult result,
+                                            ExportException exception) {
+                            notifyListeners("videoStage", new JSObject().put("stage", "transcode_failed"));
+                            saveIntoAlbum(call, src, subdir, name, tmp);   // 回退：保存原片
+                        }
+                    })
+                    .build();
+            notifyListeners("videoStage", new JSObject().put("stage", "transcoding"));
+            getActivity().runOnUiThread(() -> transformer.start(itemBuilder.build(), tmp.getAbsolutePath()));
+        } catch (Exception e) {
+            saveIntoAlbum(call, src, subdir, name, tmp);
+        }
+    }
+
+    /** 把（原片或转码产物）流式复制进 Pictures/{subdir}/{name}，并清理临时文件。 */
+    private void saveIntoAlbum(PluginCall call, Uri src, String subdir, String name, File tmpToDelete) {
         try {
             Uri outUri;
             String realPath;
@@ -293,6 +369,11 @@ public class AppPermissionsPlugin extends Plugin {
             call.resolve(ret);
         } catch (Exception e) {
             call.reject("保存录像失败: " + e.getMessage(), e);
+        } finally {
+            if (tmpToDelete != null && tmpToDelete.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                tmpToDelete.delete();
+            }
         }
     }
 
