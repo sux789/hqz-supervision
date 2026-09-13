@@ -28,8 +28,8 @@ import androidx.media3.transformer.Effects;
 import androidx.media3.transformer.ExportException;
 import androidx.media3.transformer.ExportResult;
 import androidx.media3.transformer.Transformer;
+import androidx.media3.transformer.VideoEncoderSettings;
 
-import com.google.common.collect.ImmutableList;
 
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
@@ -39,6 +39,8 @@ import com.getcapacitor.annotation.PermissionCallback;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.util.Arrays;
+import java.util.Collections;
 import android.media.MediaMetadataRetriever;
 import java.io.OutputStream;
 
@@ -303,15 +305,17 @@ public class AppPermissionsPlugin extends Plugin {
             EditedMediaItem.Builder itemBuilder = new EditedMediaItem.Builder(item);
             if (scale < 1f) {
                 itemBuilder.setEffects(new Effects(
-                        ImmutableList.of(new ScaleAndRotateTransformation.Builder()
+                        Arrays.asList(new ScaleAndRotateTransformation.Builder()
                                 .setScale(scale, scale).build()),
-                        ImmutableList.of()));
+                        Collections.emptyList()));
             }
             Transformer transformer = new Transformer.Builder(getContext())
                     .setVideoMimeType(MimeTypes.VIDEO_H264)
                     .setAudioMimeType(MimeTypes.AUDIO_AAC)
                     .setEncoderFactory(new DefaultEncoderFactory.Builder(getContext())
-                            .setRequestedMaxVideoBitrate(Math.max(200, bitrateK) * 1000)
+                            .setRequestedVideoEncoderSettings(new VideoEncoderSettings.Builder()
+                                    .setBitrate(Math.max(200, bitrateK) * 1000)
+                                    .build())
                             .build())
                     .addListener(new Transformer.Listener() {
                         @Override
