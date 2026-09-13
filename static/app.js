@@ -99,7 +99,10 @@ function show(view) {
   $('#btnBack').classList.toggle('hidden', view === 'list');
   $('#pageName').textContent =
     view === 'detail' ? (cur ? `${rowVal('小班号') || '详情'} · ${cur.name}` : '') : '工作簿';
-  $('#btnBack').onclick = () => nav('#/');
+  $('#btnBack').onclick = () => {
+    if (trackWatch !== null) autoStopTrackIfRecording('返回列表');   // 互斥（F2）
+    nav('#/');
+  };
 }
 
 /* ── 登录 ── */
@@ -322,6 +325,7 @@ function updateSelMeta() {
 
 function jumpRow(idx) {
   if (!allRows[idx]) return;
+  if (trackWatch !== null) autoStopTrackIfRecording('切换小班');   // 互斥（F2）
   curIdx = idx;
   syncSelectorToRow(idx);
   renderForm();
@@ -885,6 +889,7 @@ $('#btnVideo').addEventListener('click', async () => {
 
 /* 系统相机录制（保证 MP4/H.264）：录完按同一命名规则另存到手机 */
 async function useSystemCamera(why) {
+  if (trackWatch !== null) await autoStopTrackIfRecording('开始录像');   // 互斥：先停轨迹并保存
   toast(why ? `${why} → 用系统相机录制（MP4，保证可播放）` : '用系统相机录制（MP4，保证可播放）');
   markReturnContext();                 // 记下当前工作簿/行：相机返回即使页面重载也能回到详情页
   const plugin = nativePlugin();
@@ -1194,7 +1199,8 @@ function startTrack() {
   toast('轨迹记录已开始（WebView 模式，仅前台有效）');
 }
 
-function stopTrack() {
+/* 停止并上传（返回 Promise，便于互斥逻辑 await；口径同 hqz-survey F2） */
+async function stopTrack(silent) {
   if (trackWatch === 'bg') {
     try { trackBgPlugin && trackBgPlugin.stopWatcher().catch(() => {}); } catch (e) {}
     trackBgPlugin = null;
@@ -1204,18 +1210,37 @@ function stopTrack() {
   trackWatch = null;
   $('#btnTrack').classList.remove('recording');
   $('#btnTrack').textContent = '◎ 轨迹';
-  const n = trackPts.length;
-  if (n < 2) { trackPts = []; clearSavedTrackPts(); toast('有效定位点不足 2 个，未上传', true); return; }
-  const gpx = buildGpx(trackPts);
+  // 关键：先把本轮点集"取走并清空"，再异步上传 —— 否则用户马上开始新一轮记录时，
+  // 上一轮的收尾会把新一轮的点清掉（竞态）
+  const pts = trackPts;
+  trackPts = [];
+  clearSavedTrackPts();
+  const n = pts.length;
+  if (n < 2) {
+    if (!silent) toast('有效定位点不足 2 个，未上传', true);
+    return;
+  }
+  const gpx = buildGpx(pts);
   const cls = rowVal('小班号') || '无小班';
   const name = `轨迹_${sanitizeSeg(cls)}_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '')}.gpx`;
   const fd = new FormData();
   fd.append('file', new Blob([gpx], { type: 'application/gpx+xml' }), name);
-  api('/api/track', { method: 'POST', body: fd })
-    .then((r) => toast(`轨迹已上传：${r.file}（${n} 点）`))
-    .catch((err) => toast('轨迹上传失败：' + err.message, true));
-  trackPts = [];
-  clearSavedTrackPts();
+  try {
+    const r = await api('/api/track', { method: 'POST', body: fd });
+    toast(`轨迹已上传：${r.file}（${n} 点）`);
+  } catch (err) {
+    toast('轨迹上传失败：' + err.message, true);
+  }
+}
+
+/* 功能互斥（v0.20，口径同 hqz-survey F2）：同一时刻只做一个"长时间记录类"动作。
+   开始录像 / 切换小班 / 返回列表 时若轨迹仍在记录 → 先自动停止并保存上一段。 */
+async function autoStopTrackIfRecording(reason) {
+  if (trackWatch === null) return false;
+  const n = trackPts.length;
+  toast(`${reason}：已自动停止并保存上一段轨迹（${n} 点）`);
+  await stopTrack(true);
+  return true;
 }
 
 /* 页面被系统重载后：若本机还存着未上传的轨迹点 → 接着录（原生模式则重启 watcher） */

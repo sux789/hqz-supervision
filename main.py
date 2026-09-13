@@ -24,6 +24,7 @@ from flask import (Blueprint, Flask, abort, jsonify, redirect, render_template,
                    request, send_file, session, url_for)
 
 import sync_cloud
+import track_export
 from param_parser import ParamError, _s, parse_params, split_list
 
 BASE = Path(__file__).resolve().parent
@@ -943,12 +944,16 @@ def admin_tracks():
 @bp.route('/admin/api/tracks.zip', methods=['GET'])
 @admin_required
 def admin_tracks_zip():
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for f in sorted(TRACK_DIR.glob('*.gpx')):
-            zf.write(f, f.name)
-    buf.seek(0)
-    return send_file(buf, as_attachment=True, download_name='轨迹导出.zip', mimetype='application/zip')
+    """轨迹压缩包（v0.20）：**每小班一个文件夹**，内含 shapefile 组件（.shp/.shx/.dbf/.prj/.cpg）
+    与原始 GPX；WGS84 + UTF-8，ArcGIS 10.1+/QGIS 直接打开（口径对齐 hqz-survey R17）。"""
+    try:
+        buf, stats = track_export.export_tracks_zip(TRACK_DIR)
+    except ValueError as e:
+        return jsonify(error=str(e)), 404
+    name = '轨迹导出_shp_' + datetime.now().strftime('%Y%m%d_%H%M%S') + '.zip'
+    resp = send_file(buf, as_attachment=True, download_name=name, mimetype='application/zip')
+    resp.headers['X-Track-Export'] = json.dumps(stats, ensure_ascii=False)
+    return resp
 
 
 @bp.route('/admin/api/tracks/<path:name>', methods=['GET'])
