@@ -44,6 +44,13 @@ SYNC_DEFAULTS = {
 }
 SECRET_KEYS = {'sync_qiniu_sk', 'sync_baidu_secret_key', 'sync_baidu_token'}
 
+# 图片压缩服务器级默认（v0.16）：参数 sheet 的「压缩最长边/压缩质量」优先，
+# 工作簿没配时用这里的默认（后台「图片压缩」可改）。仅影响新拍照片。
+PHOTO_DEFAULTS = {
+    'photo_max_side': '1440',       # 长边像素上限
+    'photo_quality': '0.8',         # JPEG 质量 0.1-1（建议 0.75-0.82）
+}
+
 # 视频压缩默认参数（后台「视频压缩」可改；实现为服务器 ffmpeg 转码）
 VIDEO_DEFAULTS = {
     # ── 手机端录制压缩（MediaRecorder 边录边压，v0.10.1 主路径）──

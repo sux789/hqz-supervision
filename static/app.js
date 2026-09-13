@@ -404,10 +404,14 @@ function renderForm() {
   const tbl = el0.querySelector('table');
   if (tbl) tbl.style.height = 'auto';
   const hasVideo = cfgList('功能').includes('视频');
+  const cp = compressParams && compressParams.photo ? compressParams.photo : null;
+  const effSide = parseInt(cur.config['压缩最长边'], 10) || (cp && cp.max_side) || PHOTO_MAX_SIDE;
+  const effQ = parseFloat(cur.config['压缩质量']) || (cp && cp.quality) || PHOTO_QUALITY;
   $('#photoHint').textContent = (isNativeApp()
     ? '📁 拍照仅存本机系统相册 Pictures/' + (rowSubdir() || '(参数未配置目录)')
     : '📁 拍照仅下载到本机（服务器不留存）')
-    + (hasVideo ? '；🎬 视频上传后由服务器压缩并同步云盘（本地不留视频）' : '');
+    + (hasVideo ? '；🎬 视频本地录制（不上传）' : '')
+    + `；压缩 ${effSide}px/${effQ}`;
 }
 
 /* ── 导出 Excel（按上传模板回填） ── */
@@ -710,9 +714,11 @@ $('#photoInput').addEventListener('change', async (e) => {
       String(now.getMinutes()).padStart(2, '0') + String(now.getSeconds()).padStart(2, '0');
     const coords = await getCoords();
     const remark = renderTpl(cur.config['相片备注'] || '', row, ts);
-    // 压缩参数：参数 sheet 可下发「压缩最长边/压缩质量」，缺省 1440/0.80（方案 A）
-    const maxSide = parseInt(cur.config['压缩最长边'], 10) || PHOTO_MAX_SIDE;
-    const quality = Math.min(1, Math.max(0.1, parseFloat(cur.config['压缩质量']) || PHOTO_QUALITY));
+    // 压缩参数优先级（v0.16）：参数 sheet「压缩最长边/压缩质量」→ 后台「图片压缩」默认 → 内置兜底
+    const cp = (await loadCompressParams()).photo || {};
+    const maxSide = parseInt(cur.config['压缩最长边'], 10) || cp.max_side || PHOTO_MAX_SIDE;
+    const quality = Math.min(1, Math.max(0.1,
+      parseFloat(cur.config['压缩质量']) || cp.quality || PHOTO_QUALITY));
     const blob = await drawWatermark(file, remark, coords, { maxSide, quality });
     const filename = sanitizeSeg(renderTpl(cur.config['相片文件名'] || '', row, ts)) || 'photo';
     const subdir = rowSubdir();
@@ -780,6 +786,7 @@ $('#photoInput').addEventListener('change', async (e) => {
    保存链：原生 saveVideo（写 Movies/ 相册，需新版 APK）→ 原生 saveFile（下载目录）→ 浏览器下载。 */
 let recStream = null, recRecorder = null, recChunks = [], recTimer = null;
 let recStartAt = 0, recParams = null, recSaving = false;
+let compressParams = null;          // /api/compress/params 缓存（图片+视频压缩参数）
 
 function videoApiReady() {
   return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
@@ -809,10 +816,18 @@ function fmtSec(n) {
   return String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0');
 }
 
+/* 压缩参数（v0.16）：与「同步」解耦——photo=图片压缩默认、video=视频录制/转码参数 */
+async function loadCompressParams(force) {
+  if (compressParams && !force) return compressParams;
+  try { compressParams = await api('/api/compress/params'); } catch (e) { compressParams = compressParams || {}; }
+  return compressParams;
+}
+
 async function loadVideoParams(force) {
   // 每次点击都实时拉取（几百毫秒，用户无感）：后台改了「录制方式」立即生效，避免缓存误导
   if (recParams && !force) return recParams;
-  try { recParams = await api('/api/video/params'); } catch (e) { recParams = recParams || {}; }
+  const all = await loadCompressParams(force);
+  recParams = all.video || recParams || {};
   return recParams;
 }
 

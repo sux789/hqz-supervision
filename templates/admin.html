@@ -40,10 +40,62 @@
     </section>
 
     <section class="card">
-      <h2>相片云同步（七牛暂存 → 百度网盘）</h2>
+      <h2>图片压缩（手机端）</h2>
       <p class="muted">
-        链路：App 拍照 → 服务器中转 → 七牛 zz-1 暂存 → 百度网盘 <span id="syncPath" class="mono"></span>（与手机相册 Pictures/ 目录镜像）。
-        开关关闭时拍照仅存手机相册，不经过服务器。
+        只影响**新拍照片**的本地压缩：先按工作簿「参数 sheet」里的
+        <span class="mono">压缩最长边/压缩质量</span>执行；工作簿里没配这两项时，用下面的默认值。
+        与云同步无关——关掉同步也照样压缩。
+      </p>
+      <div class="sync-grid">
+        <label>最长边（px）<input id="pMaxSide" type="number" placeholder="1440"></label>
+        <label>JPEG 质量（0.1-1，建议 0.75-0.82）<input id="pQuality" type="number" step="0.01" placeholder="0.8"></label>
+      </div>
+      <div class="btnrow">
+        <button id="btnPhotoSave" class="btn primary">保存图片压缩</button>
+        <span id="photoMsg" class="err"></span>
+      </div>
+      <p class="muted">参考：1440px/0.8 ≈ 250-350KB（清晰、省流量）；1600px/0.85 ≈ 450-600KB；1280px/0.75 ≈ 180-260KB。</p>
+    </section>
+
+    <section class="card">
+      <h2>视频压缩（手机端录制 + 原生转码）</h2>
+      <p class="muted">
+        视频**只存手机本地、不上传**，因此这里与「云同步」完全独立。
+        录制方式 <span class="mono">system</span>（默认）= 调系统相机录 MP4/H.264（任何相册可播）；
+        <span class="mono">inapp</span> = 页面内录制（省流量，但部分机型只能出 WebM）。
+        录制后按「最长边/码率」在手机上原生转码，失败自动保留原片。
+      </p>
+      <div class="sync-grid">
+        <label>录制方式（system / inapp）<input id="vRecMode" placeholder="system"></label>
+        <label>相机录制质量（1=最高更清晰 / 0=较低）<input id="vCamQ" placeholder="1"></label>
+        <label>录制后原生压缩（1=开 0=只存原片）<input id="vTranscode" placeholder="1"></label>
+        <label>允许手机端录制（1=开 0=关）<input id="vPhoneRec" placeholder="1"></label>
+        <label>转码最长边（高，px）<input id="vMaxHeight" type="number" placeholder="1080"></label>
+        <label>转码码率（kbps）<input id="vMaxrate" type="number" placeholder="4000"></label>
+        <label>帧率（fps）<input id="vFps" type="number" placeholder="30"></label>
+        <label>单段最长（秒）<input id="vMaxSec" type="number" placeholder="60"></label>
+        <label>单文件上限（MB）<input id="vMaxMb" type="number" placeholder="300"></label>
+      </div>
+      <details style="margin:6px 0 4px;">
+        <summary class="muted" style="cursor:pointer;">服务器转码兜底参数（选择已有视频时才用）</summary>
+        <div class="sync-grid">
+          <label>CRF（18-32，越大越小）<input id="vCrf" type="number" placeholder="28"></label>
+          <label>音频码率（kbps）<input id="vAudio" type="number" placeholder="96"></label>
+          <label>ffmpeg 路径（空=自动探测）<input id="vFfmpeg" placeholder="项目 bin/ffmpeg"></label>
+        </div>
+      </details>
+      <div class="btnrow">
+        <button id="btnVideoSave" class="btn primary">保存视频压缩</button>
+        <span id="videoMsg" class="err"></span>
+      </div>
+      <p class="muted">清晰度档位参考：验收 1080p/4000k（默认，约 30MB/分钟）；弱网省流量 720p/1500k；看细节 1080p/8000k。</p>
+    </section>
+
+    <section class="card">
+      <h2>云同步（照片 → 七牛暂存 → 百度网盘）</h2>
+      <p class="muted">
+        仅决定**照片是否上云**（视频不上云）：App 拍照 → 服务器中转 → 七牛 zz-1 暂存 → 百度网盘
+        <span id="syncPath" class="mono"></span>（与手机相册 Pictures/ 目录镜像）。关了也不影响拍照与压缩。
       </p>
       <label style="display:inline-flex;align-items:center;gap:8px;font-weight:600;margin-bottom:8px;">
         <input type="checkbox" id="syncEnabled"> 启用云同步
@@ -58,25 +110,6 @@
         <label>网盘应用目录<input id="syncBaiduAppDir" placeholder="/apps/...（由百度应用固定）"></label>
         <label>网盘子目录<input id="syncBaiduPrefix" placeholder="supervision"></label>
         <label>七牛副本保留（天，0=百度成功即删，-1=永久）<input id="syncKeepDays" type="number"></label>
-      </div>
-      <h3 style="margin:16px 0 6px;">视频（手机端录制压缩 · 服务器转码兜底）</h3>
-      <p class="muted">
-        App 内「🎬 视频」支持两种来源：<b>①录制（推荐）</b>——手机端边录边按下方"最长边/码率/帧率"压缩，上传的已是压缩后的小文件（服务器不再转码，最省流量）；
-        <b>②选择已有视频</b>——WebView 无法转码已有文件，改由服务器 ffmpeg 压缩（用下方 CRF 等参数）。
-      </p>
-      <div class="sync-grid">
-        <label>录制方式（system=系统相机MP4必播 / inapp=页面录制省流量）<input id="vRecMode" placeholder="system"></label>
-        <label>录制后原生压缩（1=开 0=只存原片）<input id="vTranscode" placeholder="1"></label>
-        <label>相机录制质量（1=最高更清晰 / 0=较低省存储）<input id="vCamQ" placeholder="1"></label>
-        <label>允许手机端录制（1=开 0=关）<input id="vPhoneRec" placeholder="1"></label>
-        <label>最长边（高，px）<input id="vMaxHeight" type="number" placeholder="720"></label>
-        <label>码率（kbps，录制即此码率）<input id="vMaxrate" type="number" placeholder="2500"></label>
-        <label>帧率（fps）<input id="vFps" type="number" placeholder="30"></label>
-        <label>单段最长（秒）<input id="vMaxSec" type="number" placeholder="60"></label>
-        <label>单文件上限（MB）<input id="vMaxMb" type="number" placeholder="300"></label>
-        <label>CRF（服务器转码，18-32）<input id="vCrf" type="number" placeholder="28"></label>
-        <label>音频码率（kbps）<input id="vAudio" type="number" placeholder="96"></label>
-        <label>ffmpeg 路径（空=自动探测）<input id="vFfmpeg" placeholder="项目 bin/ffmpeg"></label>
       </div>
       <label>百度 token 导入（直接粘贴 trans_v2 的 .baidu_pan_token.json 内容，凭证须与 token 签发应用成套一致）</label>
       <textarea id="syncBaiduToken" rows="3" placeholder='{"expires_in":..., "refresh_token":"...", "access_token":"...", ...}'></textarea>
@@ -105,6 +138,6 @@
 
   <div id="toast" class="toast hidden"></div>
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
-  <script src="{{ url_for('static', filename='admin.js') }}?v=0.15.1"></script>
+  <script src="{{ url_for('static', filename='admin.js') }}?v=0.16"></script>
 </body>
 </html>

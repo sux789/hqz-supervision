@@ -126,6 +126,8 @@ async function loadSyncSettings() {
   $('#syncKeepDays').value = s.sync_keep_days != null ? s.sync_keep_days : '30';
   $('#syncReady').textContent = data.ready
     ? '✓ 配置齐全' : '⚠ 缺配置：' + data.missing.join('、');
+  $('#pMaxSide').value = s.photo_max_side ?? '1440';
+  $('#pQuality').value = s.photo_quality ?? '0.8';
   $('#vPhoneRec').value = s.video_phone_rec ?? '1';
   $('#vRecMode').value = s.video_rec_mode ?? 'system';
   $('#vTranscode').value = s.video_transcode ?? '1';
@@ -174,8 +176,42 @@ async function loadSyncStatus() {
   }
 }
 
+/* 统一的设置保存（v0.16：图片压缩 / 视频压缩 / 云同步 三块各自保存） */
+async function saveSettings(settings, msgEl) {
+  if (msgEl) msgEl.textContent = '';
+  try {
+    await api('/admin/api/sync/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings }),
+    });
+    toast('已保存');
+    await loadSyncSettings();
+  } catch (err) {
+    if (msgEl) msgEl.textContent = err.message; else toast(err.message, true);
+  }
+}
+
+$('#btnPhotoSave').addEventListener('click', () => saveSettings({
+  photo_max_side: $('#pMaxSide').value,
+  photo_quality: $('#pQuality').value,
+}, $('#photoMsg')));
+
+$('#btnVideoSave').addEventListener('click', () => saveSettings({
+  video_rec_mode: $('#vRecMode').value,
+  video_cam_quality: $('#vCamQ').value,
+  video_transcode: $('#vTranscode').value,
+  video_phone_rec: $('#vPhoneRec').value,
+  video_max_height: $('#vMaxHeight').value,
+  video_maxrate_k: $('#vMaxrate').value,
+  video_fps: $('#vFps').value,
+  video_max_seconds: $('#vMaxSec').value,
+  video_max_mb: $('#vMaxMb').value,
+  video_crf: $('#vCrf').value,
+  video_audio_k: $('#vAudio').value,
+  video_ffmpeg: $('#vFfmpeg').value,
+}, $('#videoMsg')));
+
 $('#btnSyncSave').addEventListener('click', async () => {
-  $('#syncMsg').textContent = '';
   const settings = {
     sync_enabled: $('#syncEnabled').checked ? '1' : '0',
     sync_qiniu_ak: $('#syncQiniuAk').value,
@@ -186,23 +222,12 @@ $('#btnSyncSave').addEventListener('click', async () => {
     sync_baidu_app_dir: $('#syncBaiduAppDir').value,
     sync_baidu_prefix: $('#syncBaiduPrefix').value,
     sync_keep_days: $('#syncKeepDays').value,
-    video_phone_rec: $('#vPhoneRec').value,
-    video_rec_mode: $('#vRecMode').value,
-    video_transcode: $('#vTranscode').value,
-    video_cam_quality: $('#vCamQ').value,
-    video_max_height: $('#vMaxHeight').value,
-    video_fps: $('#vFps').value,
-    video_max_seconds: $('#vMaxSec').value,
-    video_crf: $('#vCrf').value,
-    video_maxrate_k: $('#vMaxrate').value,
-    video_audio_k: $('#vAudio').value,
-    video_max_mb: $('#vMaxMb').value,
-    video_ffmpeg: $('#vFfmpeg').value,
   };
   const tok = $('#syncBaiduToken').value.trim();
   if (tok) settings.sync_baidu_token = tok;
+  $('#syncMsg').textContent = '';
   try {
-    const r = await api('/admin/api/sync/settings', {
+    await api('/admin/api/sync/settings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ settings }),
     });

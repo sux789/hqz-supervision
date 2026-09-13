@@ -97,7 +97,7 @@ def init_db():
             'INSERT INTO users VALUES(?,?,?)',
             ('雷华雄', hashlib.sha256('lhx123'.encode()).hexdigest(), 'admin'))
     # settings 非密钥默认值预置（真实 AK/SK / 百度凭证由一次性脚本写入，不进代码）
-    for k, v in {**sync_cloud.SYNC_DEFAULTS, **sync_cloud.VIDEO_DEFAULTS}.items():
+    for k, v in {**sync_cloud.SYNC_DEFAULTS, **sync_cloud.VIDEO_DEFAULTS, **sync_cloud.PHOTO_DEFAULTS}.items():
         con.execute('INSERT OR IGNORE INTO settings(key, value) VALUES(?,?)', (k, v))
     con.commit()
     con.close()
@@ -602,27 +602,57 @@ def _process_video(pid: int, skip_compress: bool = False) -> None:
         con.close()
 
 
-@bp.route('/api/video/params', methods=['GET'])
+def _num(d, k, default, cast=float):
+    try:
+        return cast(d.get(k) or default)
+    except (ValueError, TypeError):
+        return default
+
+
+def _video_params(s: dict) -> dict:
+    return {
+        'rec': s.get('video_phone_rec', '1'),
+        'rec_mode': (s.get('video_rec_mode') or 'system'),
+        'transcode': (s.get('video_transcode') or '1'),
+        'cam_quality': _num(s, 'video_cam_quality', 1, int),
+        'max_height': _num(s, 'video_max_height', 1080, int),
+        'bitrate_k': _num(s, 'video_maxrate_k', 4000, int),
+        'fps': _num(s, 'video_fps', 30, int),
+        'max_seconds': _num(s, 'video_max_seconds', 60, int),
+        'max_mb': _num(s, 'video_max_mb', 300, int),
+    }
+
+
+def _photo_params(s: dict) -> dict:
+    """图片压缩服务器级默认（工作簿参数 sheet 优先于这里）。"""
+    return {
+        'max_side': _num(s, 'photo_max_side', 1440, int),
+        'quality': round(min(1.0, max(0.1, _num(s, 'photo_quality', 0.8))), 3),
+    }
+
+
+@bp.route('/api/compress/params', methods=['GET'])
 @login_required
-def api_video_params():
-    """手机端录制压缩参数（只读，供前端 MediaRecorder 使用）。"""
+def api_compress_params():
+    """压缩参数（只读）：photo=图片压缩默认，video=视频录制/转码参数。
+
+    与「同步」彻底解耦：压缩在手机端/本地完成，是否上云由 sync_enabled 决定。
+    """
     con = db()
     try:
         s = sync_cloud.get_settings(con)
-        def _i(k, d):
-            try:
-                return int(s.get(k) or d)
-            except ValueError:
-                return d
-        return jsonify(rec=s.get('video_phone_rec', '1'),
-                       rec_mode=(s.get('video_rec_mode') or 'system'),
-                       transcode=(s.get('video_transcode') or '1'),
-                       cam_quality=_i('video_cam_quality', 1),
-                       max_height=_i('video_max_height', 720),
-                       bitrate_k=_i('video_maxrate_k', 2500),
-                       fps=_i('video_fps', 30),
-                       max_seconds=_i('video_max_seconds', 60),
-                       max_mb=_i('video_max_mb', 300))
+        return jsonify(photo=_photo_params(s), video=_video_params(s))
+    finally:
+        con.close()
+
+
+@bp.route('/api/video/params', methods=['GET'])
+@login_required
+def api_video_params():
+    """手机端录制压缩参数（保留旧端点以兼容旧包；等价于 /api/compress/params 的 video 部分）。"""
+    con = db()
+    try:
+        return jsonify(**_video_params(sync_cloud.get_settings(con)))
     finally:
         con.close()
 
@@ -789,7 +819,8 @@ def apk_latest():
 
 # ────────────────────────── 后台：同步设置与状态（doc/007 §5/§7） ──────────────────────────
 
-_SYNC_EDITABLE = set(sync_cloud.SYNC_DEFAULTS) | set(sync_cloud.VIDEO_DEFAULTS)  # 允许后台写入的键
+_SYNC_EDITABLE = (set(sync_cloud.SYNC_DEFAULTS) | set(sync_cloud.VIDEO_DEFAULTS)
+                  | set(sync_cloud.PHOTO_DEFAULTS))  # 允许后台写入的键（压缩与同步都可改）
 _SYNC_SECRET = sync_cloud.SECRET_KEYS
 
 
