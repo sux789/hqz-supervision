@@ -67,6 +67,7 @@
       <div class="sync-grid">
         <label>录制方式（system=系统相机MP4必播 / inapp=页面录制省流量）<input id="vRecMode" placeholder="system"></label>
         <label>录制后原生压缩（1=开 0=只存原片）<input id="vTranscode" placeholder="1"></label>
+        <label>相机录制质量（1=最高更清晰 / 0=较低省存储）<input id="vCamQ" placeholder="1"></label>
         <label>允许手机端录制（1=开 0=关）<input id="vPhoneRec" placeholder="1"></label>
         <label>最长边（高，px）<input id="vMaxHeight" type="number" placeholder="720"></label>
         <label>码率（kbps，录制即此码率）<input id="vMaxrate" type="number" placeholder="2500"></label>
@@ -104,6 +105,6 @@
 
   <div id="toast" class="toast hidden"></div>
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
-  <script src="{{ url_for('static', filename='admin.js') }}?v=0.15"></script>
+  <script src="{{ url_for('static', filename='admin.js') }}?v=0.15.1"></script>
 </body>
 </html>

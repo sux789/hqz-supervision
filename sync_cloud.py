@@ -50,14 +50,15 @@ VIDEO_DEFAULTS = {
     'video_phone_rec': '1',         # 1=允许手机端录制（0=关闭页面录制）
     'video_rec_mode': 'system',     # 录制方式：system=系统相机（MP4/H.264，保证可播，默认）/ inapp=页面录制（省流量，部分机型为 WebM）
     'video_transcode': '1',         # 1=原生转码压缩（Media3，缩放到 video_max_height + video_maxrate_k，保留声音）/ 0=只存原片
-    'video_max_height': '720',      # 录制/压缩的最长边（高）上限
-    'video_maxrate_k': '2500',      # 录制/压缩码率上限 kbps（手机端即录制码率）
+    'video_max_height': '1080',     # 转码后最长边（高）上限：720=省空间 / 1080=更清晰
+    'video_maxrate_k': '4000',      # 转码目标码率 kbps：1500=省流量 / 4000=清晰 / 8000=很清晰
+    'video_cam_quality': '1',       # 相机录制质量：1=最高（源码率足，转码后更清晰）/ 0=较低（省电省存储）
     'video_fps': '30',              # 录制帧率
     'video_max_seconds': '60',      # 单段录制最长秒数（防止文件过大）
     # ── 服务器端压缩（选择已有视频时生效，也作降级兜底）──
     'video_crf': '28',              # x264 质量（18-32，越大越小越糊）
     'video_audio_k': '96',          # 音频码率 kbps
-    'video_max_mb': '300',          # 单文件上传上限 MB
+    'video_max_mb': '300',          # 单文件上传上限 MB（仅云同步链路用，当前休眠）
     'video_ffmpeg': '',             # ffmpeg 可执行路径（空=自动探测）
 }
 

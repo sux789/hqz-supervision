@@ -30,15 +30,23 @@ DPI_SCALES = (('mdpi', 1), ('hdpi', 1.5), ('xhdpi', 2), ('xxhdpi', 3), ('xxxhdpi
 
 
 def clean_watermark(art: Image.Image) -> Image.Image:
-    """抹掉右下角"AI生成"水印：用低分辨率背景模型填充该区域。"""
+    """抹掉右下角 "AI生成 / WORKBUDDY" 水印。
+
+    实测水印位于 x≈0.87W、y≈0.92H 的角落（浅灰绿字），做法：
+    ① 在水印 bbox（留余量）内用平滑背景模型整体替换；
+    ② 掩膜高斯羽化后与背景再融合一次，消除硬边（避免出现矩形补丁痕迹）。
+    """
     w, h = art.size
-    a = np.asarray(art).copy()
-    bg = np.asarray(art.resize((16, 16), Image.BOX).resize((w, h), Image.BILINEAR))
-    a[int(h * 0.82):, int(w * 0.74):] = bg[int(h * 0.82):, int(w * 0.74):]
-    out = Image.fromarray(a)
-    box = (int(w * 0.70), int(h * 0.78), w, h)
-    out.paste(out.crop(box).filter(ImageFilter.GaussianBlur(6)), box[:2])
-    return out
+    a = np.asarray(art).astype(np.float32)
+    bg = np.asarray(art.resize((16, 16), Image.BOX).resize((w, h), Image.BILINEAR)).astype(np.float32)
+    y0, x0 = int(h * 0.865), int(w * 0.825)
+    a[y0:h, x0:w] = bg[y0:h, x0:w]
+    mask = np.zeros((h, w), np.float32)
+    mask[y0 + 6:h, x0 + 6:w] = 1.0
+    mask = np.asarray(Image.fromarray((mask * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(26)),
+                      dtype=np.float32) / 255.0
+    blended = a * (1 - mask[..., None]) + bg * mask[..., None]
+    return Image.fromarray(blended.astype(np.uint8))
 
 
 def foreground(art: Image.Image, green, n: int) -> Image.Image:
@@ -66,6 +74,40 @@ def circle_mask(size: int, ss: int = 4) -> Image.Image:
     return m.resize((size, size), Image.LANCZOS)
 
 
+# Capacitor 默认闪屏尺寸（替换出厂图，改为绿底 + 居中图标）
+SPLASHES = {
+    'drawable/splash.png': (480, 320),
+    'drawable-land-mdpi/splash.png': (480, 320),
+    'drawable-land-hdpi/splash.png': (800, 480),
+    'drawable-land-xhdpi/splash.png': (1280, 720),
+    'drawable-land-xxhdpi/splash.png': (1600, 960),
+    'drawable-land-xxxhdpi/splash.png': (1920, 1280),
+    'drawable-port-mdpi/splash.png': (320, 480),
+    'drawable-port-hdpi/splash.png': (480, 800),
+    'drawable-port-xhdpi/splash.png': (720, 1280),
+    'drawable-port-xxhdpi/splash.png': (960, 1600),
+    'drawable-port-xxxhdpi/splash.png': (1280, 1920),
+}
+
+
+def make_splashes(art: Image.Image, green, out_dir: Path) -> int:
+    """启动闪屏：纯绿底 + 居中盾牌（emblem 高度 = 短边的 24%）。
+
+    为什么需要：Capacitor 模板自带的 splash.png 是出厂图（2025-10 那批），
+    直接打包会让 App 启动瞬间闪出"老图标"（2026-09-13 实机反馈）。
+    """
+    for rel, (w, h) in SPLASHES.items():
+        canvas = Image.new('RGB', (w, h), green)
+        target = 0.24 * min(w, h)
+        k = target / art.height
+        logo = art.resize((max(1, round(art.width * k)), max(1, round(art.height * k))), Image.LANCZOS)
+        canvas.paste(logo, ((w - logo.width) // 2, (h - logo.height) // 2))
+        path = out_dir / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        canvas.save(path)
+    return len(SPLASHES)
+
+
 def main(src_path: str = str(DEFAULT_SRC)) -> None:
     art = clean_watermark(Image.open(src_path).convert('RGB'))
     green = tuple(int(v) for v in np.asarray(art)[:80, :80].reshape(-1, 3).mean(axis=0))
@@ -81,7 +123,8 @@ def main(src_path: str = str(DEFAULT_SRC)) -> None:
         '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
         f'    <color name="ic_launcher_background">#{green[0]:02X}{green[1]:02X}{green[2]:02X}</color>\n'
         '</resources>\n', encoding='utf-8')
-    print(f'图标已生成（5 档密度）；背景色 #{green[0]:02X}{green[1]:02X}{green[2]:02X}')
+    n = make_splashes(art, green, RES)
+    print(f'图标已生成（5 档密度）+ 闪屏 {n} 张；背景色 #{green[0]:02X}{green[1]:02X}{green[2]:02X}')
 
 
 if __name__ == '__main__':

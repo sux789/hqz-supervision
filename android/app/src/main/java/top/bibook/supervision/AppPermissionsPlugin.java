@@ -256,7 +256,7 @@ public class AppPermissionsPlugin extends Plugin {
             call.reject("本机没有可用的相机应用");
             return;
         }
-        intent.putExtra(MediaStore.EXTRA_VIDEO_QUALITY, call.getInt("quality", 0));   // 0=较低码率录制（转码后仍达标），1=最高
+        intent.putExtra(MediaStore.EXTRA_VIDEO_QUALITY, call.getInt("quality", 1));   // 1=最高质量录制（源码率足，转码后更清晰）
         int maxSeconds = call.getInt("maxSeconds", 60);
         if (maxSeconds > 0) {
             intent.putExtra("android.intent.extra.durationLimit", maxSeconds);

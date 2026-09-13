@@ -129,6 +129,7 @@ async function loadSyncSettings() {
   $('#vPhoneRec').value = s.video_phone_rec ?? '1';
   $('#vRecMode').value = s.video_rec_mode ?? 'system';
   $('#vTranscode').value = s.video_transcode ?? '1';
+  $('#vCamQ').value = s.video_cam_quality ?? '1';
   $('#vFps').value = s.video_fps ?? '30';
   $('#vMaxSec').value = s.video_max_seconds ?? '60';
   $('#vMaxHeight').value = s.video_max_height ?? '720';
@@ -188,6 +189,7 @@ $('#btnSyncSave').addEventListener('click', async () => {
     video_phone_rec: $('#vPhoneRec').value,
     video_rec_mode: $('#vRecMode').value,
     video_transcode: $('#vTranscode').value,
+    video_cam_quality: $('#vCamQ').value,
     video_max_height: $('#vMaxHeight').value,
     video_fps: $('#vFps').value,
     video_max_seconds: $('#vMaxSec').value,

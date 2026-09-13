@@ -862,8 +862,9 @@ async function useSystemCamera(why) {
         maxSeconds: parseInt(p.max_seconds || 60, 10),
         // 原生转码压缩（v0.14）：缩放到 video_max_height、码率 video_maxrate_k，保留声音
         transcode: p.transcode === '0' ? 0 : 1,
-        maxHeight: parseInt(p.max_height || 720, 10),
-        bitrateK: parseInt(p.bitrate_k || 2500, 10),
+        maxHeight: parseInt(p.max_height || 1080, 10),
+        bitrateK: parseInt(p.bitrate_k || 4000, 10),
+        quality: p.cam_quality === 0 ? 0 : 1,     // 相机录制质量（1=最高，保证源码率）
       });
       if (r && r.path) {
         recordShot(`Pictures/${rowSubdir() || '验收照片'}/${base}_视频.mp4`, rowVal('小班号'), 'video');
