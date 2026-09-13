@@ -36,9 +36,11 @@ _WGS84_PRJ = (
     'PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]'
 )
 
-_TRKPT_RE = re.compile(
-    r'<trkpt[^>]*lat="([-\d.]+)"[^>]*lon="([-\d.]+)"[^>]*>(.*?)</trkpt>',
-    re.S)
+# 注意：本项目 buildGpx() 产出的是 lng= 而不是 lon=（2026-09-13 实测踩坑：
+# 只认 lon= 会把真实轨迹解析成 0 点），且属性顺序不保证，故分开取属性。
+_TRKPT_TAG_RE = re.compile(r'<trkpt\b([^>]*)>(.*?)</trkpt>', re.S)
+_ATTR_LAT_RE = re.compile(r'\blat="([-\d.]+)"')
+_ATTR_LON_RE = re.compile(r'\b(?:lon|lng)="([-\d.]+)"')
 _ELE_RE = re.compile(r'<ele>([-\d.]+)</ele>')
 _TIME_RE = re.compile(r'<time>([^<]+)</time>')
 _SC_IN_NAME_RE = re.compile(r'轨迹_(.+?)_\d{4}-')
@@ -53,11 +55,14 @@ def gpx_to_points(path) -> list:
     except OSError:
         return []
     pts = []
-    for m in _TRKPT_RE.finditer(text):
-        lat, lon, body = float(m.group(1)), float(m.group(2)), m.group(3)
+    for m in _TRKPT_TAG_RE.finditer(text):
+        tag, body = m.group(1), m.group(2)
+        mlat, mlon = _ATTR_LAT_RE.search(tag), _ATTR_LON_RE.search(tag)
+        if not mlat or not mlon:
+            continue
         ele = _ELE_RE.search(body)
         tm = _TIME_RE.search(body)
-        pts.append((lon, lat,
+        pts.append((float(mlon.group(1)), float(mlat.group(1)),
                     float(ele.group(1)) if ele else None,
                     tm.group(1) if tm else None))
     return pts
