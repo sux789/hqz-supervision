@@ -60,6 +60,22 @@
 
   <input type="file" id="photoInput" accept="image/*" capture="environment" hidden>
 
+  <!-- 修改密码弹层（v0.21）：点右上角用户名打开，仅本人可改自己 -->
+  <div id="pwdMask" class="album-mask hidden">
+    <div class="pwd-panel">
+      <b>修改密码 · <span id="pwdWho"></span></b>
+      <label>原密码<input id="pwdOld" type="password" autocomplete="current-password" placeholder="当前密码"></label>
+      <label>新密码（至少 4 位）<input id="pwdNew" type="password" autocomplete="new-password" placeholder="新密码"></label>
+      <label>确认新密码<input id="pwdNew2" type="password" autocomplete="new-password" placeholder="再输一次"></label>
+      <div class="pwd-btns">
+        <button id="pwdSave" class="btn primary">保存</button>
+        <button id="pwdCancel" class="btn ghost">取消</button>
+      </div>
+      <div id="pwdMsg" class="err"></div>
+      <div class="muted" style="font-size:12px;">改完密码后本机无需重新登录；其他同事的登录状态不受影响。</div>
+    </div>
+  </div>
+
   <!-- 系统相机录制兜底（v0.12）：本机 WebView 不支持 MP4 录制时走这里，硬件 H.264 → 必播 -->
   <input type="file" id="videoInput" accept="video/*" capture="camcorder" hidden>
 
@@ -100,6 +116,6 @@
   <script src="{{ url_for('static', filename='vendor/jsuites.min.js') }}"></script>
   <script src="{{ url_for('static', filename='vendor/jspreadsheet.min.js') }}"></script>
   <!-- ?v= 版本号熔断：静态 JS 更新后 WebView/浏览器强制拉新（曾致 APK 端验收联动代码不生效） -->
-  <script src="{{ url_for('static', filename='app.js') }}?v=0.20"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=0.21"></script>
 </body>
 </html>

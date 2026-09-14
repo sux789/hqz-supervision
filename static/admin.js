@@ -252,6 +252,39 @@ $('#btnSyncRetry').addEventListener('click', async () => {
   } catch (err) { toast(err.message, true); }
 });
 
+/* ── 用户管理（v0.21）：管理员重置他人密码 ── */
+async function loadUsers() {
+  const data = await api('/admin/api/users');
+  const tb = $('#tblUsers tbody');
+  tb.innerHTML = '';
+  for (const u of data.users) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${escape(u.username)}</td>
+      <td>${u.role === 'admin' ? '管理员' : '普通用户'}</td>
+      <td><input type="text" placeholder="输入新密码" data-u="${escape(u.username)}" style="width:100%;padding:6px 8px;border:1px solid #d4d9de;border-radius:6px;"></td>
+      <td><button class="btn" data-reset="${escape(u.username)}">重置</button></td>`;
+    tb.appendChild(tr);
+  }
+  tb.querySelectorAll('button[data-reset]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const name = btn.getAttribute('data-reset');
+      const input = tb.querySelector(`input[data-u="${CSS.escape(name)}"]`);
+      const pwd = (input.value || '').trim();
+      $('#usersMsg').textContent = '';
+      if (pwd.length < 4) { $('#usersMsg').textContent = '新密码至少 4 位'; return; }
+      if (!confirm(`确定把「${name}」的密码重置为「${pwd}」？该用户需用新密码重新登录。`)) return;
+      try {
+        await api(`/admin/api/users/${encodeURIComponent(name)}/password`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_password: pwd }),
+        });
+        input.value = '';
+        toast(`${name} 的密码已重置`);
+      } catch (err) { $('#usersMsg').textContent = err.message; }
+    });
+  });
+}
+
 $('#btnSyncRefresh').addEventListener('click', () => loadSyncStatus().catch((e) => toast(e.message, true)));
 
 $('#btnLogout').addEventListener('click', async () => {
@@ -263,4 +296,5 @@ loadWorkbooks().catch((e) => toast(e.message, true));
 loadTracks().catch(() => {});
 loadLogs().catch(() => {});
 loadSyncSettings().catch(() => {});
+loadUsers().catch(() => {});
 loadSyncStatus().catch(() => {});

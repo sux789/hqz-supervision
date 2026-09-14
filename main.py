@@ -52,7 +52,8 @@ def init_db():
     con = db()
     con.executescript('''
         CREATE TABLE IF NOT EXISTS users(
-            username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, role TEXT NOT NULL);
+            username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, role TEXT NOT NULL,
+            pwd_ver INTEGER NOT NULL DEFAULT 1);
         CREATE TABLE IF NOT EXISTS workbooks(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL, sheet_name TEXT NOT NULL,
@@ -87,6 +88,10 @@ def init_db():
             orig_size INTEGER NOT NULL DEFAULT 0);
         CREATE INDEX IF NOT EXISTS idx_photo_state ON photo_sync(state);
     ''')
+    # 轻量迁移：v0.21 前建的 users 表无 pwd_ver 列（改密码令旧令牌失效用）
+    ucols = {r[1] for r in con.execute('PRAGMA table_info(users)')}
+    if 'pwd_ver' not in ucols:
+        con.execute('ALTER TABLE users ADD COLUMN pwd_ver INTEGER NOT NULL DEFAULT 1')
     # 轻量迁移：v0.10 前建的 photo_sync 无 kind/orig_size 列
     cols = {r[1] for r in con.execute('PRAGMA table_info(photo_sync)')}
     if 'kind' not in cols:
@@ -96,7 +101,7 @@ def init_db():
     if not con.execute('SELECT 1 FROM users').fetchone():
         con.execute(
             'INSERT INTO users VALUES(?,?,?)',
-            ('雷华雄', hashlib.sha256('lhx123'.encode()).hexdigest(), 'admin'))
+            ('雷华雄', hashlib.sha256('lhx123'.encode()).hexdigest(), 'admin', 1))
     # settings 非密钥默认值预置（真实 AK/SK / 百度凭证由一次性脚本写入，不进代码）
     for k, v in {**sync_cloud.SYNC_DEFAULTS, **sync_cloud.VIDEO_DEFAULTS, **sync_cloud.PHOTO_DEFAULTS}.items():
         con.execute('INSERT OR IGNORE INTO settings(key, value) VALUES(?,?)', (k, v))
@@ -109,30 +114,44 @@ def init_db():
 # WebView 的 cookie 可能尚未落盘 → 回来页面重载变"未登录"。令牌存 localStorage
 # （写入即持久）+ 随每个请求带 X-Sup-Token，彻底摆脱 cookie 落盘时序问题。
 
-_TOKEN_DAYS = 180
+_TOKEN_DAYS = 3650      # 10 年：App 登录后长期保存（改密码会令旧令牌立即失效）
 
 
 def _token_secret() -> bytes:
     return b'hqz-supervision-token-v1'
 
 
-def make_token(user: str, days: int = _TOKEN_DAYS) -> str:
+def make_token(user: str, ver: int = 1, days: int = _TOKEN_DAYS) -> str:
+    """令牌 = base64(user|密码版本|过期时间|签名)。
+
+    带"密码版本"是为了让**改密码后旧令牌立即失效**（v0.21）：令牌无状态，无法逐条吊销，
+    改密码时把 users.pwd_ver +1，旧令牌校验时版本对不上即拒绝。
+    """
     exp = int(datetime.now().timestamp()) + days * 86400
-    payload = f'{user}|{exp}'
+    payload = f'{user}|{int(ver)}|{exp}'
     sig = hmac.new(_token_secret(), payload.encode(), hashlib.sha256).hexdigest()[:32]
     return b64e(f'{payload}|{sig}'.encode())
 
 
 def verify_token(tok: str):
-    """→ 用户名 或 None（签名不符/过期/格式错）。"""
+    """→ (用户名, 密码版本) 或 None（签名不符/过期/格式错）。"""
     try:
-        user, exp, sig = b64d(tok).decode().rsplit('|', 2)
+        parts = b64d(tok).decode().rsplit('|')
+        if len(parts) == 3:            # 旧格式（v0.21 前，无密码版本）：按当前版本直接接受，避免升级即被登出
+            user, exp, sig = parts
+            if not hmac.compare_digest(
+                    hmac.new(_token_secret(), f'{user}|{exp}'.encode(), hashlib.sha256).hexdigest()[:32], sig):
+                return None
+            if int(exp) < datetime.now().timestamp():
+                return None
+            return user, None
+        user, ver, exp, sig = parts
         if not hmac.compare_digest(
-                hmac.new(_token_secret(), f'{user}|{exp}'.encode(), hashlib.sha256).hexdigest()[:32], sig):
+                hmac.new(_token_secret(), f'{user}|{ver}|{exp}'.encode(), hashlib.sha256).hexdigest()[:32], sig):
             return None
         if int(exp) < datetime.now().timestamp():
             return None
-        return user
+        return user, int(ver)
     except Exception:
         return None
 
@@ -152,13 +171,18 @@ def auth_user():
     tok = request.headers.get('X-Sup-Token') or request.args.get('token') or ''
     if not tok:
         return None, None
-    user = verify_token(tok)
-    if not user:
+    parsed = verify_token(tok)
+    if not parsed:
         return None, None
+    user, ver = parsed
     con = db()
-    row = con.execute('SELECT role FROM users WHERE username=?', (user,)).fetchone()
+    row = con.execute('SELECT role, pwd_ver FROM users WHERE username=?', (user,)).fetchone()
     con.close()
-    return (user, row['role']) if row else (None, None)
+    if not row:
+        return None, None
+    if ver is not None and int(row['pwd_ver'] or 1) != ver:   # 改过密码 → 旧令牌失效（旧格式令牌不做版本校验）
+        return None, None
+    return user, row['role']
 
 
 def login_required(f):
@@ -216,7 +240,74 @@ def api_login():
     # 返回 user：登录是 fetch 静默完成（页面不刷新），前端需回写 #whoami 的 data-user，
     # 否则验收联动/{{拍照人}} 拿到的用户名为空（v0.8.2 修复）
     return jsonify(ok=True, role=row['role'], user=row['username'],
-                   token=make_token(row['username']))
+                   token=make_token(row['username'], row['pwd_ver'] or 1))
+
+
+def _set_password(con, username: str, new_pwd: str) -> int:
+    """写入新密码哈希并把 pwd_ver +1（旧令牌随之失效）；返回新的 pwd_ver。"""
+    con.execute('UPDATE users SET password_hash=?, pwd_ver=pwd_ver+1 WHERE username=?',
+                (hashlib.sha256(new_pwd.encode()).hexdigest(), username))
+    row = con.execute('SELECT pwd_ver, role FROM users WHERE username=?', (username,)).fetchone()
+    con.commit()
+    return int(row['pwd_ver'] or 1)
+
+
+def _pwd_error(new_pwd: str):
+    if not new_pwd or len(new_pwd) < 4:
+        return '新密码至少 4 位'
+    if len(new_pwd) > 64:
+        return '新密码过长'
+    return None
+
+
+@bp.route('/api/password', methods=['POST'])
+@login_required
+def api_change_password():
+    """本人修改自己的密码（v0.21）：需验证原密码；成功后返回新令牌（当前设备免重登）。"""
+    user, _role = auth_user()
+    data = request.get_json(force=True) or {}
+    old_pwd = data.get('old_password') or ''
+    new_pwd = (data.get('new_password') or '').strip()
+    err = _pwd_error(new_pwd)
+    if err:
+        return jsonify(error=err), 400
+    con = db()
+    try:
+        row = con.execute('SELECT password_hash FROM users WHERE username=?', (user,)).fetchone()
+        if not row or row['password_hash'] != hashlib.sha256(old_pwd.encode()).hexdigest():
+            return jsonify(error='原密码不正确'), 403
+        ver = _set_password(con, user, new_pwd)
+        return jsonify(ok=True, token=make_token(user, ver))
+    finally:
+        con.close()
+
+
+@bp.route('/admin/api/users', methods=['GET'])
+@admin_required
+def admin_users():
+    """用户列表（管理员）：姓名 / 角色（不返回任何密码信息）。"""
+    con = db()
+    rows = con.execute('SELECT username, role FROM users ORDER BY role DESC, username').fetchall()
+    con.close()
+    return jsonify(users=[{'username': r['username'], 'role': r['role']} for r in rows])
+
+
+@bp.route('/admin/api/users/<path:username>/password', methods=['POST'])
+@admin_required
+def admin_set_password(username):
+    """管理员为他人重置密码（无需原密码）；被改者旧令牌立即失效，需用新密码重新登录。"""
+    new_pwd = ((request.get_json(force=True) or {}).get('new_password') or '').strip()
+    err = _pwd_error(new_pwd)
+    if err:
+        return jsonify(error=err), 400
+    con = db()
+    try:
+        if not con.execute('SELECT 1 FROM users WHERE username=?', (username,)).fetchone():
+            return jsonify(error=f'用户不存在：{username}'), 404
+        _set_password(con, username, new_pwd)
+        return jsonify(ok=True, username=username)
+    finally:
+        con.close()
 
 
 @bp.route('/api/me', methods=['GET'])

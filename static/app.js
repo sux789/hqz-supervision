@@ -808,6 +808,50 @@ $('#photoInput').addEventListener('change', async (e) => {
   } catch (err) { toast('拍照处理失败：' + err.message, true); }
 });
 
+/* ── 修改密码（v0.21）：点右上角用户名打开；仅能改自己（管理员改他人走后台） ── */
+function openPwdDialog() {
+  const who = $('#whoami').dataset.user || '';
+  if (!who) { toast('请先登录', true); return; }
+  $('#pwdWho').textContent = who;
+  ['#pwdOld', '#pwdNew', '#pwdNew2'].forEach((sel) => { $(sel).value = ''; });
+  $('#pwdMsg').textContent = '';
+  $('#pwdMask').classList.remove('hidden');
+  $('#pwdOld').focus();
+}
+
+$('#whoami').addEventListener('click', openPwdDialog);
+$('#pwdCancel').addEventListener('click', () => $('#pwdMask').classList.add('hidden'));
+$('#pwdMask').addEventListener('click', (e) => {
+  if (e.target === $('#pwdMask')) $('#pwdMask').classList.add('hidden');
+});
+
+async function submitPwdChange() {
+  const oldPwd = $('#pwdOld').value;
+  const n1 = $('#pwdNew').value.trim();
+  const n2 = $('#pwdNew2').value.trim();
+  const msg = $('#pwdMsg');
+  msg.textContent = '';
+  if (!oldPwd) { msg.textContent = '请输入原密码'; return; }
+  if (n1.length < 4) { msg.textContent = '新密码至少 4 位'; return; }
+  if (n1 !== n2) { msg.textContent = '两次输入的新密码不一致'; return; }
+  if (n1 === oldPwd) { msg.textContent = '新密码不能与原密码相同'; return; }
+  try {
+    const r = await api('/api/password', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ old_password: oldPwd, new_password: n1 }),
+    });
+    if (r.token) setToken(r.token);      // 本机换用新令牌：无需重新登录
+    $('#pwdMask').classList.add('hidden');
+    toast('密码已修改（本机保持登录；其他同事不受影响）');
+  } catch (err) {
+    msg.textContent = err.message;
+  }
+}
+
+$('#pwdSave').addEventListener('click', submitPwdChange);
+['#pwdOld', '#pwdNew', '#pwdNew2'].forEach((sel) =>
+  $(sel).addEventListener('keydown', (e) => { if (e.key === 'Enter') submitPwdChange(); }));
+
 /* ── 视频（v0.11）：手机端边录边压 + **只存手机本地（不上传、不入云）** ──
    点「🎬 视频」直接开始录制；录音权限未在 APK 声明，故无声；停止后保存到手机并记本机提示。
    保存链：原生 saveVideo（写 Movies/ 相册，需新版 APK）→ 原生 saveFile（下载目录）→ 浏览器下载。 */

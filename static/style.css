@@ -179,3 +179,14 @@ textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size
 .rec-dot { width: 12px; height: 12px; border-radius: 50%; background: #e24b4a;
            animation: recBlink 1.2s steps(1,end) infinite; }
 @keyframes recBlink { 0%,100% { opacity: 1; } 50% { opacity: .2; } }
+
+/* ── 修改密码弹层（v0.21） ── */
+.pwd-panel { background: #fff; border-radius: 12px; padding: 20px 22px; width: min(380px, 92vw);
+             display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.pwd-panel b { font-size: 15px; }
+.pwd-panel label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #4a5560; }
+.pwd-panel input { padding: 9px 11px; border: 1px solid #d4d9de; border-radius: 6px;
+                   font-size: 15px; width: 100%; box-sizing: border-box; }
+.pwd-btns { display: flex; gap: 10px; margin-top: 2px; }
+.pwd-btns .btn { flex: 1; }
+#whoami { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
