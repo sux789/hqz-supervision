@@ -189,4 +189,4 @@ textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size
                    font-size: 15px; width: 100%; box-sizing: border-box; }
 .pwd-btns { display: flex; gap: 10px; margin-top: 2px; }
 .pwd-btns .btn { flex: 1; }
-#whoami { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+#whoami { cursor: pointer; white-space: nowrap; text-decoration: underline dotted; text-underline-offset: 3px; }
