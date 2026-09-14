@@ -98,7 +98,7 @@ function show(view) {
   $('#viewDetail').classList.toggle('hidden', view !== 'detail');
   $('#btnBack').classList.toggle('hidden', view === 'list');
   $('#pageName').textContent =
-    view === 'detail' ? (cur ? `${rowVal('小班号') || '详情'} · ${cur.name}` : '') : '工作簿';
+    view === 'detail' ? (cur ? `${keyVal() || '详情'} · ${cur.name}` : '') : '工作簿';
   $('#btnBack').onclick = () => {
     if (trackWatch !== null) autoStopTrackIfRecording('返回列表');   // 互斥（F2）
     nav('#/');
@@ -126,14 +126,16 @@ $('#loginForm').addEventListener('submit', async (e) => {
 $('#btnLogout').addEventListener('click', async () => {
   await api('/api/logout', { method: 'POST' }).catch(() => {});
   setToken('');                        // 令牌一并清除
-  location.href = '/';
+  // 退出后必须留在**本应用内**。跳 '/' 是网关首页（所有应用的入口），
+  // 用户会掉进别的应用、拿本应用账号反复试密码（2026-09-14 何明星实测踩到此坑）
+  location.href = (window.SUP_BASE || '') + '/';
 });
 
 /* ── 缓存：记住上次编辑位置（同 hqz-survey last_project 惯例） ── */
 function rememberLast() {
   try {
     localStorage.setItem('hqz_sup_last', JSON.stringify(
-      { wb: cur.id, idx: curIdx, name: cur.name, xh: rowVal('小班号') }));
+      { wb: cur.id, idx: curIdx, name: cur.name, xh: keyVal() }));
   } catch (e) {}
 }
 
@@ -162,6 +164,19 @@ function loadLast() {
 function rowVal(key) {
   const i = cur.headers.indexOf(key);
   return (curIdx >= 0 && i >= 0) ? String(allRows[curIdx][i] || '').trim() : '';
+}
+
+/* 唯一键列名（v0.23，C11）：参数「unique-key」声明 → 后端 key_column → 兜底「小班号」。
+   全链路（详情标题/拍照归档/录像记录/轨迹命名/本地拍摄记录）都用它当行标识，
+   不再硬编码「小班号」，以便同一个 App 装不同列的 Excel。 */
+function keyCol() {
+  if (!cur) return '小班号';
+  return (cur.key_column || (cur.config && cur.config['unique-key']) || '小班号').trim();
+}
+
+/* 当前行的唯一键值（即"是哪个小班"） */
+function keyVal() {
+  return rowVal(keyCol());
 }
 
 /* ── ① 工作簿列表 ── */
@@ -215,7 +230,7 @@ function parseSelCfg() {
     return { field: (p[0] || '').trim(), type: (p[1] || 'search').trim() };
   }).filter((c) => c.field && cur.headers.includes(c.field));
   if (!selCfg.length) {   // 兜底：未配置时用「小班号」搜索，再退到第一列
-    const f = cur.headers.includes('小班号') ? '小班号' : cur.headers[0];
+    const f = cur.headers.includes(keyCol()) ? keyCol() : cur.headers[0];
     selCfg = [{ field: f, type: 'search' }];
   }
 }
@@ -317,7 +332,7 @@ function renderSelectorBar() {
 
 function updateSelMeta() {
   const cands = candidateIdxs();
-  const xh = rowVal('小班号');
+  const xh = keyVal();
   $('#selMeta').innerHTML = allRows.length
     ? `匹配 ${cands.length} / ${allRows.length} 个小班 · 当前：<span class="cur-xh">${escapeHtml(xh || '(未编号)')}</span>`
     : '该工作簿没有数据行';
@@ -331,7 +346,7 @@ function jumpRow(idx) {
   renderForm();
   renderShotList();
   rememberLast();
-  $('#pageName').textContent = `${rowVal('小班号') || '详情'} · ${cur.name}`;
+  $('#pageName').textContent = `${keyVal() || '详情'} · ${cur.name}`;
 }
 
 function openDetail(idx) {
@@ -525,21 +540,33 @@ document.addEventListener('click', (e) => {
     cell.textContent = v;
     allRows[curIdx][oy] = v;
     try { formGrid.setValueFromCoords(1, oy, v); } catch (e) {}   // 同步内部数据（否则网格数据与 allRows 脱节）
-    syncAcceptCols(oy, v);            // 内置规则：选结果→自动填验收人+验收日期；选空→三字段全清
+    syncAcceptCols(oy, v);            // 联动规则：选结果→自动填「人」和「日期」；选空→一并清空
     scheduleRowSave();
   });
   sel.addEventListener('blur', () => { cell.textContent = allRows[curIdx][oy] || ''; });
 });
 
-/* 内置联动规则（通用，非本模板硬编码）：
-   「*选项」下拉列选中非空值 → 验收人=当前登录用户、验收日期（或验收时间）=今天（列存在才填，覆盖旧值）
-   选中空（视为未验收）     → 验收人 / 验收日期（或验收时间）/ 验收备注 全部清空（列存在才清） */
+/* 审计/联动字段（v0.23，C11）：由后端按参数「日志字段」算好后随工作簿下发
+   （/api/workbooks/<id> 的 log_fields），前端不再写死「验收人/验收日期/验收时间/验收备注」。
+   老工作簿（后端未下发）时用同一组默认列做兜底。 */
+const LINK_FALLBACK = ['验收人', '验收日期', '验收时间', '验收结果', '验收备注'];
+
+function linkFields() {
+  if (!cur) return [];
+  const f = cur.log_fields || [];
+  return (f.length ? f : LINK_FALLBACK).filter((h) => cur.headers.includes(h));
+}
+
+/* 联动规则（通用，非本模板硬编码）：
+   「*选项」下拉列选中非空值 → 「人」列（列名含 人/员）=当前登录用户、「日期」列（含 日期，无则含 时间）=今天
+   选中空（视为未处理）     → 除该下拉列外的联动字段全部清空 */
 function syncAcceptCols(resultColIdx, v) {
   const user = ($('#whoami').dataset.user || '').trim();
   const today = new Date().toLocaleDateString('sv-SE');
-  let di = cur.headers.indexOf('验收日期');
-  if (di < 0) di = cur.headers.indexOf('验收时间');
-  const dateCol = di >= 0 ? cur.headers[di] : null;
+  const resultCol = cur.headers[resultColIdx];
+  const fields = linkFields().filter((h) => h !== resultCol);
+  const userCol = fields.find((h) => /[人员]/.test(h)) || null;
+  const dateCol = fields.find((h) => /日期/.test(h)) || fields.find((h) => /时间/.test(h)) || null;
 
   const setCol = (colName, val) => {
     if (!colName) return false;
@@ -558,15 +585,13 @@ function syncAcceptCols(resultColIdx, v) {
 
   let changed = false, changedNames = [];
   if (v) {
-    if (user && setCol('验收人', user)) changedNames.push('验收人');
-    if (setCol(dateCol, today)) changedNames.push(dateCol || '验收日期');
+    if (user && setCol(userCol, user)) changedNames.push(userCol);
+    if (setCol(dateCol, today)) changedNames.push(dateCol);
     changed = changedNames.length > 0;
     if (changed) toast('已自动填入：' + changedNames.join('、'));
   } else {
-    changed = setCol('验收人', '') || changed;
-    changed = setCol(dateCol, '') || changed;
-    changed = setCol('验收备注', '') || changed;
-    if (changed) toast('验收结果已清空：验收人/验收日期/验收备注 一并清空');
+    for (const h of fields) if (setCol(h, '')) changed = true;
+    if (changed) toast(`${resultCol || '结果'}已清空：${fields.join('/')} 一并清空`);
   }
 }
 
@@ -623,7 +648,7 @@ function shotItemHtml(s) {
 /* 当前小班的拍摄提示列表（按小班号过滤，无小班号列时显示全部） */
 function renderShotList() {
   const g = $('#rowPhotos');
-  const xh = rowVal('小班号');
+  const xh = keyVal();
   const shots = getShots().filter((s) => (s.xh || '') === (xh || ''));
   if (!shots.length) {
     g.innerHTML = '<span class="muted">该小班还没有拍摄记录，点「📷 拍照」开始。</span>';
@@ -797,7 +822,7 @@ $('#photoInput').addEventListener('change', async (e) => {
     const blob = await drawWatermark(file, remark, coords, { maxSide, quality });
     const filename = sanitizeSeg(renderTpl(cur.config['相片文件名'] || '', row, ts)) || 'photo';
     const subdir = rowSubdir();
-    const xh = rowVal('小班号');
+    const xh = keyVal();
 
     // ① App 内：原生 MediaStore 存入系统相册 Pictures/{参数「目录」}/（多级子目录，相册立即可见）
     //    Android 10+ 自有媒体免存储权限；C07：不经过服务器。失败时回退为浏览器下载，不丢图
@@ -1004,7 +1029,7 @@ async function useSystemCamera(why) {
       });
       if (r && r.path) {
         const dispPath = `Pictures/${rowSubdir() || '验收照片'}/${base}_视频.mp4`;
-        recordShot(dispPath, rowVal('小班号'), 'video');
+        recordShot(dispPath, keyVal(), 'video');
         toast(`视频已保存：${dispPath}${videoSizeNote(r)}`);
         renderShotList();
         clearReturnContext();
@@ -1050,7 +1075,7 @@ async function saveExternalVideo(file, ext) {
     const subdir = rowSubdir() || '验收照片';
     toast(`视频保存中（${(file.size / 1048576).toFixed(1)} MB）…`);
     const saved = await saveVideoLocal(file, fname, subdir);
-    recordShot(saved || `${fname}（${(file.size / 1048576).toFixed(1)} MB）`, rowVal('小班号'), 'video');
+    recordShot(saved || `${fname}（${(file.size / 1048576).toFixed(1)} MB）`, keyVal(), 'video');
     toast(`视频已保存：${saved || fname}`);
     renderShotList();
   } catch (err) {
@@ -1172,10 +1197,10 @@ async function finishRecording() {
     const subdir = rowSubdir() || '验收照片';
     const saved = await saveVideoLocal(blob, fname, subdir);
     const dispPath = saved || `${fname}（${(blob.size / 1048576).toFixed(1)} MB）`;
-    recordShot(dispPath, rowVal('小班号'), 'video');
+    recordShot(dispPath, keyVal(), 'video');
     if (ext !== 'mp4') {
       toast(`本机只能录 ${ext.toUpperCase()}（相册常不支持），已切换系统相机，请重录一次（MP4 保证可播）`, true);
-      recordShot(`${dispPath}｜${ext.toUpperCase()}（可能无法播放）`, rowVal('小班号'), 'video');
+      recordShot(`${dispPath}｜${ext.toUpperCase()}（可能无法播放）`, keyVal(), 'video');
       renderShotList();
       setTimeout(() => $('#videoInput').click(), 1200);   // 自动引导系统相机重录
       return;
@@ -1313,7 +1338,7 @@ async function stopTrack(silent) {
     return;
   }
   const gpx = buildGpx(pts);
-  const cls = rowVal('小班号') || '无小班';
+  const cls = keyVal() || '无小班';
   const name = `轨迹_${sanitizeSeg(cls)}_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '')}.gpx`;
   const fd = new FormData();
   fd.append('file', new Blob([gpx], { type: 'application/gpx+xml' }), name);
@@ -1412,7 +1437,7 @@ async function recoverPendingVideo() {
     const v = (r && r.video) || null;
     if (v && v.path) {
       const dispPath = `Pictures/${v.subdir || '验收照片'}/${v.name || ''}`;
-      recordShot(dispPath, rowVal('小班号'), 'video');
+      recordShot(dispPath, keyVal(), 'video');
       renderShotList();
       toast(`视频已保存：${dispPath}${videoSizeNote(v)}`);
       try { await plugin.getLastVideo({ consume: true }); } catch (e) {}

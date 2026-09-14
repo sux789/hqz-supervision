@@ -1,11 +1,16 @@
 # BLOCKS — 积木注册表
 
 > 规则：新增积木必须登记，否则视为不存在；AI 提问/指令先指向编号；≤25 行。
-> MVP 跑通后盘点时填写（示例行可删）。
+> 状态：**部分登记**（先登记 v0.23 通用化涉及的真实积木；其余待 MVP 盘点补齐，示例行已删）。
 
 | 编号 | 职责 | 文件 | 输入 | 输出 | 依赖 |
 |---|---|---|---|---|---|
-| B1 | （示例）输入读取 | reader.py | 文件路径 | 数据对象 | — |
-| B2 | （示例）校验 | validate.py | 数据对象 | 校验后对象 | B1 |
-| B3 | （示例）计算 | calc.py | 校验对象 | 计算结果 | B2 |
-| B4 | （示例）输出 | writer.py | 计算结果 | 输出文件 | B3 |
+| B1 | 参数解析与校验 | `param_parser.py` | 参数 sheet 行 + 数据表头 | config dict（违规抛 `ParamError` 带行号） | — |
+| B2 | 生效值解析（C11） | `param_parser.py` | config + headers | `row_key_column` / `log_fields_of` / `percent_cols_of` / `unique_key_of` | B1 |
+| B3 | 唯一键校验（C11） | `param_parser.py::check_unique_column` | rows + headers + config | `None` 或带行号错误串 | B1、B2 |
+| B4 | 工作簿摄入 | `main.py::parse_workbook_storage` | xlsx 字节流 | `(sheet_name, headers, rows, config, param_rows, key_column)` | B1、B2、B3 |
+| B5 | 数据 sheet 定位（C11） | `main.py::_pick_data_sheet` | sheetnames | 数据 sheet 名（歧义则抛 `ParamError`） | — |
+| B6 | 模板体检（只读工具） | `tools/check_template.py` | xlsx 路径 | FATAL/PENDING/WARN/SKIP 报告 + 退出码 | B1、B2、B3、B5 |
+| B7 | 前端行标识（C11） | `static/app.js::keyCol/keyVal` | `cur.key_column` | 唯一键列名 / 当前行键值 | B4（经 `/api/workbooks/<id>`） |
+| B8 | 前端结果联动（C11） | `static/app.js::linkFields/syncAcceptCols` | `cur.log_fields` + 列名 | 自动填「人」列=当前用户、「日期」列=今天；选空则清 | B4 |
+| B9 | 回归网 | `tests/test_unit.py`、`tests/test_e2e.py`、`tests/run_all.sh` | 仓库根 | 通过/失败计数 + 退出码 | B1–B8 |

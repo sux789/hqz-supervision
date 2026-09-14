@@ -40,6 +40,7 @@ async function loadWorkbooks() {
   for (const w of data.workbooks) {
     const param = w.editable_cols.length
       ? `<b>可编辑列：</b>${w.editable_cols.join('、')}`
+        + (w.unique_key ? `<br><b>唯一键：</b>${escape(w.unique_key)}` : '')
         + (w.hidden_cols.length ? `<br><b>隐藏列：</b>${w.hidden_cols.join('、')}` : '')
         + (w.result_options.length ? `<br><b>验收结果：</b>${w.result_options.join(' / ')}` : '')
         + (w.features.length ? `<br><b>功能：</b>${w.features.join('、')}` : '')
@@ -299,7 +300,8 @@ on('#btnSyncRefresh', 'click', () => loadSyncStatus().catch((e) => toast(e.messa
 
 $('#btnLogout').addEventListener('click', async () => {
   await api('/api/logout', { method: 'POST' }).catch(() => {});
-  location.href = '/';
+  // 同 app.js：留在本应用内，不要跳网关首页 '/'（会掉进别的应用）
+  location.href = (window.SUP_BASE || '') + '/';
 });
 
 loadWorkbooks().catch((e) => toast(e.message, true));

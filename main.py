@@ -12,6 +12,7 @@ import hmac
 import io
 import json
 import re
+import shutil
 import sqlite3
 import threading
 import zipfile
@@ -25,7 +26,9 @@ from flask import (Blueprint, Flask, abort, jsonify, redirect, render_template,
 
 import sync_cloud
 import track_export
-from param_parser import ParamError, _s, parse_params, split_list
+from param_parser import (ParamError, _s, check_unique_column, log_fields_of,
+                          parse_params, percent_cols_of, row_key_column,
+                          split_list, unique_key_of)
 
 BASE = Path(__file__).resolve().parent
 DATA_DIR = BASE / 'data'
@@ -59,6 +62,7 @@ def init_db():
             name TEXT NOT NULL, sheet_name TEXT NOT NULL,
             headers TEXT NOT NULL, rows TEXT NOT NULL,
             config TEXT NOT NULL, param_rows TEXT NOT NULL,
+            key_column TEXT NOT NULL DEFAULT '',
             uploaded_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS accept_logs(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,6 +96,10 @@ def init_db():
     ucols = {r[1] for r in con.execute('PRAGMA table_info(users)')}
     if 'pwd_ver' not in ucols:
         con.execute('ALTER TABLE users ADD COLUMN pwd_ver INTEGER NOT NULL DEFAULT 1')
+    # 轻量迁移：v0.23 前建的 workbooks 无 key_column 列（唯一键列名，C11）
+    wcols = {r[1] for r in con.execute('PRAGMA table_info(workbooks)')}
+    if 'key_column' not in wcols:
+        con.execute("ALTER TABLE workbooks ADD COLUMN key_column TEXT NOT NULL DEFAULT ''")
     # 轻量迁移：v0.10 前建的 photo_sync 无 kind/orig_size 列
     cols = {r[1] for r in con.execute('PRAGMA table_info(photo_sync)')}
     if 'kind' not in cols:
@@ -331,9 +339,13 @@ def _norm_cell(v):
     return '' if v is None else (v if isinstance(v, (int, float)) else str(v).strip())
 
 
-def _norm_rows(headers, rows):
-    """株数强度/蓄积强度等：数值 0.18 存储统一规范化为文本 '18%'（doc/004 §二）。"""
-    pct_idx = {i for i, h in enumerate(headers) if '强度' in h and '%' not in h}
+def _norm_rows(headers, rows, config=None):
+    """株数强度/蓄积强度等：数值 0.18 存储统一规范化为文本 '18%'（doc/004 §二）。
+
+    v0.23（C11）：转换哪些列由参数「百分比列」声明；未声明回落旧规则
+    「列名含『强度』且不含 %」，故旧模板行为完全不变。
+    """
+    pct_idx = percent_cols_of(headers, config or {})
     out = []
     for r in rows:
         r = [_norm_cell(v) for v in r]
@@ -345,15 +357,44 @@ def _norm_rows(headers, rows):
     return out
 
 
+PARAM_SHEET = '参数'   # 参数 sheet 固定名（C02）
+DATA_SHEET = 'data'    # 数据 sheet 约定名（v0.23，C11）
+
+
+def _pick_data_sheet(sheetnames):
+    """定位数据 sheet（v0.23，C11）。
+
+    优先精确取约定名「data」；没有则要求"有且仅有 1 个非参数 sheet"；
+    多个非参数 sheet 时**明确报错**——旧写法 `next(n for n in sheetnames if n != '参数')`
+    会静默取第一个，工作簿一带说明页/汇总页就取错表。
+    """
+    others = [n for n in sheetnames if n != PARAM_SHEET]
+    if not others:
+        raise ParamError(f'上传的 Excel 只有「{PARAM_SHEET}」sheet，没有数据 sheet')
+    if DATA_SHEET in others:
+        return DATA_SHEET
+    if len(others) > 1:
+        raise ParamError(
+            f'无法判断用哪个数据 sheet：共有 {len(others)} 个非「{PARAM_SHEET}」sheet {others}。'
+            f'请把数据 sheet 命名为「{DATA_SHEET}」，或只保留一个（其余说明/汇总页请删掉）')
+    return others[0]
+
+
 def parse_workbook_storage(stream):
-    """解析上传的 xlsx：数据 sheet + 参数 sheet。违规抛 ParamError。"""
+    """解析上传的 xlsx：数据 sheet + 参数 sheet。违规抛 ParamError。
+
+    返回 (sheet_name, headers, rows, config, param_rows, key_column)。
+    声明了「unique-key」时对唯一键做非空+唯一校验，不过则拒绝上传（C11）。
+    """
     wb = openpyxl.load_workbook(stream, data_only=True, read_only=True)
     try:
-        if '参数' not in wb.sheetnames:
-            raise ParamError('上传的 Excel 缺少「参数」sheet（需同时含数据 sheet 和 参数 sheet）')
-        data_name = next(n for n in wb.sheetnames if n != '参数')
+        if PARAM_SHEET not in wb.sheetnames:
+            raise ParamError(
+                f'上传的 Excel 缺少「{PARAM_SHEET}」sheet（需同时含数据 sheet 和「{PARAM_SHEET}」sheet；'
+                f'当前 sheet：{wb.sheetnames}）')
+        data_name = _pick_data_sheet(wb.sheetnames)
 
-        ws_p = wb['参数']
+        ws_p = wb[PARAM_SHEET]
         prows = [(i, r) for i, r in enumerate(
             ws_p.iter_rows(max_col=6, values_only=True), 1)
             if any(x not in (None, '') for x in r)]
@@ -376,9 +417,13 @@ def parse_workbook_storage(stream):
                 rows.append(vals[:ncols])
 
         config = parse_params(prows, headers)
-        rows = _norm_rows(headers, rows)
+        rows = _norm_rows(headers, rows, config)
+        # C11：声明了 unique-key 才校验（未声明 = 不校验，旧模板零改动）
+        uerr = check_unique_column(rows, headers, config)
+        if uerr:
+            raise ParamError(f'数据 sheet「{data_name}」：{uerr}')
         param_rows = [[_norm_cell(v) for v in (list(r) + [None] * 6)[:6]] for _, r in prows]
-        return data_name, headers, rows, config, param_rows
+        return data_name, headers, rows, config, param_rows, row_key_column(config)
     finally:
         wb.close()
 
@@ -401,16 +446,17 @@ def api_upload():
         return jsonify(error='请上传 .xlsx 文件'), 400
     blob = fs.read()   # 先读全量字节：既供解析，也原样留存作导出模板
     try:
-        sheet_name, headers, rows, config, param_rows = parse_workbook_storage(io.BytesIO(blob))
+        (sheet_name, headers, rows, config,
+         param_rows, key_column) = parse_workbook_storage(io.BytesIO(blob))
     except ParamError as e:
         return jsonify(error=str(e)), 400
     con = db()
     cur = con.execute(
-        'INSERT INTO workbooks(name, sheet_name, headers, rows, config, param_rows, uploaded_at)'
-        ' VALUES(?,?,?,?,?,?,?)',
+        'INSERT INTO workbooks(name, sheet_name, headers, rows, config, param_rows,'
+        ' key_column, uploaded_at) VALUES(?,?,?,?,?,?,?,?)',
         (fs.filename, sheet_name, json.dumps(headers, ensure_ascii=False),
          json.dumps(rows, ensure_ascii=False), json.dumps(config, ensure_ascii=False),
-         json.dumps(param_rows, ensure_ascii=False),
+         json.dumps(param_rows, ensure_ascii=False), key_column,
          datetime.now().strftime('%Y-%m-%d %H:%M')))
     wid = cur.lastrowid
     con.commit()
@@ -423,6 +469,24 @@ def api_upload():
     return jsonify(ok=True, id=wid, rows=len(rows))
 
 
+def _wb_key_column(r):
+    """工作簿的生效唯一键列名（C11）：落库值优先，为空则从 config 推。
+
+    老工作簿（v0.23 之前上传的）key_column 为 ''，这里回落到「小班号」，行为不变。
+    """
+    try:
+        kc = r['key_column']
+    except (IndexError, KeyError):
+        kc = ''
+    if kc:
+        return kc
+    try:
+        cfg = json.loads(r['config'])
+    except (TypeError, ValueError):
+        cfg = {}
+    return row_key_column(cfg)
+
+
 @bp.route('/api/workbooks/<int:wid>', methods=['GET'])
 @login_required
 def api_get(wid):
@@ -431,40 +495,55 @@ def api_get(wid):
     con.close()
     if not r:
         abort(404)
+    headers = json.loads(r['headers'])
+    cfg = json.loads(r['config'])
     return jsonify(id=r['id'], name=r['name'], sheet_name=r['sheet_name'],
-                   headers=json.loads(r['headers']), rows=json.loads(r['rows']),
-                   config=json.loads(r['config']))
+                   headers=headers, rows=json.loads(r['rows']),
+                   config=cfg, key_column=_wb_key_column(r),
+                   # v0.23：审计/联动字段由后端算好给前端，避免前后端各写一份默认值
+                   log_fields=log_fields_of(headers, cfg))
 
 
 @bp.route('/api/workbooks/<int:wid>', methods=['DELETE'])
 @admin_required
 def api_delete(wid):
+    """删除工作簿：DB 行 + 上传的源模板目录 + 关联的日志/同步记录一起清。
+
+    历史缺陷：只删 workbooks 行，data/workbooks/<id>/source.xlsx 会永久残留，
+    accept_logs / photo_sync 关联行也不清 → 长期累积磁盘与脏记录。
+    """
     con = db()
     con.execute('DELETE FROM workbooks WHERE id=?', (wid,))
+    con.execute('DELETE FROM accept_logs WHERE workbook_id=?', (wid,))
+    con.execute('DELETE FROM photo_sync WHERE workbook_id=?', (wid,))
     con.commit()
     con.close()
+    shutil.rmtree(UPLOAD_DIR / str(wid), ignore_errors=True)   # 源模板目录
     return jsonify(ok=True)
 
 
-# 变更日志覆盖的字段（列名在模板中存在才记录，通用不硬编码业务模板）
-ACCEPT_LOG_FIELDS = ('验收人', '验收日期', '验收时间', '验收结果', '验收备注')
+# 变更日志缺省审计字段（v0.23，C11）：列名在模板中存在才记录。
+# 缺省值现由 param_parser.DEFAULT_LOG_FIELDS 单一维护（验收人/验收日期/验收时间/验收结果/验收备注），
+# 要改审计范围时在「参数」sheet 加一行 key=日志字段 即可，不必改代码。
 
 
 @bp.route('/api/workbooks/<int:wid>/rows/<int:ridx>', methods=['POST'])
 @login_required
 def api_save_row(wid, ridx):
     """单行自动保存（前端两列表单 onchange 触发，对齐 hqz-survey 编辑体验）。
-    验收相关字段的每次变化写入 accept_logs（操作人+时间）。"""
+    审计字段的每次变化写入 accept_logs（操作人+时间）。"""
     vals = (request.get_json(silent=True) or {}).get('values')
     if not isinstance(vals, list):
         return jsonify(error='values 必须为数组'), 400
     con = db()
     try:
-        r = con.execute('SELECT headers, rows FROM workbooks WHERE id=?', (wid,)).fetchone()
+        r = con.execute('SELECT headers, rows, config, key_column FROM workbooks WHERE id=?',
+                        (wid,)).fetchone()
         if not r:
             abort(404)
         headers = json.loads(r['headers'])
         rows = json.loads(r['rows'])
+        cfg = json.loads(r['config'])
         if not (0 <= ridx < len(rows)):
             abort(404)
         if len(vals) != len(rows[ridx]):
@@ -472,17 +551,20 @@ def api_save_row(wid, ridx):
         old_row = rows[ridx]
         rows[ridx] = [_norm_cell(v) for v in vals]
 
-        # 验收字段变更日志：仅记录验收4字段（验收人/验收日期(时间)/验收结果/验收备注）的变化
+        # 审计字段变更日志（v0.23：列清单由「日志字段」参数驱动）
+        log_fields = set(log_fields_of(headers, cfg))
         logs = []
         for i, h in enumerate(headers):
-            if h not in ACCEPT_LOG_FIELDS:
+            if h not in log_fields:
                 continue
             ov = '' if old_row[i] is None else str(old_row[i]).strip()
             nv = '' if rows[ridx][i] is None else str(rows[ridx][i]).strip()
             if ov != nv:
                 logs.append((h, ov, nv))
         if logs:
-            hi = headers.index('小班号') if '小班号' in headers else -1
+            # 行标识取自工作簿的唯一键列（C11），不再硬编码「小班号」
+            kc = _wb_key_column(r)
+            hi = headers.index(kc) if kc in headers else -1
             xiaoban = '' if hi < 0 else str(old_row[hi] or '').strip()
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             op = session.get('user') or ''
@@ -866,6 +948,8 @@ def admin_list():
             'hidden_cols': split_list(cfg.get('不显示列')),
             'features': split_list(cfg.get('功能')),
             'result_options': split_list(cfg.get('验收结果选项')),
+            'unique_key': unique_key_of(cfg),      # v0.23：该工作簿声明的唯一键列（未声明则为空）
+            'log_fields': split_list(cfg.get('日志字段')),
         })
     return jsonify(workbooks=out)
 
