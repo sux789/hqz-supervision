@@ -23,6 +23,13 @@
         <b>+ 上传模板</b><span class="muted">（数据 sheet + 参数 sheet）</span>
       </label>
       <div id="adminMsg" class="err"></div>
+      <p class="muted" style="margin:8px 0 0;">
+        「下架」= 把模板从 App 端隐藏，普通用户看不到也填不了；<b>数据、源模板、日志、照片全部保留</b>，随时可「恢复」。
+        需要彻底删除时，先下架，再在已下架列表里点「彻底删除」。
+        <label class="chk-inline" style="margin-left:8px;">
+          <input type="checkbox" id="chkShowOff"> 显示已下架
+        </label>
+      </p>
       <table class="tbl" id="tblWb">
         <thead><tr><th>文件名</th><th>数据 sheet</th><th>可编辑项 / 功能（来自参数 sheet）</th><th>上传时间</th><th>操作</th></tr></thead>
         <tbody></tbody>
@@ -154,7 +161,24 @@
   </main>
 
   <div id="toast" class="toast hidden"></div>
+
+  <!-- v0.24：危险操作（下架 / 彻底删除）确认弹层 —— 要求照着输入对象名称（C13）
+       刻意不用 window.prompt：Android WebView 默认不实现 onJsPrompt，手机上会直接失效 -->
+  <div id="dangerModal" class="modal-mask hidden">
+    <div class="modal-box">
+      <h3 id="dangerTitle">确认操作</h3>
+      <p id="dangerHint" class="muted"></p>
+      <p>请输入要操作的名称 <b id="dangerName"></b> 以确认：</p>
+      <input id="dangerInput" autocomplete="off" spellcheck="false" placeholder="逐字输入，区分大小写">
+      <div id="dangerErr" class="err"></div>
+      <div class="modal-actions">
+        <button id="dangerCancel" class="btn">取消</button>
+        <button id="dangerOk" class="btn danger">确认</button>
+      </div>
+    </div>
+  </div>
+
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
-  <script src="{{ url_for('static', filename='admin.js') }}?v=0.23.1"></script>
+  <script src="{{ url_for('static', filename='admin.js') }}?v=0.24"></script>
 </body>
 </html>

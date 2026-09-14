@@ -14,3 +14,5 @@
 | B7 | 前端行标识（C11） | `static/app.js::keyCol/keyVal` | `cur.key_column` | 唯一键列名 / 当前行键值 | B4（经 `/api/workbooks/<id>`） |
 | B8 | 前端结果联动（C11） | `static/app.js::linkFields/syncAcceptCols` | `cur.log_fields` + 列名 | 自动填「人」列=当前用户、「日期」列=今天；选空则清 | B4 |
 | B9 | 回归网 | `tests/test_unit.py`、`tests/test_e2e.py`、`tests/run_all.sh` | 仓库根 | 通过/失败计数 + 退出码 | B1–B8 |
+| B10 | 下架守卫（C13） | `main.py::_inactive_for` | con + wid | True/False（已下架且非管理员） | — |
+| B11 | 危险操作确认（C13） | `static/admin.js::confirmByName` + `templates/admin.html#dangerModal` | 对象名称 | Promise<boolean> | — |

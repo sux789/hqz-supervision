@@ -63,6 +63,7 @@ def init_db():
             headers TEXT NOT NULL, rows TEXT NOT NULL,
             config TEXT NOT NULL, param_rows TEXT NOT NULL,
             key_column TEXT NOT NULL DEFAULT '',
+            is_active INTEGER NOT NULL DEFAULT 1,
             uploaded_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS accept_logs(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,6 +101,9 @@ def init_db():
     wcols = {r[1] for r in con.execute('PRAGMA table_info(workbooks)')}
     if 'key_column' not in wcols:
         con.execute("ALTER TABLE workbooks ADD COLUMN key_column TEXT NOT NULL DEFAULT ''")
+    # 轻量迁移：v0.24 前建的 workbooks 无 is_active 列（下架/上架，C13）
+    if 'is_active' not in wcols:
+        con.execute('ALTER TABLE workbooks ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1')
     # 轻量迁移：v0.10 前建的 photo_sync 无 kind/orig_size 列
     cols = {r[1] for r in con.execute('PRAGMA table_info(photo_sync)')}
     if 'kind' not in cols:
@@ -431,9 +435,15 @@ def parse_workbook_storage(stream):
 @bp.route('/api/workbooks', methods=['GET'])
 @login_required
 def api_list():
+    """App 端工作簿列表：**只列未下架的**（C13）——下架的由后台「显示已下架」查看。"""
     con = db()
-    rows = con.execute(
-        'SELECT id, name, sheet_name, uploaded_at FROM workbooks ORDER BY id DESC').fetchall()
+    try:
+        rows = con.execute(
+            'SELECT id, name, sheet_name, uploaded_at FROM workbooks'
+            ' WHERE COALESCE(is_active, 1)=1 ORDER BY id DESC').fetchall()
+    except sqlite3.OperationalError:      # 老库未迁移（无 is_active 列）
+        rows = con.execute(
+            'SELECT id, name, sheet_name, uploaded_at FROM workbooks ORDER BY id DESC').fetchall()
     con.close()
     return jsonify(workbooks=[dict(r) for r in rows])
 
@@ -487,14 +497,41 @@ def _wb_key_column(r):
     return row_key_column(cfg)
 
 
+# ── 下架 / 上架（C13）──────────────────────────────────────────────
+# 语义：下架 = **App/user 端看不见、不能操作**，但数据行、源模板、日志、照片全部保留，
+# 管理员随时可「上架」恢复。它是**软删除**，不是权限——用户端的按钮是否显示与它无关，
+# 真正的边界仍是服务端的 @admin_required。
+INACTIVE_MSG = '该工作簿已被管理员下架，App 端暂不可用（数据已保留，请联系管理员恢复）'
+
+
+def _inactive_for(con, wid):
+    """该工作簿对**当前用户**是否不可用（已下架且当前用户非管理员）→ True/False。"""
+    try:
+        r = con.execute('SELECT COALESCE(is_active, 1) AS a FROM workbooks WHERE id=?',
+                        (wid,)).fetchone()
+    except sqlite3.OperationalError:
+        return False                      # 老库未迁移 → 视为全部在用
+    if not r:
+        return False                      # 不存在交给各路由自己 404
+    # 注意：不能写 `r['a'] or 1` —— is_active=0（已下架）会被 or 吃成 1，
+    # 导致守卫永远认为"在用"（2026-09-14 实测踩坑）。
+    if r['a'] is None or int(r['a']) == 1:
+        return False
+    _u, role = auth_user()
+    return role != 'admin'
+
+
 @bp.route('/api/workbooks/<int:wid>', methods=['GET'])
 @login_required
 def api_get(wid):
     con = db()
     r = con.execute('SELECT * FROM workbooks WHERE id=?', (wid,)).fetchone()
+    inactive = _inactive_for(con, wid)
     con.close()
     if not r:
         abort(404)
+    if inactive:
+        return jsonify(error=INACTIVE_MSG), 403
     headers = json.loads(r['headers'])
     cfg = json.loads(r['config'])
     return jsonify(id=r['id'], name=r['name'], sheet_name=r['sheet_name'],
@@ -507,18 +544,42 @@ def api_get(wid):
 @bp.route('/api/workbooks/<int:wid>', methods=['DELETE'])
 @admin_required
 def api_delete(wid):
-    """删除工作簿：DB 行 + 上传的源模板目录 + 关联的日志/同步记录一起清。
+    """**下架**（软删除，C13）：is_active=0 —— App/user 端不再显示、不可操作，
+    数据行 / 源模板 / 日志 / 照片全部保留，可用「上架」恢复。
 
-    历史缺陷：只删 workbooks 行，data/workbooks/<id>/source.xlsx 会永久残留，
-    accept_logs / photo_sync 关联行也不清 → 长期累积磁盘与脏记录。
+    `?purge=1` 才是**彻底删除**：连 DB 行、源模板目录、accept_logs/photo_sync 一起清。
+    （v0.23 之前 DELETE 就是彻底删但不清目录，会留孤儿目录——已修。）
     """
+    purge = request.args.get('purge') == '1'
     con = db()
-    con.execute('DELETE FROM workbooks WHERE id=?', (wid,))
-    con.execute('DELETE FROM accept_logs WHERE workbook_id=?', (wid,))
-    con.execute('DELETE FROM photo_sync WHERE workbook_id=?', (wid,))
+    if purge:
+        con.execute('DELETE FROM workbooks WHERE id=?', (wid,))
+        con.execute('DELETE FROM accept_logs WHERE workbook_id=?', (wid,))
+        con.execute('DELETE FROM photo_sync WHERE workbook_id=?', (wid,))
+        con.commit()
+        con.close()
+        shutil.rmtree(UPLOAD_DIR / str(wid), ignore_errors=True)   # 源模板目录
+    else:
+        cur = con.execute('UPDATE workbooks SET is_active=0 WHERE id=?', (wid,))
+        n = cur.rowcount
+        con.commit()
+        con.close()
+        if not n:
+            abort(404)
+    return jsonify(ok=True, purged=purge)
+
+
+@bp.route('/api/workbooks/<int:wid>/restore', methods=['POST'])
+@admin_required
+def api_restore(wid):
+    """上架：撤销下架，App 端恢复可见可用（C13）。"""
+    con = db()
+    cur = con.execute('UPDATE workbooks SET is_active=1 WHERE id=?', (wid,))
+    n = cur.rowcount
     con.commit()
     con.close()
-    shutil.rmtree(UPLOAD_DIR / str(wid), ignore_errors=True)   # 源模板目录
+    if not n:
+        abort(404)
     return jsonify(ok=True)
 
 
@@ -541,6 +602,8 @@ def api_save_row(wid, ridx):
                         (wid,)).fetchone()
         if not r:
             abort(404)
+        if _inactive_for(con, wid):        # C13：下架后 user 端不可操作
+            return jsonify(error=INACTIVE_MSG), 403
         headers = json.loads(r['headers'])
         rows = json.loads(r['rows'])
         cfg = json.loads(r['config'])
@@ -588,6 +651,9 @@ def api_save(wid):
     if rows is None:
         return jsonify(error='缺少 rows'), 400
     con = db()
+    if _inactive_for(con, wid):            # C13：下架后 user 端不可操作
+        con.close()
+        return jsonify(error=INACTIVE_MSG), 403
     cur = con.execute('UPDATE workbooks SET rows=? WHERE id=?',
                       (json.dumps(rows, ensure_ascii=False), wid))
     con.commit()
@@ -647,6 +713,8 @@ def api_photo():
             wid = int(r.get('workbook_id') or 0)
         except ValueError:
             return jsonify(error='workbook_id 无效'), 400
+        if wid and _inactive_for(con, wid):    # C13：下架后不再接收该工作簿的照片
+            return jsonify(error=INACTIVE_MSG), 403
         filename = re.sub(r'[\\/:*?"<>|]+', '_', (r.get('filename') or '').strip())
         if not filename.lower().endswith('.jpg'):
             filename += '.jpg'
@@ -856,6 +924,8 @@ def api_video():
             wid = int(r.get('workbook_id') or 0)
         except ValueError:
             return jsonify(error='workbook_id 无效'), 400
+        if wid and _inactive_for(con, wid):    # C13：下架后不再接收该工作簿的视频
+            return jsonify(error=INACTIVE_MSG), 403
         subdir = re.sub(r'^/+|/+$', '', r.get('subdir') or '')
         if not all(re.match(r'^[^\\/:*?"<>|]+$', seg) for seg in subdir.split('/') if seg):
             return jsonify(error='subdir 含非法字符'), 400
@@ -922,7 +992,12 @@ def _export_workbook(wid):
 @bp.route('/api/workbooks/<int:wid>/export', methods=['GET'])
 @login_required
 def api_export(wid):
-    """前端导出：登录用户即可按上传模板导出当前数据。"""
+    """前端导出：登录用户即可按上传模板导出当前数据（已下架的工作簿 user 端导不出，C13）。"""
+    con = db()
+    inactive = _inactive_for(con, wid)
+    con.close()
+    if inactive:
+        return jsonify(error=INACTIVE_MSG), 403
     buf, name, mime = _export_workbook(wid)
     return send_file(buf, as_attachment=True, download_name=name, mimetype=mime)
 
@@ -934,7 +1009,8 @@ def api_export(wid):
 def admin_list():
     con = db()
     rows = con.execute(
-        'SELECT id, name, sheet_name, uploaded_at, config FROM workbooks ORDER BY id DESC').fetchall()
+        'SELECT id, name, sheet_name, uploaded_at, config, key_column,'
+        ' COALESCE(is_active, 1) AS is_active FROM workbooks ORDER BY id DESC').fetchall()
     con.close()
     out = []
     for r in rows:
@@ -942,6 +1018,7 @@ def admin_list():
         out.append({
             'id': r['id'], 'name': r['name'], 'sheet_name': r['sheet_name'],
             'uploaded_at': r['uploaded_at'],
+            'is_active': bool(r['is_active']),      # C13：后台默认全列，前端自行按此过滤
             # 参数摘要：让管理端直接看到该 Excel 决定了哪些项可编辑 / 启用了什么功能
             # （config 中列表类 key 存的是分号分隔的原始字符串，这里归一化为数组）
             'editable_cols': split_list(cfg.get('可编辑列')),

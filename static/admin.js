@@ -35,9 +35,19 @@ async function api(url, opt) {
 
 async function loadWorkbooks() {
   const data = await api('/admin/api/workbooks');
+  const showOff = !!($('#chkShowOff') && $('#chkShowOff').checked);
+  const list = data.workbooks.filter((w) => showOff || w.is_active);
+  const byId = new Map(list.map((w) => [w.id, w]));
   const tb = $('#tblWb tbody');
   tb.innerHTML = '';
-  for (const w of data.workbooks) {
+
+  if (!list.length) {
+    tb.innerHTML = `<tr><td colspan="5" class="muted">${
+      showOff ? '暂无模板' : '暂无在用模板（勾选「显示已下架」可查看已下架的）'}</td></tr>`;
+    return;
+  }
+
+  for (const w of list) {
     const param = w.editable_cols.length
       ? `<b>可编辑列：</b>${w.editable_cols.join('、')}`
         + (w.unique_key ? `<br><b>唯一键：</b>${escape(w.unique_key)}` : '')
@@ -45,19 +55,58 @@ async function loadWorkbooks() {
         + (w.result_options.length ? `<br><b>验收结果：</b>${w.result_options.join(' / ')}` : '')
         + (w.features.length ? `<br><b>功能：</b>${w.features.join('、')}` : '')
       : '<span class="muted">参数表未配置可编辑列</span>';
+
+    const actions = w.is_active
+      ? `<button class="btn" data-off="${w.id}">下架</button>`
+      : `<button class="btn primary" data-on="${w.id}">恢复</button>
+         <button class="btn danger" data-purge="${w.id}">彻底删除</button>`;
+
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${w.name}</td><td>${w.sheet_name}</td><td class="param-cell">${param}</td><td>${w.uploaded_at}</td>
-      <td><a class="btn" href="${withToken((window.SUP_BASE || '') + `/admin/api/workbooks/${w.id}/download`)}">下载 Excel</a>
-          <button class="btn danger" data-del="${w.id}">删除</button></td>`;
+    if (!w.is_active) tr.className = 'row-off';
+    tr.innerHTML = `<td>${escape(w.name)}${w.is_active ? '' : ' <span class="muted">（已下架）</span>'}</td>`
+      + `<td>${escape(w.sheet_name)}</td><td class="param-cell">${param}</td>`
+      + `<td>${escape(w.uploaded_at)}</td>`
+      + `<td><a class="btn" href="${withToken((window.SUP_BASE || '') + `/admin/api/workbooks/${w.id}/download`)}">下载 Excel</a>
+          ${actions}</td>`;
     tb.appendChild(tr);
   }
-  tb.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
-    if (!confirm('确认删除该模板？')) return;
-    await api(`/api/workbooks/${b.dataset.del}`, { method: 'DELETE' });
-    toast('已删除');
+
+  // 下架（软删除，C13）：名称确认 → App 端不再显示，数据与源模板全部保留
+  tb.querySelectorAll('[data-off]').forEach((b) => b.addEventListener('click', async () => {
+    const w = byId.get(Number(b.dataset.off)) || {};
+    const yes = await confirmByName(
+      '下架模板',
+      '下架后 App 端不再显示该模板，普通用户看不到也填不了。'
+      + '数据行、源 Excel、变更日志、照片全部保留，随时可以「恢复」。',
+      w.name || '', '确认下架');
+    if (!yes) return;
+    await api(`/api/workbooks/${b.dataset.off}`, { method: 'DELETE' });
+    toast('已下架：App 端不再显示');
+    await loadWorkbooks();
+  }));
+
+  // 恢复：撤销下架
+  tb.querySelectorAll('[data-on]').forEach((b) => b.addEventListener('click', async () => {
+    await api(`/api/workbooks/${b.dataset.on}/restore`, { method: 'POST' });
+    toast('已恢复：App 端重新可见');
+    await loadWorkbooks();
+  }));
+
+  // 彻底删除：不可恢复，同样要求输入名称
+  tb.querySelectorAll('[data-purge]').forEach((b) => b.addEventListener('click', async () => {
+    const w = byId.get(Number(b.dataset.purge)) || {};
+    const yes = await confirmByName(
+      '彻底删除模板',
+      '此操作不可恢复：将永久删除该模板的数据行、源 Excel、变更日志与照片同步记录。',
+      w.name || '', '永久删除');
+    if (!yes) return;
+    await api(`/api/workbooks/${b.dataset.purge}?purge=1`, { method: 'DELETE' });
+    toast('已彻底删除');
     await loadWorkbooks();
   }));
 }
+
+if ($('#chkShowOff')) $('#chkShowOff').addEventListener('change', () => loadWorkbooks().catch((e) => toast(e.message, true)));
 
 async function loadTracks() {
   const data = await api('/admin/api/tracks');
@@ -92,7 +141,51 @@ async function loadLogs() {
 }
 
 function escape(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');   // 引号也转义，才能安全用于属性
+}
+
+/* ── 危险操作确认（v0.24，C13）：要求照着输入名称才放行 ──────────────
+   比一键 confirm 稳：每次都要逐字输入，不会因为"用顺手了"而失效。
+   用自建 DOM 弹层而非 window.prompt —— Android WebView 默认不实现 onJsPrompt，
+   在手机上 window.prompt 会直接返回 null（=永远确认不了）。 */
+function confirmByName(title, hint, name, okText) {
+  return new Promise((resolve) => {
+    const mask = $('#dangerModal');
+    $('#dangerTitle').textContent = title;
+    $('#dangerHint').textContent = hint;
+    $('#dangerName').textContent = name;
+    $('#dangerOk').textContent = okText || '确认';
+    const inp = $('#dangerInput');
+    inp.value = '';
+    $('#dangerErr').textContent = '';
+    mask.classList.remove('hidden');
+    inp.focus();
+
+    const onOk = () => {
+      if (inp.value.trim() !== name) {
+        $('#dangerErr').textContent = '名称不一致，请逐字输入（区分大小写）';
+        inp.focus();
+        return;
+      }
+      done(true);
+    };
+    const onCancel = () => done(false);
+    const onKey = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); onOk(); }
+      if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+    };
+    function done(v) {
+      mask.classList.add('hidden');
+      $('#dangerOk').removeEventListener('click', onOk);
+      $('#dangerCancel').removeEventListener('click', onCancel);
+      inp.removeEventListener('keydown', onKey);
+      resolve(v);
+    }
+    $('#dangerOk').addEventListener('click', onOk);
+    $('#dangerCancel').addEventListener('click', onCancel);
+    inp.addEventListener('keydown', onKey);
+  });
 }
 
 $('#adminFile').addEventListener('change', async (e) => {

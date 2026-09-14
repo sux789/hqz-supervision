@@ -190,3 +190,23 @@ textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size
 .pwd-btns { display: flex; gap: 10px; margin-top: 2px; }
 .pwd-btns .btn { flex: 1; }
 #whoami { cursor: pointer; white-space: nowrap; text-decoration: underline dotted; text-underline-offset: 3px; }
+
+/* ── v0.24：危险操作确认弹层（C13）─────────────────────────────
+   刻意不用 window.prompt —— Android WebView 默认不实现 onJsPrompt，
+   在手机上会直接失效。改成自建 DOM 弹层，桌面/手机行为一致。 */
+.modal-mask { position: fixed; inset: 0; background: rgba(20, 26, 32, .45);
+              display: flex; align-items: center; justify-content: center; z-index: 60; padding: 16px; }
+.modal-box { background: #fff; border-radius: 12px; padding: 20px; width: min(440px, 94vw);
+             box-shadow: 0 18px 48px rgba(0, 0, 0, .22); }
+.modal-box h3 { margin: 0 0 6px; font-size: 16px; font-weight: 600; color: #26303a; }
+.modal-box p { margin: 6px 0; font-size: 13px; line-height: 1.6; color: #4a5560; }
+.modal-box input { padding: 9px 11px; border: 1px solid #d4d9de; border-radius: 6px;
+                   font-size: 15px; width: 100%; box-sizing: border-box; margin-top: 4px; }
+.modal-actions { display: flex; gap: 10px; margin-top: 14px; }
+.modal-actions .btn { flex: 1; }
+
+/* 已下架的模板行：整体压暗，一眼区分 */
+.tbl tr.row-off td { color: #9aa3ad; background: #fafbfc; }
+.tbl tr.row-off td:first-child { text-decoration: line-through; }
+.chk-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #4a5560; cursor: pointer; }
+
