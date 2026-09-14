@@ -455,6 +455,11 @@ async function exportWorkbook(id, fallbackName) {
     const tok = getToken();
     const resp = await fetch(url, tok ? { headers: { 'X-Sup-Token': tok } } : {});
     if (!resp.ok) throw new Error('服务端返回 ' + resp.status);
+    const ctype = resp.headers.get('Content-Type') || '';
+    // 网关/登录页拦截时会返回 HTML（线上首次或会话失效），必须识别出来，别存成假的 xlsx
+    if (!/spreadsheet|octet-stream/i.test(ctype)) {
+      throw new Error(ctype.includes('html') ? '登录状态失效，请重新登录后再导出' : ('返回类型异常：' + ctype));
+    }
     const blob = await resp.blob();
     if (!blob.size) throw new Error('文件为空');
     // 文件名优先取服务端 Content-Disposition（含中文、带"导出"后缀）
