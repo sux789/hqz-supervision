@@ -29,7 +29,8 @@
       </table>
     </section>
 
-    <section class="card">
+    <!-- v0.22：按用户要求暂时停用「用户管理」卡片（后端接口与数据保留，删掉这段注释即可恢复）
+<section class="card">
       <h2>用户管理</h2>
       <p class="muted">
         管理员可为**他人重置密码**（无需原密码）。被重置的人下次使用需用新密码登录；
@@ -41,6 +42,7 @@
       </table>
       <div id="usersMsg" class="err"></div>
     </section>
+-->
 
     <section class="card">
       <h2>轨迹下载</h2>
@@ -104,7 +106,8 @@
       <p class="muted">清晰度档位参考：验收 1080p/4000k（默认，约 30MB/分钟）；弱网省流量 720p/1500k；看细节 1080p/8000k。</p>
     </section>
 
-    <section class="card">
+    <!-- v0.22：按用户要求暂时停用「云同步」卡片（后端接口与数据保留，删掉这段注释即可恢复）
+<section class="card">
       <h2>云同步（照片 → 七牛暂存 → 百度网盘）</h2>
       <p class="muted">
         仅决定**照片是否上云**（视频不上云）：App 拍照 → 服务器中转 → 七牛 zz-1 暂存 → 百度网盘
@@ -138,6 +141,7 @@
         <tbody></tbody>
       </table>
     </section>
+-->
 
     <section class="card">
       <h2>验收变更日志</h2>
@@ -151,6 +155,6 @@
 
   <div id="toast" class="toast hidden"></div>
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
-  <script src="{{ url_for('static', filename='admin.js') }}?v=0.21"></script>
+  <script src="{{ url_for('static', filename='admin.js') }}?v=0.22"></script>
 </body>
 </html>

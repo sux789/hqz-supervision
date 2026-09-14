@@ -17,6 +17,13 @@ function withToken(url) {
   return t ? url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(t) : url;
 }
 
+/* v0.22：云同步 / 用户管理 两张卡片被临时注释掉后，对应 DOM 不存在；
+   用 on() 包一层，元素缺失就跳过，避免整个后台脚本在空元素上报错。 */
+function on(sel, ev, fn) {
+  const el = $(sel);
+  if (el) el.addEventListener(ev, fn);
+}
+
 async function api(url, opt) {
   const tok = getToken();
   if (tok) { opt = opt || {}; opt.headers = Object.assign({}, opt.headers || {}, { 'X-Sup-Token': tok }); }
@@ -115,6 +122,7 @@ function fmtTokenExp(ts) {
 }
 
 async function loadSyncSettings() {
+  if (!$('#syncQiniuAk')) return;          // 卡片被注释掉 → 直接返回
   const data = await api('/admin/api/sync/settings');
   const s = data.settings;
   $('#syncEnabled').checked = s.sync_enabled === '1';
@@ -144,6 +152,7 @@ async function loadSyncSettings() {
 }
 
 async function loadSyncStatus() {
+  if (!$('#syncCounts')) return;           // 卡片被注释掉 → 直接返回
   const data = await api('/admin/api/sync/status');
   const c = data.counts || {};
   const order = ['received', 'qiniu_ok', 'baidu_ok'];
@@ -211,7 +220,7 @@ $('#btnVideoSave').addEventListener('click', () => saveSettings({
   video_ffmpeg: $('#vFfmpeg').value,
 }, $('#videoMsg')));
 
-$('#btnSyncSave').addEventListener('click', async () => {
+on('#btnSyncSave', 'click', async () => {
   const settings = {
     sync_enabled: $('#syncEnabled').checked ? '1' : '0',
     sync_qiniu_ak: $('#syncQiniuAk').value,
@@ -242,7 +251,7 @@ $('#btnSyncSave').addEventListener('click', async () => {
   }
 });
 
-$('#btnSyncRetry').addEventListener('click', async () => {
+on('#btnSyncRetry', 'click', async () => {
   try {
     const r = await api('/admin/api/sync/retry', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
@@ -254,6 +263,7 @@ $('#btnSyncRetry').addEventListener('click', async () => {
 
 /* ── 用户管理（v0.21）：管理员重置他人密码 ── */
 async function loadUsers() {
+  if (!$('#tblUsers')) return;             // 卡片被注释掉 → 直接返回
   const data = await api('/admin/api/users');
   const tb = $('#tblUsers tbody');
   tb.innerHTML = '';
@@ -285,7 +295,7 @@ async function loadUsers() {
   });
 }
 
-$('#btnSyncRefresh').addEventListener('click', () => loadSyncStatus().catch((e) => toast(e.message, true)));
+on('#btnSyncRefresh', 'click', () => loadSyncStatus().catch((e) => toast(e.message, true)));
 
 $('#btnLogout').addEventListener('click', async () => {
   await api('/api/logout', { method: 'POST' }).catch(() => {});
@@ -295,6 +305,6 @@ $('#btnLogout').addEventListener('click', async () => {
 loadWorkbooks().catch((e) => toast(e.message, true));
 loadTracks().catch(() => {});
 loadLogs().catch(() => {});
-loadSyncSettings().catch(() => {});
-loadUsers().catch(() => {});
-loadSyncStatus().catch(() => {});
+if ($('#syncQiniuAk')) loadSyncSettings().catch(() => {});     // 云同步卡片被注释则跳过
+if ($('#tblUsers')) loadUsers().catch(() => {});               // 用户管理卡片被注释则跳过
+if ($('#syncCounts')) loadSyncStatus().catch(() => {});

@@ -193,7 +193,7 @@ async function loadList() {
     // 列表页直接导出（按上传模板回填）；阻止冒泡避免触发「打开」
     n.querySelector('.wb-export').addEventListener('click', (e) => {
       e.stopPropagation();
-      window.open(withToken((window.SUP_BASE || '') + `/api/workbooks/${w.id}/export`), '_blank');
+      exportWorkbook(w.id, `${w.name.replace(/\.xls[xm]$/i, '')}_导出.xlsx`);
     });
     box.appendChild(n);
   }
@@ -442,9 +442,52 @@ function renderForm() {
 }
 
 /* ── 导出 Excel（按上传模板回填） ── */
+/* ── 导出 Excel（v0.22）：**不能用 window.open** ──
+   App 壳里强制"所有导航留在 WebView 内"（MainActivity 覆写 shouldOverrideUrlLoading），
+   而 WebView 没有下载能力 → 点导出静默无反应（2026-09-14 实机反馈）。
+   改为：fetch 取文件流 → 原生 saveFile 落到「下载/验收导出」（mime xlsx 正确）→
+   浏览器环境回退 <a download>。 */
+async function exportWorkbook(id, fallbackName) {
+  if (!id) { toast('请先选择工作簿', true); return; }
+  toast('正在生成 Excel…');
+  try {
+    const url = withToken((window.SUP_BASE || '') + `/api/workbooks/${id}/export`);
+    const tok = getToken();
+    const resp = await fetch(url, tok ? { headers: { 'X-Sup-Token': tok } } : {});
+    if (!resp.ok) throw new Error('服务端返回 ' + resp.status);
+    const blob = await resp.blob();
+    if (!blob.size) throw new Error('文件为空');
+    // 文件名优先取服务端 Content-Disposition（含中文、带"导出"后缀）
+    let fname = fallbackName || '导出.xlsx';
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const m = /filename\*=UTF-8''([^;]+)/i.exec(cd) || /filename="?([^";]+)"?/i.exec(cd);
+    if (m) {
+      try { fname = decodeURIComponent(m[1].trim()); } catch (e) { fname = m[1].trim(); }
+    }
+    if (!/\.xls[xm]$/i.test(fname)) fname += '.xlsx';
+    const plugin = nativePlugin();
+    if (plugin && typeof plugin.saveFile === 'function') {
+      const b64 = await blobToBase64(blob);
+      const r = await plugin.saveFile({ base64: b64, name: fname });
+      toast(`已保存：${(r && r.path) || ('下载/验收导出/' + fname)}`);
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast('已下载：' + fname);
+  } catch (err) {
+    toast('导出失败：' + err.message, true);
+  }
+}
+
 $('#btnExport').addEventListener('click', () => {
   if (!cur) return;
-  window.open(withToken((window.SUP_BASE || '') + `/api/workbooks/${cur.id}/export`), '_blank');
+  exportWorkbook(cur.id, `${cur.name.replace(/\.xls[xm]$/i, '')}_导出.xlsx`);
 });
 
 /* 解析下拉选项键：形如「XX选项」且 XX 是真实表头列（排除「搜索选项」控件映射键）。
