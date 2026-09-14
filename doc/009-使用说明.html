@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>监督验收 App 使用说明</title>
+<style>
+  :root { --green:#206538; --ink:#1f2933; --muted:#5f6b76; --line:#dfe4e8; --bg:#f6f8f7; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font: 15px/1.75 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .sheet { max-width: 820px; margin: 0 auto; background:#fff; padding: 40px 48px 56px;
+           box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  h1 { font-size: 26px; margin: 0 0 6px; color: var(--green); letter-spacing:.5px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 26px;
+          padding-bottom: 16px; border-bottom: 2px solid var(--green); }
+  h2 { font-size: 18px; margin: 32px 0 10px; padding-left: 10px; border-left: 4px solid var(--green); }
+  h3 { font-size: 15.5px; margin: 20px 0 6px; color:#123a24; }
+  p, li { margin: 6px 0; }
+  ul, ol { padding-left: 22px; margin: 8px 0; }
+  code { background:#eef2ee; color:#1d4d33; padding:1px 6px; border-radius:4px;
+         font-family: ui-monospace, Menlo, monospace; font-size: 13.5px; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0 16px; font-size: 14px; }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background:#f0f4f1; font-weight: 600; }
+  .tip { background:#f2f8f3; border-left: 4px solid var(--green); padding: 10px 14px; margin: 12px 0; border-radius: 0 6px 6px 0; }
+  .warn { background:#fff8e6; border-left: 4px solid #d89b1a; padding: 10px 14px; margin: 12px 0; border-radius: 0 6px 6px 0; }
+  a { color: #185FA5; word-break: break-all; }
+  .big { font-size: 16px; font-weight: 600; }
+  footer { margin-top: 34px; padding-top: 14px; border-top: 1px solid var(--line);
+           color: var(--muted); font-size: 12.5px; }
+  @media print { body { background:#fff; } .sheet { box-shadow:none; padding: 0 8mm; max-width:none; } }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <h1>监督验收 App 使用说明</h1>
+  <div class="meta">适用范围：中幼林抚育验收（网格填表 + 拍照 / 录像 / 轨迹留证）　·　版本 App v0.20 / 服务端 v0.20　·　更新 2026-09-14</div>
+
+  <h2>一、安装</h2>
+  <p class="big">下载地址：<a href="https://www.pgyer.com/hqz-sp08">https://www.pgyer.com/hqz-sp08</a></p>
+  <ul>
+    <li>打开页面点「安装」；若提示"未知来源 / 风险提示"，选择继续安装即可</li>
+    <li>备用直链（始终指向最新版）：<a href="https://forest.bibook.top/supervision/apk">https://forest.bibook.top/supervision/apk</a></li>
+    <li>首次进入 App 请<b>全部允许</b>：<b>相机</b>、<b>麦克风</b>、<b>定位</b>、<b>通知</b>；系统问"是否允许后台运行"时选 <b>允许</b></li>
+  </ul>
+
+  <h2>二、登录</h2>
+  <table>
+    <tr><th>姓名（登录用户名）</th><th>密码</th><th>备注</th></tr>
+    <tr><td>尹学章</td><td><code>yxz123</code></td><td></td></tr>
+    <tr><td>杨磊</td><td><code>yl123</code></td><td></td></tr>
+    <tr><td>何明星</td><td><code>hmx123</code></td><td></td></tr>
+    <tr><td>赵强</td><td><code>zq123</code></td><td></td></tr>
+    <tr><td>苏正鹏</td><td><code>szp123</code></td><td>可进后台管理</td></tr>
+    <tr><td>雷华雄</td><td><code>lhx123</code></td><td>可进后台管理</td></tr>
+  </table>
+  <div class="tip"><b>规则：用户名 = 本人汉字姓名；密码 = 姓名小写首字母 + 123。</b>登录状态长期保留，不必每次登录。</div>
+
+  <h2>三、日常操作</h2>
+
+  <h3>1. 选小班</h3>
+  <p>打开工作簿 → 顶部搜索框输入或点选<b>小班号</b> → 进入该小班填写页。</p>
+
+  <h3>2. 填表</h3>
+  <p>点单元格直接修改，<b>自动保存</b>（右上角显示"✓ 已保存"）。</p>
+
+  <h3>3. 验收结果（自动填验收人 / 时间）</h3>
+  <p><b>点一下</b>「验收结果」单元格 → 弹出选项 → 选 <b>合格</b> 或 <b>不合格</b>：</p>
+  <ul>
+    <li>自动填写 <b>验收人 = 当前登录人</b>、<b>验收日期 = 今天</b></li>
+    <li>选<b>空白</b>（视为未验收）→ 验收人 / 验收日期 / 验收备注<b>一并清空</b></li>
+  </ul>
+
+  <h3>4. 拍照（📷 拍照）</h3>
+  <ul>
+    <li>自动加<b>时间水印</b>（时间 / 坐标 / 备注）后存到手机相册：<code>Pictures/{目录}/</code></li>
+    <li><b>是否上传网盘由后台设置决定</b>，当前默认<b>开启</b>——照片经服务器中转同步到网盘（目录结构与手机相册一致）</li>
+    <li>App 内「拍摄记录」只显示<b>文件名与位置</b>，不预览大图（避免卡顿）</li>
+  </ul>
+
+  <h3>5. 录像（🎬 视频）</h3>
+  <ul>
+    <li>点按钮 → 调<b>系统相机</b>录像 → 录完确认 → <b>自动压缩</b>并保存到相册同一目录，文件名带 <code>_视频</code></li>
+    <li><b>视频只存手机本机，不上传网盘</b></li>
+    <li>录完会提示压缩效果，例如 <code>（已压缩 46.1MB → 8.2MB）</code></li>
+  </ul>
+
+  <h3>6. 轨迹（◎ 轨迹）</h3>
+  <ul>
+    <li>点一下开始记录（通知栏出现「轨迹记录中」），<b>再点一次停止并上传</b></li>
+    <li><b>只记录 GPS 卫星定位</b>（不采集网络 / WiFi 定位），坐标与 ArcGIS 底图一致</li>
+    <li>记录中若<b>切换小班 / 开始录像 / 返回列表</b>，会自动停止并保存上一段轨迹</li>
+    <li>上传后管理员可在后台「轨迹下载」按小班分文件夹下载（含 shapefile，ArcGIS 直接打开）</li>
+  </ul>
+  <div class="warn"><b>轨迹要在息屏后继续记录，必须允许"后台运行"权限</b>——详见第五节。</div>
+
+  <h3>7. 导出</h3>
+  <p>详情页右上角「⬇ 导出」→ 按上传的原始模板导出 Excel（格式与模板完全一致）。</p>
+
+  <h2>四、后台设置（仅管理员：苏正鹏 / 雷华雄）</h2>
+  <p>后台地址：<a href="https://forest.bibook.top/supervision/admin">https://forest.bibook.top/supervision/admin</a>（三块设置互相独立）</p>
+  <table>
+    <tr><th>板块</th><th>作用</th></tr>
+    <tr><td>图片压缩（手机端）</td><td>照片压缩的长边与质量；工作簿参数表里没配时用这里的默认值</td></tr>
+    <tr><td>视频压缩（手机端录制 + 原生转码）</td><td>相机录制质量、转码分辨率 / 码率、单段最长时长等</td></tr>
+    <tr><td>云同步（照片 → 七牛 → 百度网盘）</td><td>只决定<b>照片是否上传网盘</b>，与压缩无关</td></tr>
+  </table>
+  <p><b>当前默认值</b></p>
+  <ul>
+    <li>照片：最长边 <b>1440px</b>、质量 <b>0.8</b> → 通常压到原图的 <b>1/10 ~ 1/25</b>（多数手机照片约 1/20）</li>
+    <li>视频：<b>1080p / 4000kbps</b> → 约为相机原片的 <b>1/3 ~ 1/5</b>；想更省流量可改 720p / 1500kbps（约 1/10）</li>
+    <li>云同步：<b>开启</b>（照片上云；视频不上云）</li>
+  </ul>
+
+  <h2>五、权限设置（重要）</h2>
+  <p><b>轨迹 / 录像要在息屏后继续，必须让系统允许"后台运行"：</b></p>
+  <ol>
+    <li>首次进入 App 时系统会弹「允许后台运行 / 忽略电池优化」→ 点 <b>允许</b></li>
+    <li>华为机型额外设置：<b>手机管家 → 应用启动管理 → 监督验收</b> → 改为<b>手动管理</b>，并把「自启动 / 关联启动 / 后台活动」<b>三项全部打开</b></li>
+    <li>通知权限必须允许（前台服务靠通知常驻；通知栏出现「轨迹记录中」= 正常运行中）</li>
+  </ol>
+
+  <h2>六、常见问题</h2>
+  <table>
+    <tr><th>现象</th><th>处理</th></tr>
+    <tr><td>息屏后轨迹没继续记录</td><td>检查第五节"后台运行"设置；确认定位权限已允许</td></tr>
+    <tr><td>轨迹没有点 / 点数很少</td><td>纯 GPS 记录，密林或室内冷启动可能 30 秒~几分钟不出点；走到开阔处即恢复（宁可空白也不记偏点）</td></tr>
+    <tr><td>拍的照片找不到</td><td>相册 → <code>Pictures/{目录}/</code></td></tr>
+    <tr><td>录像后回到列表 / 文件名没记上</td><td>请安装<b>最新版 App</b>（v0.17 起已修复）</td></tr>
+    <tr><td>又要求登录</td><td>令牌有效期 180 天，重登一次即可</td></tr>
+  </table>
+
+  <h2>七、技术支持</h2>
+  <p>遇到问题请把<b>操作步骤 + 屏幕提示文字</b>（最好附截图）发给管理员，便于快速定位。</p>
+
+  <footer>监督验收 App · 使用说明 · 2026-09-14 · 本页可直接打印或转发</footer>
+</div>
+</body>
+</html>

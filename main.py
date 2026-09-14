@@ -818,6 +818,15 @@ def apk_latest():
                      mimetype='application/vnd.android.package-archive')
 
 
+@bp.route('/guide')
+def guide():
+    """使用说明在线版（手机可直接打开/转发；不含账号密码表）。"""
+    f = BASE / 'static' / 'guide.html'
+    if not f.exists():
+        abort(404)
+    return send_file(f)
+
+
 # ────────────────────────── 后台：同步设置与状态（doc/007 §5/§7） ──────────────────────────
 
 _SYNC_EDITABLE = (set(sync_cloud.SYNC_DEFAULTS) | set(sync_cloud.VIDEO_DEFAULTS)
