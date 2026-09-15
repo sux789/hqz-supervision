@@ -1,8 +1,10 @@
 # hqz-supervision 长期记忆
 
-- **当前线上版本 v0.23.1（2026-09-14 23:14 部署）**：https://forest.bibook.top/supervision 。部署前备份线上代码到 `/home/www/bibook_deploy/backups/supervision_<时间戳>.tar.gz`（回滚用）。部署走 `./deploy.sh`（rsync 代码 + 重启 gateway，**不碰数据库**）。
-- **C12 多应用同域跳转铁律（v0.23.1）**：本项目与 survey/cam/forest 等**共用域名 forest.bibook.top，靠 gateway 按前缀分发**。应用内一切跳转/回退/下载地址**必须**用 `window.SUP_BASE`（= Flask 注入的 `request.script_root`，如 `/supervision`）锚定本应用，**禁止硬编码 `'/'` 或裸路径**——`'/'` 是网关首页（所有应用入口），用户会被丢进别的应用、再拿本应用账号反复试密码。2026-09-14 何明星「退出」即踩此坑（`app.js:129`/`admin.js:303` 已修）。
+- **当前线上版本 v0.24（2026-09-14 深夜 部署）**：https://forest.bibook.top/supervision 。部署前备份线上代码到 `/home/www/bibook_deploy/backups/supervision_<时间戳>.tar.gz`（回滚用）。部署走 `./deploy.sh`（rsync 代码 + 重启 gateway，**不碰数据库**）。
+- **C13 可见性与权限必须分开（v0.24）**：①**「下架」= 软删除**（`workbooks.is_active=0`）：只让 App/user 端看不见、不能操作（列表不列 + 读/写/导出/拍照/录像一律 403），数据/源 Excel/日志/照片全保留，管理员放行，可 `POST /api/workbooks/<id>/restore` 上架；彻底删除只走 `DELETE ?purge=1`，且只暴露在已下架列表里。②**前端隐藏一律不是权限**，边界只在服务端 `@login_required`/`@admin_required`；**禁止**用 URL 参数（如 `?showdel=1`）当权限或"危险模式"开关（会因存书签而常开、随链接扩散、被后来人误当权限＝假安全）。③**不可逆操作必须要求照着输入对象名称确认**，且用**自建 DOM 弹层**而非 `window.prompt`（Android WebView 默认不实现 `onJsPrompt`，手机上会失效）。④**标志位为 0 时禁止写在 `or` 左侧**（`int(r['a'] or 1)` 会把 0 吃成 1，守卫永久失效）。
+- **C12 多应用同域跳转铁律（v0.23.1）**：本项目与 survey/cam/forest 等**共用域名 forest.bibook.top，靠 gateway 按前缀分发**。应用内一切跳转/回退/下载地址**必须**用 `window.SUP_BASE`（= Flask 注入的 `request.script_root`，如 `/supervision`）锚定本应用，**禁止硬编码 `'/'` 或裸路径**——`'/'` 是网关首页（所有应用入口），用户会被丢进别的应用、再拿本应用账号反复试密码。2026-09-14 何明星「退出」即踩此坑。
 - **排查"登录不上"的方法论（务必先做）**：**先看访问日志有没有失败的登录请求**（`grep "POST /supervision/api/login" access.log`）。一条失败都没有 ⇒ 请求根本没到服务器 ⇒ 问题在客户端/落点/缓存，**不在鉴权**，不要去改密码或翻鉴权代码。日志路径 `/home/www/bibook_deploy/apps/gateway/logs/access.log`。
+- **写测试的两条硬规矩（踩过）**：①**多身份必须各用独立 `test_client`**——`auth_user()` 优先读 session，同一 client 先后登录管理员与普通用户会让后者覆盖前者（表现为"管理员被判 403"）。②**不要写死模板文件名与期望结果**——用户会改名/增删模板；改为从 `data/*.xlsx` 自动发现 + 期望从文件内容独立推断，缺依赖标 `SKIP`。
 - **gateway 部署事实**：应用进程内挂载在 `/home/www/bibook_deploy/apps/gateway`（gunicorn:8090 + Werkzeug DispatcherMiddleware 按 `.appspec` 前缀剥离分发），`.appspec` 里 `auth: global`。
 - 定位（v0.2 修正）：通用 Excel 网格填表工具——上传多个 xlsx 选择进入，无样地/GDB/调查业务，行为全由参数 sheet 驱动；不影响 hqz-survey 线上，独立 appId 不重复。
 - 核心契约（C01/C02）：数据 sheet 行为一律由「参数」sheet 驱动，禁硬编码；参数语法固定——表头 key|value|类型|默认值|说明|示例，多值 `;`、子字段 `|`、目录 `/`、文件名段 `_`、占位符 `{{列名}}/{{sheet名称}}/{{时间}}`，未知 key/全角分隔符/占位符列名不匹配必须带行号报错。
