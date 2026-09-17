@@ -545,6 +545,145 @@ else:
             r3 = ca.get('/admin')
             ok('E16 管理员访问 /admin → 200', r3.status_code == 200, f'HTTP {r3.status_code}')
 
+# ── F. 更新 Excel（按唯一键合并，保留原 id）+ 回滚（v0.26）──
+print('\n=== F. 更新 Excel：按唯一键合并 / 保留 id / 可回滚 ===')
+if BASE_TPL is None:
+    skip('F', '无可用基底模板')
+else:
+    fbase = tmp / 'upd-base.xlsx'
+    shutil.copy(BASE_TPL, fbase)
+    rr = upload(fbase, 'upd-base.xlsx')
+    jj = rr.get_json() or {}
+    wid = jj.get('id')
+    ok('F1 上传基底工作簿', rr.status_code == 200 and bool(wid), f'HTTP {rr.status_code} {jj}')
+
+    if wid:
+        d0 = ca.get(f'/api/workbooks/{wid}', headers=HA).get_json()
+        H0, R0 = d0['headers'], d0['rows']
+        KEY = H0.index('小班号')
+        AREA = H0.index('小班面积') if '小班面积' in H0 else None
+        BZ = H0.index('验收备注') if '验收备注' in H0 else None
+        k0, k1, k2 = R0[0][KEY], R0[1][KEY], R0[2][KEY]
+
+        # 模拟"App 里填了一半"
+        if BZ is not None:
+            for idx in (0, 1):
+                row = list(R0[idx])
+                row[BZ] = '人工填的备注' if idx == 0 else '待复核'
+                ca.post(f'/api/workbooks/{wid}/rows/{idx}', json={'values': row}, headers=HA)
+            ok('F2 模拟 App 填写两行', True, f'行0={R0[0][KEY]} 行1={R0[1][KEY]}')
+
+            # 新 Excel：参数加「导出筛选」+ 改小班面积 + 加列 + 加新行 + 删一行 + 试图覆盖人工填写
+            fnew = tmp / 'upd-new.xlsx'
+            shutil.copy(BASE_TPL, fnew)
+            wb = openpyxl.load_workbook(fnew)
+            ws = wb[data_sheet_of(wb)]
+            hs = [_txt(c.value) for c in next(ws.iter_rows(max_row=1))]
+            col = lambda n: hs.index(n) + 1
+            drop_unique_key(wb)
+            wsp = wb['参数']
+            wsp.cell(wsp.max_row + 1, 1).value = '导出筛选'
+            wsp.cell(wsp.max_row, 2).value = '标段|select'
+            if AREA is not None and '小班面积' in hs:
+                ws.cell(2, col('小班面积')).value = 999.99
+            if BZ is not None and '验收备注' in hs:
+                ws.cell(2, col('验收备注')).value = '新表想覆盖'
+            nc = ws.max_column + 1
+            ws.cell(1, nc).value = '新增列'
+            for r_ in range(2, ws.max_row + 1):
+                ws.cell(r_, nc).value = f'新增-{r_ - 1}'
+            if ws.max_row >= 4:
+                ws.delete_rows(4)                     # 删掉第 3 行 → 测"仅旧数据保留"
+            ws.append(['占位'])
+            ws.cell(ws.max_row, col('小班号')).value = 'UPD-NEW-001'
+            wb.save(fnew)
+            wb.close()
+
+            def do_update(dry, confirm=None):
+                with open(fnew, 'rb') as fh:
+                    data = {'file': (fh, 'upd-new.xlsx')}
+                    if confirm is not None:
+                        data['confirm'] = confirm
+                    return ca.post(f'/api/workbooks/{wid}/update' + ('?dry=1' if dry else ''),
+                                   data=data, headers=HA, content_type='multipart/form-data')
+
+            pv = do_update(True)
+            s = (pv.get_json() or {}).get('preview', {})
+            ok('F3 dry=1 返回统计', pv.status_code == 200 and bool(s), str(s)[:90])
+            ok('F4 预览：匹配 / 仅旧保留 / 新增 都识别到',
+               s.get('matched', 0) >= 1 and s.get('kept_old_only', 0) >= 1 and s.get('added') == 1,
+               f"matched={s.get('matched')} kept={s.get('kept_old_only')} added={s.get('added')}")
+            ok('F5 预览识别新增列', s.get('new_only_cols') == ['新增列'], str(s.get('new_only_cols')))
+            ok('F6 dry 不落库（行数未变）',
+               len(ca.get(f'/api/workbooks/{wid}', headers=HA).get_json()['rows']) == len(R0))
+            ok('F7 dry 不写备份', all(not w['can_rollback'] for w in
+                                     (ca.get('/admin/api/workbooks', headers=HA).get_json() or {})
+                                     .get('workbooks', []) if w['id'] == wid))
+
+            bad = do_update(False, confirm='错的名字')
+            ok('F8 确认名称不符 → 400', bad.status_code == 400,
+               str((bad.get_json() or {}).get('error'))[:60])
+            good = do_update(False, confirm='upd-base.xlsx')
+            g = good.get_json() or {}
+            ok('F9 名称相符 → 更新成功', good.status_code == 200 and g.get('updated'),
+               f'HTTP {good.status_code}')
+
+            d1 = ca.get(f'/api/workbooks/{wid}', headers=HA).get_json()
+            H1, R1 = d1['headers'], d1['rows']
+            ok('F10 工作簿编号不变（变更日志/下架状态不断链）', d1['id'] == wid, str(d1['id']))
+            ok('F11 文件名换成新 Excel 的名字', d1['name'] == 'upd-new.xlsx', d1['name'])
+            ok('F12 参数变更生效（多了导出筛选）',
+               d1['config'].get('导出筛选') == '标段|select', repr(d1['config'].get('导出筛选')))
+            ok('F13 表头含新增列', '新增列' in H1, str(H1[-2:]))
+            ok('F14 行数 = 原 + 1（新增行追加；被删的行保留）', len(R1) == len(R0) + 1,
+               f'{len(R0)} → {len(R1)}')
+            ok('F15 老行原位（前两行唯一键未变）',
+               R1[0][H1.index('小班号')] == k0 and R1[1][H1.index('小班号')] == k1)
+            ok('F16 新表删掉的那行仍在（仅旧数据保留）',
+               R1[2][H1.index('小班号')] == k2, str(R1[2][H1.index('小班号')]))
+            ok('F17 新行追加到末尾', R1[-1][H1.index('小班号')] == 'UPD-NEW-001',
+               str(R1[-1][H1.index('小班号')]))
+            if BZ is not None:
+                ok('F18 ★ 人工填的验收备注未被新表覆盖',
+                   R1[0][H1.index('验收备注')] == '人工填的备注',
+                   repr(R1[0][H1.index('验收备注')]))
+                ok('F19 第 2 行的人工备注保留', R1[1][H1.index('验收备注')] == '待复核')
+            if AREA is not None:
+                ok('F20 ★ 非可编辑列以新表为准（改小班面积生效）',
+                   float(R1[0][H1.index('小班面积')]) == 999.99, repr(R1[0][H1.index('小班面积')]))
+            ok('F21 新增列取值来自新表', R1[0][H1.index('新增列')] == '新增-1',
+               repr(R1[0][H1.index('新增列')]))
+
+            # 导出应改用新的源模板（含「导出筛选」）
+            rb = ca.get(f'/api/workbooks/{wid}/export', headers=HA)
+            wbx = openpyxl.load_workbook(io.BytesIO(rb.data))
+            has_f = any(_txt(wbx['参数'].cell(r_, 1).value) == '导出筛选'
+                        for r_ in range(1, wbx['参数'].max_row + 1))
+            ok('F22 导出的源模板已换成新的（含导出筛选）', has_f)
+            wbx.close()
+
+            ok('F23 admin_list 标记可回滚',
+               any(w['id'] == wid and w['can_rollback'] for w in
+                   (ca.get('/admin/api/workbooks', headers=HA).get_json() or {}).get('workbooks', [])))
+            ok('F24 回滚名称不符 → 400',
+               ca.post(f'/api/workbooks/{wid}/rollback', json={'confirm': 'x'},
+                       headers=HA).status_code == 400)
+            rbr = ca.post(f'/api/workbooks/{wid}/rollback',
+                          json={'confirm': 'upd-new.xlsx'}, headers=HA)
+            ok('F25 回滚成功', rbr.status_code == 200 and (rbr.get_json() or {}).get('rolled_back'),
+               str(rbr.get_json())[:80])
+            d2 = ca.get(f'/api/workbooks/{wid}', headers=HA).get_json()
+            ok('F26 回滚后文件名/行数/表头/参数全部还原',
+               d2['name'] == 'upd-base.xlsx' and len(d2['rows']) == len(R0)
+               and '新增列' not in d2['headers'] and not d2['config'].get('导出筛选'),
+               f"{d2['name']} rows={len(d2['rows'])}")
+            if BZ is not None:
+                ok('F27 回滚后人工填写仍在',
+                   d2['rows'][0][d2['headers'].index('验收备注')] == '人工填的备注')
+            ok('F28 备份已消耗（不能再回滚）',
+               ca.post(f'/api/workbooks/{wid}/rollback', json={'confirm': 'upd-base.xlsx'},
+                       headers=HA).status_code == 400)
+
 # ── 清理本次测试新建的工作簿（彻底删除，含源模板目录）──────
 print('\n=== 清理测试数据 ===')
 for _wid in sorted(set(CREATED)):

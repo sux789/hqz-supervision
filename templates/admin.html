@@ -195,7 +195,38 @@
     </div>
   </div>
 
+  <!-- v0.26：「更新 Excel」—— 按唯一键把新 Excel 合并进**当前工作簿**
+       （保留工作簿编号 → 变更日志、下架状态、App 使用习惯都不受影响）
+       两步走：先「预览变更」看统计，再输入工作簿名称确认才写库；写库前自动备份，可回滚。 -->
+  <div id="updateModal" class="modal-mask hidden">
+    <div class="modal-box wide">
+      <h3 id="updTitle">更新 Excel</h3>
+      <p class="muted">
+        用新 Excel <b>更新当前工作簿</b>（工作簿编号不变，变更日志与下架状态都不受影响）。
+        按唯一键把两边同一行合并：<b>人工填过的列（可编辑列）保留原值</b>，其余列以新 Excel 为准。
+        新 Excel 里没有的行会保留，多出来的行追加到末尾。
+      </p>
+      <label>选择新 Excel
+        <input type="file" id="updFile" accept=".xlsx,.xlsm">
+      </label>
+      <div class="btnrow">
+        <button id="updPreviewBtn" class="btn">预览变更</button>
+        <span class="muted">先预览，确认统计无误再提交</span>
+      </div>
+      <div id="updPreview"></div>
+      <label>输入当前工作簿名称以确认
+        <input id="updInput" autocomplete="off" spellcheck="false" placeholder="逐字输入，区分大小写">
+      </label>
+      <div id="updErr" class="err"></div>
+      <div class="modal-actions">
+        <button id="updCancel" class="btn">取消</button>
+        <button id="updRollback" class="btn hidden">回滚到更新前</button>
+        <button id="updRun" class="btn primary" disabled>确认更新</button>
+      </div>
+    </div>
+  </div>
+
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
-  <script src="{{ url_for('static', filename='admin.js') }}?v=0.25"></script>
+  <script src="{{ url_for('static', filename='admin.js') }}?v=0.26"></script>
 </body>
 </html>

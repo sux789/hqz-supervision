@@ -67,6 +67,7 @@ async function loadWorkbooks() {
       + `<td>${escape(w.sheet_name)}</td><td class="param-cell">${param}</td>`
       + `<td>${escape(w.uploaded_at)}</td>`
       + `<td><button class="btn" data-dl="${w.id}">下载 Excel</button>
+          <button class="btn" data-upd="${w.id}">更新 Excel</button>
           ${actions}</td>`;
     tb.appendChild(tr);
   }
@@ -75,6 +76,12 @@ async function loadWorkbooks() {
   tb.querySelectorAll('[data-dl]').forEach((b) => b.addEventListener('click', () => {
     const w = byId.get(Number(b.dataset.dl)) || {};
     openFilterDialog(Number(b.dataset.dl), w.name || '').catch((e) => toast(e.message, true));
+  }));
+
+  // 更新 Excel（v0.26）：按唯一键把新 Excel 合并进当前工作簿
+  tb.querySelectorAll('[data-upd]').forEach((b) => b.addEventListener('click', () => {
+    const w = byId.get(Number(b.dataset.upd)) || {};
+    openUpdateDialog(Number(b.dataset.upd), w.name || '', !!w.can_rollback);
   }));
 
   // 下架（软删除，C13）：名称确认 → App 端不再显示，数据与源模板全部保留
@@ -250,6 +257,122 @@ async function openFilterDialog(wid, name) {
   $('#filterOk').onclick = () => go(true);
   $('#filterAll').onclick = () => go(false);
   $('#filterCancel').onclick = () => mask.classList.add('hidden');
+}
+
+/* ── 更新 Excel（v0.26）──────────────────────────────────────────────
+   场景：工作簿填到一半，此时要改模板（加「导出筛选」、改「目录」、加列、修正原始数据）。
+   原做法只能重新上传 → 会**新建**一个工作簿，已填数据成孤儿、变更日志与下架状态断链。
+   这里按唯一键合并进**当前工作簿**（id 不变）。
+   两步走：先「预览变更」看统计，再输入工作簿名称确认才写库（C13 的确认规矩）。
+   写库前后端自动备份，弹框里可一键回滚。 */
+function updStatsHtml(s) {
+  const rows = [
+    ['匹配并按规则合并', `${s.matched} 行`, '人工填过的列保留原值；其余列以新 Excel 为准'],
+    ['新 Excel 新增', `${s.added} 行`, '追加到数据末尾'],
+    ['仅当前数据有（新表没有）', `${s.kept_old_only} 行`, '保留，不删'],
+    ['被保住的冲突格子', `${s.conflicts} 个`, '新 Excel 同格有不同值，但旧值是人工填的 → 按规则保留旧值'],
+    ['数据行数', `${s.old_row_count} → ${s.result_row_count}`, `新 Excel 有 ${s.new_row_count} 行`],
+    ['列数', `${s.old_col_count} → ${s.new_col_count}`, '按列名对齐，列可增删、可换序'],
+  ];
+  if ((s.new_only_cols || []).length) {
+    rows.push(['新增的列', s.new_only_cols.join('、'), '老行这些列取新 Excel 的值']);
+  }
+  if ((s.old_only_cols || []).length) {
+    rows.push(['被删掉的列', s.old_only_cols.join('、'), `这些列的数据会丢（其中有值格 ${s.dropped_nonempty} 个）`]);
+  }
+  rows.push(['受保护的列（人工填写优先）',
+             (s.preserve_cols || []).join('、') || '—', '两边「可编辑列」的并集']);
+
+  const warn = [];
+  if (s.matched === 0) warn.push('⚠️ 没有任何唯一键匹配上 —— 确认上传的是同一批数据吗？');
+  if (s.dup_new_key_count) {
+    warn.push(`⚠️ 新 Excel 的唯一键有 ${s.dup_new_key_count} 个重复（${(s.dup_new_keys || []).join('、')}…）：`
+              + '这些行无法判断更新哪一行，会当作新行追加');
+  }
+  if (s.blanked_nonempty) {
+    warn.push(`⚠️ 有 ${s.blanked_nonempty} 个格子在当前工作簿里有值、但新 Excel 里是空的 —— `
+              + '这些格子会被清空（非可编辑列以新 Excel 为准；如果只是漏填，请先补好再上传）');
+  }
+  if (s.dropped_nonempty) warn.push(`⚠️ 新 Excel 删了列，共 ${s.dropped_nonempty} 个有值单元格会丢失`);
+
+  return '<table class="tbl stat">'
+    + rows.map(([k, v, h]) =>
+        `<tr><th>${escape(k)}</th><td><b>${escape(String(v))}</b>`
+        + `<div class="muted">${escape(h)}</div></td></tr>`).join('')
+    + '</table>'
+    + warn.map((w) => `<div class="err">${escape(w)}</div>`).join('');
+}
+
+function openUpdateDialog(wid, name, canRollback) {
+  const mask = $('#updateModal');
+  const prev = $('#updPreview');
+  const input = $('#updInput');
+  $('#updFile').value = '';
+  prev.innerHTML = '';
+  input.value = '';
+  $('#updErr').textContent = '';
+  $('#updTitle').textContent = name ? `更新 Excel · ${name}` : '更新 Excel';
+  $('#updRun').disabled = true;
+  $('#updRollback').classList.toggle('hidden', !canRollback);
+  mask.classList.remove('hidden');
+
+  async function send(dry) {
+    const f = $('#updFile').files && $('#updFile').files[0];
+    if (!f) { $('#updErr').textContent = '请先选择要上传的 Excel 文件'; return null; }
+    const fd = new FormData();
+    fd.append('file', f);
+    if (!dry) fd.append('confirm', input.value.trim());
+    return api(`/api/workbooks/${wid}/update${dry ? '?dry=1' : ''}`, { method: 'POST', body: fd });
+  }
+
+  $('#updPreviewBtn').onclick = async () => {
+    $('#updErr').textContent = '';
+    $('#updRun').disabled = true;
+    prev.innerHTML = '<span class="muted">解析中…</span>';
+    try {
+      const r = await send(true);
+      if (!r) { prev.innerHTML = ''; return; }
+      prev.innerHTML = updStatsHtml(r.preview);
+      $('#updRun').disabled = false;
+    } catch (e) {
+      prev.innerHTML = '';
+      $('#updErr').textContent = e.message;
+    }
+  };
+
+  $('#updRun').onclick = async () => {
+    $('#updErr').textContent = '';
+    if (!input.value.trim()) { $('#updErr').textContent = '请输入当前工作簿名称以确认'; return; }
+    try {
+      const r = await send(false);
+      if (!r) return;
+      const s = r.preview;
+      mask.classList.add('hidden');
+      toast(`已更新：共 ${s.result_row_count} 行（匹配 ${s.matched} / 新增 ${s.added} / 保留 ${s.kept_old_only}）`);
+      await loadWorkbooks();
+    } catch (e) {
+      $('#updErr').textContent = e.message;
+    }
+  };
+
+  $('#updRollback').onclick = async () => {
+    $('#updErr').textContent = '';
+    if (!input.value.trim()) { $('#updErr').textContent = '回滚同样要输入当前工作簿名称以确认'; return; }
+    try {
+      const r = await api(`/api/workbooks/${wid}/rollback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: input.value.trim() }),
+      });
+      mask.classList.add('hidden');
+      toast(`已回滚到更新前（${r.restored.rows} 行）`);
+      await loadWorkbooks();
+    } catch (e) {
+      $('#updErr').textContent = e.message;
+    }
+  };
+
+  $('#updCancel').onclick = () => mask.classList.add('hidden');
 }
 
 $('#adminFile').addEventListener('change', async (e) => {

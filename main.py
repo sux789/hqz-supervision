@@ -28,8 +28,9 @@ from flask import (Blueprint, Flask, abort, jsonify, redirect, render_template,
 import sync_cloud
 import track_export
 from param_parser import (ParamError, _s, check_unique_column, export_filters_of,
-                          filter_options, filter_rows, log_fields_of, parse_params,
-                          percent_cols_of, row_key_column, split_list, unique_key_of)
+                          filter_options, filter_rows, log_fields_of, merge_rows,
+                          parse_params, percent_cols_of, row_key_column, split_list,
+                          unique_key_of)
 
 BASE = Path(__file__).resolve().parent
 DATA_DIR = BASE / 'data'
@@ -93,6 +94,18 @@ def init_db():
             kind TEXT NOT NULL DEFAULT 'photo',
             orig_size INTEGER NOT NULL DEFAULT 0);
         CREATE INDEX IF NOT EXISTS idx_photo_state ON photo_sync(state);
+        -- v0.26：「更新 Excel」前的自动备份（DB 行 + 源模板文件），支持一键回滚
+        CREATE TABLE IF NOT EXISTS workbook_backups(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workbook_id INTEGER NOT NULL,
+            name TEXT NOT NULL, sheet_name TEXT NOT NULL,
+            headers TEXT NOT NULL, rows TEXT NOT NULL,
+            config TEXT NOT NULL, param_rows TEXT NOT NULL,
+            key_column TEXT NOT NULL DEFAULT '',
+            src_ext TEXT NOT NULL DEFAULT '.xlsx',
+            src_bak TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_wb_backup ON workbook_backups(workbook_id);
     ''')
     # 轻量迁移：v0.21 前建的 users 表无 pwd_ver 列（改密码令旧令牌失效用）
     ucols = {r[1] for r in con.execute('PRAGMA table_info(users)')}
@@ -601,6 +614,152 @@ def api_restore(wid):
     return jsonify(ok=True)
 
 
+# ── 更新 Excel（按唯一键合并，v0.26）────────────────────────────────
+# 场景：工作簿已经填了一半，此时要改模板（加「导出筛选」、改「目录」、加列、修正原始数据）。
+# 原做法只能重新上传 → 会**新建**一个工作簿（已填数据成了孤儿，变更日志/下架状态全断链）。
+# 这里改为**就地更新**：保留原 id，把新 Excel 按唯一键合并进现有数据行。
+MAX_BACKUPS = 5          # 每个工作簿最多保留几份"更新前"备份
+
+
+@bp.route('/api/workbooks/<int:wid>/update', methods=['POST'])
+@admin_required
+def api_update(wid):
+    """按唯一键**就地更新**已有工作簿（保留原 id）。
+
+    - 以既有行顺序为基准原地合并 → 老行的 row_idx 不变，变更日志不错位；新表的行追加末尾
+    - 冲突：人工填过的列（可编辑列，旧∪新）旧值非空优先；**其余列以新 Excel 为准**
+    - `?dry=1` 只算不写、返回统计供确认；正式提交需 `confirm=<当前工作簿名>`（C13 的确认规矩）
+    - 写库前自动备份（DB 行 + 源模板文件），可用 `/rollback` 还原
+    """
+    fs = request.files.get('file')
+    if not fs or not fs.filename.lower().endswith(('.xlsx', '.xlsm')):
+        return jsonify(error='请上传 .xlsx 文件'), 400
+    blob = fs.read()
+    con = db()
+    try:
+        r = con.execute('SELECT * FROM workbooks WHERE id=?', (wid,)).fetchone()
+        if not r:
+            abort(404)
+        try:
+            (new_sheet, new_headers, new_rows,
+             new_cfg, new_param_rows, new_key) = parse_workbook_storage(io.BytesIO(blob))
+        except ParamError as e:
+            return jsonify(error=f'新 Excel 校验未通过：{e}'), 400
+
+        old_headers = json.loads(r['headers'])
+        old_rows = json.loads(r['rows'])
+        old_cfg = json.loads(r['config'])
+        old_key = _wb_key_column(r)
+        if new_key != old_key:
+            return jsonify(error=(
+                f'唯一键不一致：现有工作簿按「{old_key}」定位行，新 Excel 按「{new_key}」。'
+                f'两边 unique-key 需要一致才能按行更新')), 400
+
+        # 人工在 App 里能填的列 = 旧表「可编辑列」∪ 新表「可编辑列」（旧表填过的新表删了也要保住）
+        preserve = sorted(set(split_list(old_cfg.get('可编辑列', ''))) |
+                          set(split_list(new_cfg.get('可编辑列', ''))))
+        try:
+            merged, stats = merge_rows(old_headers, old_rows,
+                                      new_headers, new_rows, old_key, preserve)
+        except ParamError as e:
+            return jsonify(error=str(e)), 400
+
+        dry = request.args.get('dry') == '1'
+        stats.update({
+            'workbook_id': wid, 'name': r['name'], 'new_name': fs.filename,
+            'old_row_count': len(old_rows), 'new_row_count': len(new_rows),
+            'result_row_count': len(merged),
+            'old_col_count': len(old_headers), 'new_col_count': len(new_headers),
+            'dry': dry,
+        })
+        if dry:
+            return jsonify(ok=True, preview=stats)
+
+        confirm = (request.form.get('confirm') or '').strip()
+        if confirm != r['name']:
+            return jsonify(error='确认名称不一致：请照原样输入当前工作簿名称'), 400
+
+        # ① 备份（DB 行 + 源模板文件）
+        ext = '.xlsm' if r['name'].lower().endswith('.xlsm') else '.xlsx'
+        d = UPLOAD_DIR / str(wid)
+        d.mkdir(parents=True, exist_ok=True)
+        src_bak = f'source_bak_{datetime.now().strftime("%Y%m%d%H%M%S")}{ext}'
+        if (d / f'source{ext}').exists():
+            shutil.copy2(d / f'source{ext}', d / src_bak)
+        cur = con.execute(
+            'INSERT INTO workbook_backups(workbook_id,name,sheet_name,headers,rows,config,'
+            ' param_rows,key_column,src_ext,src_bak,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+            (wid, r['name'], r['sheet_name'], r['headers'], r['rows'], r['config'],
+             r['param_rows'], r['key_column'], ext, src_bak,
+             datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        bid = cur.lastrowid
+        for ob in con.execute('SELECT id, src_bak FROM workbook_backups WHERE workbook_id=?'
+                              ' ORDER BY id DESC', (wid,)).fetchall()[MAX_BACKUPS:]:
+            con.execute('DELETE FROM workbook_backups WHERE id=?', (ob['id'],))
+            if ob['src_bak']:
+                (d / ob['src_bak']).unlink(missing_ok=True)
+
+        # ② 就地覆盖（id / is_active 不变 → 变更日志、下架状态、App 使用习惯全部保住）
+        new_ext = '.xlsm' if fs.filename.lower().endswith('.xlsm') else '.xlsx'
+        con.execute(
+            'UPDATE workbooks SET name=?, sheet_name=?, headers=?, rows=?, config=?,'
+            ' param_rows=?, key_column=? WHERE id=?',
+            (fs.filename, new_sheet, json.dumps(new_headers, ensure_ascii=False),
+             json.dumps(merged, ensure_ascii=False), json.dumps(new_cfg, ensure_ascii=False),
+             json.dumps(new_param_rows, ensure_ascii=False), new_key, wid))
+        con.commit()
+
+        # ③ 换成新的源模板（导出按新模板回填）；扩展名变了就清掉旧的
+        (d / f'source{new_ext}').write_bytes(blob)
+        for other in ('.xlsx', '.xlsm'):
+            if other != new_ext:
+                (d / f'source{other}').unlink(missing_ok=True)
+
+        stats.update({'backup_id': bid, 'src_bak': src_bak})
+        return jsonify(ok=True, updated=True, preview=stats)
+    finally:
+        con.close()
+
+
+@bp.route('/api/workbooks/<int:wid>/rollback', methods=['POST'])
+@admin_required
+def api_rollback(wid):
+    """回滚到最近一次「更新 Excel」之前（数据 + 参数 + 源模板一起还原）。"""
+    data = request.get_json(silent=True) or {}
+    con = db()
+    try:
+        r = con.execute('SELECT id, name FROM workbooks WHERE id=?', (wid,)).fetchone()
+        if not r:
+            abort(404)
+        b = con.execute('SELECT * FROM workbook_backups WHERE workbook_id=?'
+                        ' ORDER BY id DESC LIMIT 1', (wid,)).fetchone()
+        if not b:
+            return jsonify(error='没有可回滚的备份（只有执行过「更新 Excel」才会有）'), 400
+        if (data.get('confirm') or '').strip() != r['name']:
+            return jsonify(error='确认名称不一致：请照原样输入当前工作簿名称'), 400
+
+        con.execute(
+            'UPDATE workbooks SET name=?, sheet_name=?, headers=?, rows=?, config=?,'
+            ' param_rows=?, key_column=? WHERE id=?',
+            (b['name'], b['sheet_name'], b['headers'], b['rows'], b['config'],
+             b['param_rows'], b['key_column'], wid))
+        con.execute('DELETE FROM workbook_backups WHERE id=?', (b['id'],))
+        con.commit()
+
+        d = UPLOAD_DIR / str(wid)
+        bak = (d / b['src_bak']) if b['src_bak'] else None
+        if bak and bak.exists():
+            for other in ('.xlsx', '.xlsm'):
+                if other != b['src_ext']:
+                    (d / f'source{other}').unlink(missing_ok=True)
+            shutil.copy2(bak, d / f'source{b["src_ext"]}')
+            bak.unlink(missing_ok=True)
+        return jsonify(ok=True, rolled_back=True,
+                       restored={'name': b['name'], 'rows': len(json.loads(b['rows']))})
+    finally:
+        con.close()
+
+
 # 变更日志缺省审计字段（v0.23，C11）：列名在模板中存在才记录。
 # 缺省值现由 param_parser.DEFAULT_LOG_FIELDS 单一维护（验收人/验收日期/验收时间/验收结果/验收备注），
 # 要改审计范围时在「参数」sheet 加一行 key=日志字段 即可，不必改代码。
@@ -1082,6 +1241,8 @@ def admin_list():
     rows = con.execute(
         'SELECT id, name, sheet_name, uploaded_at, config, key_column, headers,'
         ' COALESCE(is_active, 1) AS is_active FROM workbooks ORDER BY id DESC').fetchall()
+    baks = {b['workbook_id']: b['n'] for b in con.execute(
+        'SELECT workbook_id, COUNT(*) AS n FROM workbook_backups GROUP BY workbook_id')}
     con.close()
     out = []
     for r in rows:
@@ -1100,6 +1261,8 @@ def admin_list():
             'log_fields': split_list(cfg.get('日志字段')),
             # v0.25：后台「下载 Excel」可用的筛选字段（声明 ∩ 表头；空数组＝该模板没配筛选）
             'export_filters': [f for f, _k in export_filters_of(json.loads(r['headers']), cfg)],
+            # v0.26：是否有「更新前」备份可回滚
+            'can_rollback': baks.get(r['id'], 0) > 0,
         })
     return jsonify(workbooks=out)
 

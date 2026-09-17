@@ -314,6 +314,110 @@ def filter_rows(rows, headers, filters, kinds=None):
     return out
 
 
+# ── v0.26：按唯一键合并更新（后台「更新 Excel」）──────────────────────
+
+def _keep(v):
+    """输出用：字符串去首尾空格，数值原样保留（不要把 108.87 变成 '108.87' 文本）。"""
+    if v is None:
+        return ''
+    return v.strip() if isinstance(v, str) else v
+
+
+def _txt(v):
+    """比较/取键用。"""
+    return '' if v is None else str(v).strip()
+
+
+def merge_rows(old_headers, old_rows, new_headers, new_rows, key_col, preserve_cols):
+    """把新 Excel 的数据行按唯一键**合并**进已有工作簿。
+
+    口径（用户确认 + 一处必要细化）：
+    - **以旧表行顺序为基准**：匹配上的行**原地**合并 → 老行的 row_idx 不变，
+      变更日志（`accept_logs` 按 workbook_id + row_idx 定位）不会错位；
+      新表多出来的行**追加到末尾**。
+    - 旧表有、新表没有的行**保留**（不删，保命）。
+    - 冲突取值：`preserve_cols`（人工在 App 里填过的列 = 旧表「可编辑列」∪ 新表「可编辑列」）
+      的旧值**非空优先**；**其余列以新表为准** —— 否则"填到一半改 Excel"
+      （改小班面积、修正原始数据、新增列取值）永远不会生效。
+    - 按**列名**对齐（列可增删、可换序），输出列序 = 新表列序。
+
+    返回 `(merged_rows, stats)`；`key_col` 必须两张表都有，否则抛 `ParamError`。
+    """
+    if key_col not in old_headers or key_col not in new_headers:
+        raise ParamError(
+            f'按唯一键更新要求「{key_col}」列在**被更新的工作簿**和**新上传的 Excel**里都存在' +
+            f'（旧表头：{"、".join(old_headers)}；新表头：{"、".join(new_headers)}）')
+
+    preserve = set(preserve_cols or ())
+    oh = {h: i for i, h in enumerate(old_headers)}
+    nh = {h: i for i, h in enumerate(new_headers)}
+    ki_old, ki_new = oh[key_col], nh[key_col]
+
+    def g(row, i):
+        return row[i] if (i is not None and i < len(row)) else None
+
+    old_only_cols = [h for h in old_headers if h not in nh]
+    new_only_cols = [h for h in new_headers if h not in oh]
+
+    # 新表按唯一键建索引；重复键无法判断"更新哪一行"，统计出来交给调用方决定
+    new_by_key, dups = {}, []
+    for i, r in enumerate(new_rows):
+        k = _txt(g(r, ki_new))
+        if not k:
+            continue
+        if k in new_by_key:
+            dups.append(k)
+        else:
+            new_by_key[k] = i
+
+    stats = {
+        'matched': 0,            # 匹配上并按规则合并的行数
+        'added': 0,              # 新表新增、追加到末尾的行数
+        'kept_old_only': 0,      # 仅旧表有的行（保留）
+        'conflicts': 0,          # 被"旧值非空优先"保住的冲突格子数
+        'blanked_nonempty': 0,   # 非保护列：旧表有值但新表为空 → 会被清空的格子数（要提醒用户）
+        'dropped_nonempty': 0,   # 旧表有值但新表已删该列 → 丢弃的有值格子数
+        'old_only_cols': old_only_cols,
+        'new_only_cols': new_only_cols,
+        'preserve_cols': sorted(preserve),
+        'dup_new_keys': sorted(set(dups))[:5],
+        'dup_new_key_count': len(set(dups)),
+    }
+
+    merged, used = [], set()
+    for r in old_rows:
+        ni = new_by_key.get(_txt(g(r, ki_old)))
+        if ni is not None and ni not in used:
+            used.add(ni)
+            src = new_rows[ni]
+            row = []
+            for h in new_headers:
+                nv, ov = g(src, nh[h]), g(r, oh.get(h))
+                if h in preserve and _txt(ov) != '':
+                    if _txt(nv) != '' and _txt(nv) != _txt(ov):
+                        stats['conflicts'] += 1
+                    row.append(_keep(ov))       # 人工填写过的列：旧值非空优先
+                else:
+                    if _txt(nv) == '' and _txt(ov) != '':
+                        stats['blanked_nonempty'] += 1   # 旧值被新表的空值清掉 → 要提醒用户
+                    row.append(_keep(nv))       # 其余列：以新表为准
+            merged.append(row)
+            stats['matched'] += 1
+        else:
+            merged.append([_keep(g(r, oh.get(h))) for h in new_headers])
+            stats['kept_old_only'] += 1
+        for h in old_only_cols:
+            if _txt(g(r, oh[h])) != '':
+                stats['dropped_nonempty'] += 1
+
+    for i, r in enumerate(new_rows):
+        if i not in used:
+            merged.append([_keep(g(r, nh[h])) for h in new_headers])
+            stats['added'] += 1
+
+    return merged, stats
+
+
 def check_unique_column(rows, headers, cfg):
     """唯一键校验（仅当参数声明了 unique-key）。
 

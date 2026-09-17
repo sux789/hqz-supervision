@@ -219,3 +219,14 @@ textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size
 }
 .modal-actions .btn.primary { flex: 1.2; }
 
+/* v0.26：更新 Excel 弹框（统计表 + 文件选择） */
+.modal-box.wide { width: min(680px, 96vw); max-height: 88vh; overflow: auto; }
+.modal-box label { display: flex; flex-direction: column; gap: 4px; font-size: 13px;
+                   color: #4a5560; margin-top: 10px; }
+.modal-box input[type="file"] { font-size: 13px; padding: 6px 0; border: none; }
+.tbl.stat { margin-top: 10px; }
+.tbl.stat th { width: 40%; font-weight: 400; color: #4a5560; vertical-align: top; }
+.tbl.stat td { font-size: 13px; }
+.tbl.stat td .muted { margin-top: 2px; }
+.modal-actions .btn.primary:disabled { opacity: .5; cursor: not-allowed; }
+

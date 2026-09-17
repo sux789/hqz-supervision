@@ -14,7 +14,7 @@ sys.path.insert(0, str(BASE))
 
 from param_parser import (  # noqa: E402
     ParamError, check_unique_column, export_filters_of, filter_options,
-    filter_rows, log_fields_of, parse_params, percent_cols_of,
+    filter_rows, log_fields_of, merge_rows, parse_params, percent_cols_of,
     row_key_column, unique_key_of)
 from main import _pick_data_sheet  # noqa: E402
 
@@ -191,6 +191,75 @@ raises('E16 缺控件类型（只有字段名）→ 报错',
 passes('E17 合法声明 → 通过',
        lambda: parse_params(prows(*FBASE, ['导出筛选', '标段|select;验收日期|date']), FH),
        lambda c: c['导出筛选'] == '标段|select;验收日期|date')
+
+# ── merge_rows：按唯一键合并更新（F，v0.26）───────────────────
+print('\n=== F. 按唯一键合并更新（merge_rows）===')
+
+OH = ['小班号', '小班面积', '验收人', '验收备注']
+NH = ['小班号', '验收人', '验收备注', '小班面积', '新增列']     # 换序 + 加列
+OROWS = [['A1', 100.5, '雷华雄', '甲方已确认'],
+         ['A2', 200, '', '待复核'],
+         ['A3', 300, '张三', '仅旧表有']]
+NROWS = [['A2', '李四', '', 999, 'N2'],
+         ['A1', '不该覆盖', '新表备注', 111, 'N1'],
+         ['A4', '', '', 444, 'N4']]
+PRESERVE = ['验收人', '验收备注']
+
+
+def mrg(oh, orows, nh, nrows, key='小班号', preserve=PRESERVE):
+    return merge_rows(oh, orows, nh, nrows, key, list(preserve))
+
+
+passes('F1 匹配行原地合并；输出列序 = 新表列序',
+       lambda: mrg(OH, OROWS, NH, NROWS)[0],
+       lambda r: r == [['A1', '雷华雄', '甲方已确认', 111, 'N1'],
+                       ['A2', '李四', '待复核', 999, 'N2'],
+                       ['A3', '张三', '仅旧表有', 300, ''],
+                       ['A4', '', '', 444, 'N4']])
+passes('F2 老行顺序不变（row_idx 不错位，日志才不会串行）',
+       lambda: [r[0] for r in mrg(OH, OROWS, NH, NROWS)[0]],
+       lambda r: r == ['A1', 'A2', 'A3', 'A4'])
+passes('F3 统计：匹配 2 / 新增 1 / 仅旧 1 / 冲突 2',
+       lambda: {k: mrg(OH, OROWS, NH, NROWS)[1][k]
+                for k in ('matched', 'added', 'kept_old_only', 'conflicts')},
+       lambda r: r == {'matched': 2, 'added': 1, 'kept_old_only': 1, 'conflicts': 2})
+passes('F4 可编辑列：旧值非空优先（新表覆盖不了人工填写）',
+       lambda: mrg(OH, OROWS, NH, NROWS)[0][0][2], lambda r: r == '甲方已确认')
+passes('F5 可编辑列：旧值为空 → 取新表的值',
+       lambda: mrg(OH, OROWS, NH, NROWS)[0][1][1], lambda r: r == '李四')
+passes('F6 非可编辑列：以新表为准（改小班面积能生效）',
+       lambda: mrg(OH, OROWS, NH, NROWS)[0][0][3], lambda r: r == 111)
+passes('F7 数值类型保留（不会变成字符串）',
+       lambda: [type(mrg(OH, OROWS, NH, NROWS)[0][0][3]).__name__,
+                type(mrg(OH, OROWS, NH, NROWS)[0][2][3]).__name__],
+       lambda r: r == ['int', 'int'])
+passes('F8 新表新增列：老行取新表值、仅旧数据的行留空',
+       lambda: [mrg(OH, OROWS, NH, NROWS)[0][0][4], mrg(OH, OROWS, NH, NROWS)[0][2][4]],
+       lambda r: r == ['N1', ''])
+
+OH2 = ['小班号', '小班面积', '验收人']
+passes('F9 非保护列被新表空值清空 → blanked_nonempty 计数（要在弹框警告）',
+       lambda: (mrg(OH2, [['B1', 108.87, '雷华雄']], OH2, [['B1', '', '新名']])[0][0],
+                mrg(OH2, [['B1', 108.87, '雷华雄']], OH2, [['B1', '', '新名']])[1]['blanked_nonempty']),
+       lambda r: r == (['B1', '', '雷华雄'], 1))
+passes('F10 新表删列 → 记录会丢失的有值格数与列名',
+       lambda: (mrg(OH2, [['C1', 100, '张三']], ['小班号', '验收人'], [['C1', '李四']])[1]['dropped_nonempty'],
+                mrg(OH2, [['C1', 100, '张三']], ['小班号', '验收人'], [['C1', '李四']])[1]['old_only_cols']),
+       lambda r: r == (1, ['小班面积']))
+
+OHD = ['小班号', '验收人']
+passes('F11 新表唯一键重复 → 计数并当新行追加（不猜更新哪一行）',
+       lambda: (mrg(OHD, [['D1', '甲']], OHD, [['D1', ''], ['D1', '']])[1]['dup_new_key_count'],
+                len(mrg(OHD, [['D1', '甲']], OHD, [['D1', ''], ['D1', '']])[0])),
+       lambda r: r == (1, 2))
+passes('F12 旧表本身有重复键 → 只合并一次，其余按"仅旧数据"保留',
+       lambda: (mrg(OH, [['E1', 1, 'a', 'r1'], ['E1', 2, 'b', 'r2']], NH,
+                    [['E1', 'x', 'y', 9, 'N']])[0][0],
+                mrg(OH, [['E1', 1, 'a', 'r1'], ['E1', 2, 'b', 'r2']], NH,
+                    [['E1', 'x', 'y', 9, 'N']])[1]['kept_old_only']),
+       lambda r: r == (['E1', 'a', 'r1', 9, 'N'], 1))
+raises('F13 唯一键列在任一侧缺失 → 报错（两边都得有）',
+       lambda: mrg(['小班面积'], [['x']], NH, NROWS, key='小班号'), '都存在')
 
 print('\n' + '=' * 62)
 print(f'通过 {_pass} / 失败 {_fail}')

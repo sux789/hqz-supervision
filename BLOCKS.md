@@ -19,3 +19,5 @@
 | B12 | 防抖保存与离场冲刷（C14） | `static/app.js::scheduleRowSave/flushRowSave/flushRowSaveUnloading` | 编辑中的行（wid/ridx/values 快照） | 落库请求（可 await / keepalive） | B7 |
 | B13 | 导出筛选（C14） | `param_parser.py::export_filters_of/filter_options/filter_rows` | headers + config + 筛选条件 | 过滤后的行 / 字段清单 | B1 |
 | B14 | 后台下载筛选弹框 | `static/admin.js::openFilterDialog` + `templates/admin.html#filterModal` | `GET /admin/api/workbooks/<id>/filter-options` | 带查询参数的下载 URL | B13 |
+| B15 | 按唯一键合并更新（C15） | `param_parser.py::merge_rows` | 旧/新 headers+rows + 唯一键 + 保护列 | `(merged_rows, stats)` | — |
+| B16 | 更新与回滚接口（C15） | `main.py::api_update / api_rollback` + `workbook_backups` 表 | xlsx 字节流 + confirm 名称 | 就地更新的工作簿 / 还原 | B4、B15 |
