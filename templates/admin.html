@@ -119,8 +119,8 @@
       <p class="muted">清晰度档位参考：验收 1080p/4000k（默认，约 30MB/分钟）；弱网省流量 720p/1500k；看细节 1080p/8000k。</p>
     </section>
 
-    <!-- v0.22：按用户要求暂时停用「云同步」卡片（后端接口与数据保留，删掉这段注释即可恢复）
-<section class="card">
+    <!-- v0.22 曾按用户要求停用本卡片；v0.29 按用户要求恢复显示（后端接口与数据一直保留、未改动） -->
+    <section class="card">
       <h2>云同步（照片 → 七牛暂存 → 百度网盘）</h2>
       <p class="muted">
         仅决定**照片是否上云**（视频不上云）：App 拍照 → 服务器中转 → 七牛 zz-1 暂存 → 百度网盘
@@ -154,7 +154,6 @@
         <tbody></tbody>
       </table>
     </section>
--->
 
     <section class="card">
       <h2>验收变更日志</h2>
@@ -233,6 +232,6 @@
   </div>
 
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
-  <script src="{{ url_for('static', filename='admin.js') }}?v=0.28.2"></script>
+  <script src="{{ url_for('static', filename='admin.js') }}?v=0.29"></script>
 </body>
 </html>
