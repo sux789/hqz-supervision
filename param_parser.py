@@ -265,23 +265,37 @@ def export_filters_of(headers, cfg):
     return out
 
 
-def filter_options(rows, headers, field):
-    """某列的可选值（下拉候选）：取该列**不同非空值**，按在数据中首次出现的顺序。
+def filter_options(rows, headers, field, cfg=None, users=None):
+    """某列的下拉候选值 —— **三路合并**，按「先枚举、后数据」的顺序去重。
 
-    不按字典序排：中文值（六标/七标/八标/九标/十标）按码位排会变成
-    七标/九标/八标/六标/十标，看着更乱；表格本身通常已按业务顺序排好，
-    保持首次出现顺序最符合直觉，也不需要任何collation假设。
+    ① 该列若有对应的「<列>选项」参数（如 `验收结果选项` = 合格;不合格）→ 并入其枚举
+       （与 App 内的下拉同源；**没人填过时也能选**，否则空数据的下拉是死的）
+    ② 列名含「人」/「员」的列 → 并入系统用户名单
+       （与 App 里"自动填当前登录用户"的既有约定一致；同样让空数据时可用）
+    ③ 数据里已经出现过的非空值（**首次出现顺序**，不按字典序 —— 中文值按码位排会乱）
+
+    `cfg` / `users` 不传时退化为"只看数据"（v0.25 的老行为）。
     """
     if field not in headers:
         return []
-    i = headers.index(field)
     out, seen = [], set()
+
+    def add(v):
+        v = '' if v is None else str(v).strip()
+        if v and v not in seen:
+            seen.add(v)
+            out.append(v)
+
+    if cfg:
+        for v in split_list(cfg.get(f'{field}选项', '')):      # ① 参数枚举
+            add(v)
+    if users and re.search(r'[人员]', field):                  # ② 系统用户
+        for u in users:
+            add(u)
+    i = headers.index(field)                                   # ③ 数据里出现过的值
     for r in rows:
         if i < len(r):
-            v = '' if r[i] is None else str(r[i]).strip()
-            if v and v not in seen:
-                seen.add(v)
-                out.append(v)
+            add(r[i])
     return out
 
 

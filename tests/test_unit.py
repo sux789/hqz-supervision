@@ -261,6 +261,33 @@ passes('F12 旧表本身有重复键 → 只合并一次，其余按"仅旧数�
 raises('F13 唯一键列在任一侧缺失 → 报错（两边都得有）',
        lambda: mrg(['小班面积'], [['x']], NH, NROWS, key='小班号'), '都存在')
 
+# ── 导出筛选候选值的三路合并（G，v0.26.1）───────────────────
+print('\n=== G. 筛选下拉候选值：三路合并 ===')
+GH = ['标段', '乡镇', '验收人', '验收结果']
+GROWS = [['7标段', '羊街乡', '', ''],
+         ['8标段', '羊街乡', '', '合格']]
+GROWS2 = [r + [''] for r in GROWS]
+GH2 = GH + ['检查员']
+GCFG = {'验收结果选项': '合格;不合格'}
+GUSERS = ['雷华雄', '苏正鹏', '何明星']
+
+passes('G1 参数枚举并入（还没人填过也能选）',
+       lambda: filter_options(GROWS, GH, '验收结果', GCFG, GUSERS),
+       lambda r: r == ['合格', '不合格'])
+passes('G2 含「人」的列并入系统用户名单',
+       lambda: filter_options(GROWS, GH, '验收人', GCFG, GUSERS),
+       lambda r: r == GUSERS)
+passes('G3 含「员」的列同样并入用户名单',
+       lambda: filter_options(GROWS2, GH2, '检查员', GCFG, GUSERS), lambda r: r == GUSERS)
+passes('G4 不含「人/员」的列不并入用户（只取数据）',
+       lambda: filter_options(GROWS, GH, '标段', GCFG, GUSERS), lambda r: r == ['7标段', '8标段'])
+passes('G5 数据值与枚举重复时去重',
+       lambda: filter_options(GROWS, GH, '验收结果', GCFG, GUSERS).count('合格'), lambda r: r == 1)
+passes('G6 不传 cfg/users → 退化为只看数据（老行为）',
+       lambda: filter_options(GROWS, GH, '验收结果'), lambda r: r == ['合格'])
+passes('G7 无参数无用户时仍是数据首现顺序',
+       lambda: filter_options(GROWS, GH, '乡镇', GCFG, GUSERS), lambda r: r == ['羊街乡'])
+
 print('\n' + '=' * 62)
 print(f'通过 {_pass} / 失败 {_fail}')
 sys.exit(1 if _fail else 0)

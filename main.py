@@ -1293,21 +1293,25 @@ def admin_filter_options(wid):
     """导出筛选弹框的字段与候选值。
 
     字段清单 = 参数「导出筛选」声明 ∩ 该工作簿表头（**没有的字段不返回**，弹框也就不显示）。
-    select 类型附上候选值（该列当前数据里出现过的不同非空值）；date 类型不需要候选值。
+    select 类型附候选值（三路合并：参数枚举 / 系统用户 / 数据里出现过的值，见 param_parser.filter_options）；
+    date 类型不需要候选值。
     """
     con = db()
     r = con.execute('SELECT headers, rows, config FROM workbooks WHERE id=?', (wid,)).fetchone()
+    users = [x['username'] for x in
+             con.execute('SELECT username FROM users ORDER BY role DESC, username')]
     con.close()
     if not r:
         abort(404)
     headers = json.loads(r['headers'])
     rows = json.loads(r['rows'])
+    cfg = json.loads(r['config'])
     fields = []
-    for field, kind in export_filters_of(headers, json.loads(r['config'])):
+    for field, kind in export_filters_of(headers, cfg):
         fields.append({
             'field': field,
             'type': kind,
-            'options': filter_options(rows, headers, field) if kind == 'select' else [],
+            'options': filter_options(rows, headers, field, cfg, users) if kind == 'select' else [],
         })
     return jsonify(fields=fields)
 

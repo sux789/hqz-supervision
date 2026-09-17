@@ -153,11 +153,21 @@ def set_unique_key(wb, col):
 
 
 def drop_unique_key(wb):
+    drop_param(wb, 'unique-key')
+
+
+def drop_param(wb, key):
+    """从参数 sheet 删掉某一行（按 key 名找）。返回是否删到。
+
+    用它是为了让用例**不依赖基底模板恰好有没有某个参数** ——
+    基底是从用户真实模板自动发现的，用户随时可能加/删参数。
+    """
     wsp = wb['参数']
     for r_ in range(wsp.max_row, 0, -1):
-        if str(wsp.cell(r_, 1).value or '').strip().lower() == 'unique-key':
+        if _txt(wsp.cell(r_, 1).value).lower() == key.lower():
             wsp.delete_rows(r_)
-            return
+            return True
+    return False
 
 
 # ── A. 真实模板解析（期望由文件内容推断）────────────────────
@@ -463,6 +473,9 @@ else:
                str(byf['标段']['options'])[:90])
             ok('E4 日期字段 type=date 且无候选值',
                byf['验收日期']['type'] == 'date' and byf['验收日期']['options'] == [])
+            ok('E4b 含「人」的字段候选值并入系统用户名单（空数据也能选）',
+               len(byf.get('验收人', {}).get('options', [])) >= 1,
+               str(byf.get('验收人', {}).get('options'))[:80])
 
             def dl(qs=''):
                 r = ca.get(f'/admin/api/workbooks/{wid}/download{qs}', headers=HA)
@@ -518,10 +531,12 @@ else:
                str([rows_[k][ci_] for k in range(3)]))
 
             # 未声明筛选的模板 → 空清单（前端就不弹框）
+            # 注意：基底模板（=用户的真实模板）可能本来就有「导出筛选」，必须显式删掉再断言
             nf = tmp / 'nofilter.xlsx'
             shutil.copy(BASE_TPL, nf)
             wb = openpyxl.load_workbook(nf)
             drop_unique_key(wb)
+            drop_param(wb, '导出筛选')
             wb.save(nf)
             wb.close()
             rr = upload(nf, 'nofilter.xlsx')
@@ -559,7 +574,7 @@ else:
 
     if wid:
         d0 = ca.get(f'/api/workbooks/{wid}', headers=HA).get_json()
-        H0, R0 = d0['headers'], d0['rows']
+        H0, R0, CFG0 = d0['headers'], d0['rows'], d0['config']
         KEY = H0.index('小班号')
         AREA = H0.index('小班面积') if '小班面积' in H0 else None
         BZ = H0.index('验收备注') if '验收备注' in H0 else None
@@ -675,8 +690,9 @@ else:
             d2 = ca.get(f'/api/workbooks/{wid}', headers=HA).get_json()
             ok('F26 回滚后文件名/行数/表头/参数全部还原',
                d2['name'] == 'upd-base.xlsx' and len(d2['rows']) == len(R0)
-               and '新增列' not in d2['headers'] and not d2['config'].get('导出筛选'),
-               f"{d2['name']} rows={len(d2['rows'])}")
+               and '新增列' not in d2['headers']
+               and d2['headers'] == H0 and d2['config'] == CFG0,
+               f"{d2['name']} rows={len(d2['rows'])} 表头还原={d2['headers'] == H0} 参数还原={d2['config'] == CFG0}")
             if BZ is not None:
                 ok('F27 回滚后人工填写仍在',
                    d2['rows'][0][d2['headers'].index('验收备注')] == '人工填的备注')
