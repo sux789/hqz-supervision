@@ -40,6 +40,8 @@ KEYS = {
     'unique-key': '文本',
     '日志字段': '列表',
     '百分比列': '列表',
+    # v0.25：后台「下载 Excel」的筛选弹框（字段|控件类型，只筛行）
+    '导出筛选': '控件映射',
 }
 
 REQUIRED = ['可编辑列', '功能']
@@ -150,7 +152,24 @@ def parse_params(param_rows, headers):
                 if parts[0] not in headerset:
                     raise ParamError(f'参数 sheet 第{rno}行 key「搜索选项」：字段「{parts[0]}」不在数据 sheet 表头中')
                 if parts[1] not in ('select', 'search'):
-                    raise ParamError(f'参数 sheet 第{rno}行 key「搜索选项」：控件类型「{parts[1]}」不支持（select=search / select=下拉）')
+                    raise ParamError(f'参数 sheet 第{rno}行 key「搜索选项」：控件类型「{parts[1]}」不支持'
+                                     f'（select=下拉 / search=文本搜索）')
+
+        # 导出筛选（v0.25）：字段|控件类型 —— 后台「下载 Excel」弹框里按值筛行
+        # select=下拉单选（候选值取该列当前数据里出现过的不同值）；date=日期选择（单日等于）
+        if key == '导出筛选' and value:
+            for item in value.split(';'):
+                item = item.strip()
+                if not item:
+                    continue
+                parts = [p.strip() for p in item.split('|')]
+                if len(parts) != 2:
+                    raise ParamError(f'参数 sheet 第{rno}行 key「导出筛选」：项「{item}」格式应为 字段|控件类型')
+                if parts[0] not in headerset:
+                    raise ParamError(f'参数 sheet 第{rno}行 key「导出筛选」：字段「{parts[0]}」不在数据 sheet 表头中')
+                if parts[1] not in ('select', 'date'):
+                    raise ParamError(f'参数 sheet 第{rno}行 key「导出筛选」：控件类型「{parts[1]}」不支持'
+                                     f'（select=下拉单选 / date=日期选择）')
 
         # 数值类：正整数 / 0-1 小数
         if KEYS[key] == '数值' and value:
@@ -224,6 +243,75 @@ def percent_cols_of(headers, cfg):
     if declared:
         return {i for i, h in enumerate(headers) if h in declared}
     return {i for i, h in enumerate(headers) if '强度' in h and '%' not in h}
+
+
+# ── v0.25：后台「下载 Excel」的筛选（只筛行，C01 参数驱动）──────────────
+
+def export_filters_of(headers, cfg):
+    """导出筛选弹框的字段清单 → [(字段名, 控件类型)]，类型为 'select' / 'date'。
+
+    只返回**当前工作簿表头里确实存在**的声明项 —— 用户口径："没有的字段不提示筛选"。
+    （参数解析阶段已要求声明字段必须是表头；这里再按 headers 过滤一次是防御，
+    用于"同一份参数被换过 sheet/被人工改过"的情况。）
+    """
+    out = []
+    for item in split_list(cfg.get('导出筛选', '')):
+        parts = [p.strip() for p in item.split('|')]
+        if len(parts) != 2 or not parts[1]:
+            continue
+        field, kind = parts
+        if field in headers and kind in ('select', 'date'):
+            out.append((field, kind))
+    return out
+
+
+def filter_options(rows, headers, field):
+    """某列的可选值（下拉候选）：取该列**不同非空值**，按在数据中首次出现的顺序。
+
+    不按字典序排：中文值（六标/七标/八标/九标/十标）按码位排会变成
+    七标/九标/八标/六标/十标，看着更乱；表格本身通常已按业务顺序排好，
+    保持首次出现顺序最符合直觉，也不需要任何collation假设。
+    """
+    if field not in headers:
+        return []
+    i = headers.index(field)
+    out, seen = [], set()
+    for r in rows:
+        if i < len(r):
+            v = '' if r[i] is None else str(r[i]).strip()
+            if v and v not in seen:
+                seen.add(v)
+                out.append(v)
+    return out
+
+
+def filter_rows(rows, headers, filters, kinds=None):
+    """按条件过滤数据行（只筛行、不筛列）。
+
+    filters: {字段名: 期望值}（空串/None = 该条件不生效）
+    kinds:   {字段名: 'select'|'date'}，缺省按 select 处理
+    - select：整串精确匹配（去首尾空格）
+    - date  ：取单元格文本前 10 位与 'YYYY-MM-DD' 比，兼容 '2026-09-15 08:30:00' 这种带时间的值
+    未声明的、表头里没有的字段一律忽略（不会因为多传参数就筛空）。
+    """
+    kinds = kinds or {}
+    active = {}
+    for h, want in (filters or {}).items():
+        w = '' if want is None else str(want).strip()
+        if w and h in headers:
+            active[headers.index(h)] = (w, kinds.get(h, 'select'))
+    if not active:
+        return rows
+    out = []
+    for r in rows:
+        for i, (want, kind) in active.items():
+            cell = '' if i >= len(r) or r[i] is None else str(r[i]).strip()
+            ok = (cell[:10] == want[:10]) if kind == 'date' else (cell == want)
+            if not ok:
+                break
+        else:
+            out.append(r)
+    return out
 
 
 def check_unique_column(rows, headers, cfg):

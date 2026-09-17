@@ -57,6 +57,7 @@ function nav(hash) { if (location.hash !== hash) location.hash = hash; }
 
 async function route() {
   if (!loggedIn) { show('login'); return; }
+  await flushRowSave();     // 任何路由切换前先落库（含手势返回/前进后退/切行）
   let m = location.hash.match(/^#\/wb\/(\d+)\/r\/(\d+)$/);
   if (m) {
     if (!await ensureWb(+m[1])) return;
@@ -99,8 +100,9 @@ function show(view) {
   $('#btnBack').classList.toggle('hidden', view === 'list');
   $('#pageName').textContent =
     view === 'detail' ? (cur ? `${keyVal() || '详情'} · ${cur.name}` : '') : '工作簿';
-  $('#btnBack').onclick = () => {
+  $('#btnBack').onclick = async () => {
     if (trackWatch !== null) autoStopTrackIfRecording('返回列表');   // 互斥（F2）
+    await flushRowSave();            // 离场前先落库，否则节流窗口内的编辑会丢
     nav('#/');
   };
 }
@@ -117,6 +119,11 @@ $('#loginForm').addEventListener('submit', async (e) => {
     // 关键：登录不刷新页面，data-user 必须在此回写（否则验收联动/拍照人拿空用户名）
     $('#whoami').dataset.user = r.user || $('#loginUser').value.trim();
     if (r.token) setToken(r.token);      // 长期令牌（抗进程被杀；cookie 仍作后备）
+    // 从 /admin 被弹回登录页的（URL 带 ?next=admin）：登录后送回后台，别停在 App 首页
+    if (new URLSearchParams(location.search).get('next') === 'admin') {
+      if (r.role === 'admin') { location.href = (window.SUP_BASE || '') + '/admin'; return; }
+      history.replaceState(null, '', location.pathname + location.hash);   // 非管理员：去掉 next
+    }
     boot();
   } catch (err) {
     $('#loginErr').textContent = err.message;
@@ -372,26 +379,79 @@ function setSaveStatus(text, cls) {
   s.className = 'save-status ' + cls;
 }
 
-let saveTimer = null, saveSeq = 0;
+let saveTimer = null, saveSeq = 0, pendingSave = null;
+
+/* 记下"待落库的行"，并**快照 wid/ridx/values**。
+   必须快照：节流窗口内用户可能已切到别的工作簿或别的行，若延后到那时才按
+   cur/curIdx 取数据，会把 A 小班的内容写进 B（数据错位，比丢数据更糟）。 */
 function scheduleRowSave() {
+  if (!cur || curIdx < 0 || !allRows[curIdx]) return;
   setSaveStatus('⏳ 保存中…', 'saving');
+  pendingSave = { wid: cur.id, ridx: curIdx, values: allRows[curIdx].slice() };
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(doRowSave, 800);   // 输入停顿 0.8s 自动落库（onchange 本身含 blur 时机）
+  saveTimer = setTimeout(flushRowSave, 800);   // 输入停顿 0.8s 自动落库
 }
 
-async function doRowSave() {
+/* 立即把待保存的行落库（可 await）。**任何离场前都必须调用**：点返回、路由切换、
+   切后台、关页 —— 否则节流窗口（800ms）内的编辑会丢。
+   （用户实测：填了验收备注马上点返回，重新进来备注没了。） */
+async function flushRowSave() {
+  clearTimeout(saveTimer); saveTimer = null;
+  const job = pendingSave; pendingSave = null;
+  if (!job) return;
   const seq = ++saveSeq;
   try {
-    await api(`/api/workbooks/${cur.id}/rows/${curIdx}`, {
+    await api(`/api/workbooks/${job.wid}/rows/${job.ridx}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ values: allRows[curIdx] }),
+      body: JSON.stringify({ values: job.values }),
     });
     if (seq === saveSeq) setSaveStatus('✓ 已保存', 'ok');
   } catch (e) {
     if (seq === saveSeq) setSaveStatus('✗ 保存失败（改动仍在页面，重新编辑即重试）', 'err');
   }
 }
+
+/* 页面可能被卸载时的最后一搏：keepalive 请求在页面销毁后仍会发出。
+   不用 sendBeacon —— 它无法携带 X-Sup-Token 头，只能把令牌塞进 URL（会进网关访问日志）。 */
+function flushRowSaveUnloading() {
+  const job = pendingSave; pendingSave = null;
+  clearTimeout(saveTimer); saveTimer = null;
+  if (!job) return;
+  const tok = getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (tok) headers['X-Sup-Token'] = tok;
+  try {
+    fetch((window.SUP_BASE || '') + `/api/workbooks/${job.wid}/rows/${job.ridx}`, {
+      method: 'POST', headers, keepalive: true,
+      body: JSON.stringify({ values: job.values }),
+    }).catch(() => {});
+  } catch (e) {}
+}
+
+document.addEventListener('pagehide', flushRowSaveUnloading);
+window.addEventListener('beforeunload', flushRowSaveUnloading);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushRowSaveUnloading();
+});
+
+/* 逐键兜底（v0.25）：jspreadsheet 的 onchange 要等"提交"（blur / Enter）才触发。
+   用户正在输入就直接点返回/切后台时，onchange 可能还没跑 —— 此时 allRows 里还是旧值，
+   即便离场时冲刷也只会把旧值存上去。这里监听输入框的 input 事件，把每次按键先同步进
+   allRows，保证离场冲刷拿到的是最新内容。 */
+$('#formEl').addEventListener('input', (e) => {
+  if (!cur || curIdx < 0 || !formGrid || !allRows[curIdx]) return;
+  const td = e.target.closest && e.target.closest('td');
+  const tr = td && td.closest('tr');
+  if (!td || !tr || !tr.parentNode) return;
+  const y = [...tr.parentNode.children].indexOf(tr);   // 行号 = 字段在表头中的下标
+  const x = [...tr.children].indexOf(td);
+  if (x !== 1 || y < 0) return;                        // 只有第 2 列（值）是可编辑的
+  const h = cur.headers[y];
+  if (!h || !cfgList('可编辑列').includes(h)) return;   // 只收「可编辑列」
+  allRows[curIdx][y] = e.target.value;
+  scheduleRowSave();
+});
 
 function renderForm() {
   const editable = new Set(cfgList('可编辑列'));

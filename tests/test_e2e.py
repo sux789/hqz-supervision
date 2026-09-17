@@ -11,15 +11,19 @@
 
 注意：会在本地库 data/app.sqlite3 里临时建工作簿，跑完自动删除。
 """
+import datetime
+import io
 import shutil
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import urlencode
 
 BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
 
 import openpyxl  # noqa: E402
+import openpyxl.utils  # noqa: E402
 
 from main import UPLOAD_DIR, ParamError, create_app, parse_workbook_storage  # noqa: E402
 
@@ -405,6 +409,141 @@ else:
         ok('D19 彻底删除后：源模板目录被清', not src.exists())
         ok('D20 彻底删除后：详情 404',
            ca.get(f'/api/workbooks/{wid}', headers=HA).status_code == 404)
+
+# ── E. 导出筛选（后台「下载 Excel」弹框，只筛行）────────────
+print('\n=== E. 导出筛选：声明 ∩ 表头 / 只筛行 / 日期真值 ===')
+if BASE_TPL is None:
+    skip('E', '无可用基底模板')
+else:
+    # 合成模板：摘掉 unique-key、加「导出筛选」声明、写入可控的前 3 行
+    fsrc = tmp / 'filter.xlsx'
+    shutil.copy(BASE_TPL, fsrc)
+    wb = openpyxl.load_workbook(fsrc)
+    ws = wb[data_sheet_of(wb)]
+    heads = [_txt(c.value) for c in next(ws.iter_rows(max_row=1))]
+    while heads and heads[-1] == '':
+        heads.pop()
+
+    def col(name):
+        return heads.index(name) + 1 if name in heads else None
+
+    cand = [f for f in ('标段', '乡镇', '验收人', '验收日期') if col(f)]
+    if len(cand) < 4:
+        skip('E', f'基底模板缺少字段（只有 {cand}）')
+    else:
+        drop_unique_key(wb)
+        wsp = wb['参数']
+        wsp.cell(wsp.max_row + 1, 1).value = '导出筛选'
+        wsp.cell(wsp.max_row, 2).value = '标段|select;乡镇|select;验收人|select;验收日期|date'
+        fake = [('甲标', 'A乡', '张三', '2026-09-10'),
+                ('乙标', 'B乡', '李四', '2026-09-11'),
+                ('甲标', 'A乡', '张三', '2026-09-12')]
+        for k, (bd, xz, yr, dt) in enumerate(fake, start=2):
+            ws.cell(k, col('标段')).value = bd
+            ws.cell(k, col('乡镇')).value = xz
+            ws.cell(k, col('验收人')).value = yr
+            ws.cell(k, col('验收日期')).value = dt
+        wb.save(fsrc)
+        wb.close()
+
+        rr = upload(fsrc, 'filter.xlsx')
+        jj = rr.get_json() or {}
+        wid = jj.get('id')
+        ok('E1 上传带「导出筛选」的模板', rr.status_code == 200 and bool(wid), f'HTTP {rr.status_code} {jj}')
+
+        if wid:
+            fo = (ca.get(f'/admin/api/workbooks/{wid}/filter-options', headers=HA).get_json()
+                  or {}).get('fields', [])
+            ok('E2 filter-options = 声明的 4 个字段（顺序保持）',
+               [x['field'] for x in fo] == ['标段', '乡镇', '验收人', '验收日期'],
+               str([x['field'] for x in fo]))
+            byf = {x['field']: x for x in fo}
+            ok('E3 下拉字段带候选值且已去重',
+               '甲标' in byf['标段']['options'] and '乙标' in byf['标段']['options'],
+               str(byf['标段']['options'])[:90])
+            ok('E4 日期字段 type=date 且无候选值',
+               byf['验收日期']['type'] == 'date' and byf['验收日期']['options'] == [])
+
+            def dl(qs=''):
+                r = ca.get(f'/admin/api/workbooks/{wid}/download{qs}', headers=HA)
+                assert r.status_code == 200, f'下载失败 HTTP {r.status_code}'
+                return openpyxl.load_workbook(io.BytesIO(r.data))
+
+            wbk = dl()
+            ex = wbk[wbk.sheetnames[0]]
+            ex_heads = [_txt(c.value) for c in next(ex.iter_rows(max_row=1))]
+            last = openpyxl.utils.get_column_letter(len(heads))
+            ok('E5 auto_filter 范围按实际数据重设',
+               ex.auto_filter.ref == f'A1:{last}{ex.max_row}', repr(ex.auto_filter.ref))
+            dcell = ex.cell(2, ex_heads.index('验收日期') + 1)
+            ok('E6 验收日期导出为真日期单元格',
+               isinstance(dcell.value, datetime.datetime), type(dcell.value).__name__)
+            ok('E7 日期单元格带 yyyy-mm-dd 格式', dcell.number_format == 'yyyy-mm-dd',
+               dcell.number_format)
+
+            def first_rows(wbk_):
+                ws_ = wbk_[wbk_.sheetnames[0]]
+                hs_ = [_txt(c.value) for c in next(ws_.iter_rows(max_row=1))]
+                out = []
+                for r_ in range(2, ws_.max_row + 1):
+                    if all(ws_.cell(r_, c_).value in (None, '') for c_ in range(1, ws_.max_column + 1)):
+                        continue
+                    out.append({h: ws_.cell(r_, hs_.index(h) + 1).value for h in cand})
+                    if len(out) >= 3:
+                        break
+                return out
+
+            full = dl()
+            all_rows = first_rows(full)
+            ok('E8 不带筛选参数 → 前 3 行原样导出', len(all_rows) == 3, str(all_rows)[:100])
+
+            one = first_rows(dl(f'?{urlencode({"标段": "甲标"})}'))
+            ok('E9 按 标段=甲标 筛 → 首行是甲标', one and one[0]['标段'] == '甲标', str(one[:2])[:100])
+
+            und = first_rows(dl(f'?{urlencode({"小班号": "不存在"})}'))
+            ok('E10 未声明的字段被忽略（不会把数据筛空）', len(und) >= 1, f'{len(und)} 行')
+
+            dat = first_rows(dl(f'?{urlencode({"验收日期": "2026-09-11"})}'))
+            ok('E11 按日期单日筛 → 命中 2026-09-11 那一行',
+               len(dat) == 1 and str(dat[0]['验收日期'])[:10] == '2026-09-11', str(dat))
+
+            # 回传：导出的真日期重新上传应还原为 'YYYY-MM-DD' 文本
+            buf = io.BytesIO()
+            dl().save(buf)
+            buf.seek(0)
+            sn_, h_, rows_, cfg_, pr_, kc_ = parse_workbook_storage(buf)
+            ci_ = h_.index('验收日期')
+            ok('E12 导出文件重新上传 → 日期还原为 YYYY-MM-DD 文本',
+               [rows_[k][ci_] for k in range(3)] == ['2026-09-10', '2026-09-11', '2026-09-12'],
+               str([rows_[k][ci_] for k in range(3)]))
+
+            # 未声明筛选的模板 → 空清单（前端就不弹框）
+            nf = tmp / 'nofilter.xlsx'
+            shutil.copy(BASE_TPL, nf)
+            wb = openpyxl.load_workbook(nf)
+            drop_unique_key(wb)
+            wb.save(nf)
+            wb.close()
+            rr = upload(nf, 'nofilter.xlsx')
+            jj2 = rr.get_json() or {}
+            if jj2.get('id'):
+                fo2 = (ca.get(f"/admin/api/workbooks/{jj2['id']}/filter-options",
+                              headers=HA).get_json() or {}).get('fields')
+                ok('E13 未声明「导出筛选」→ 空清单', fo2 == [], str(fo2))
+
+            # /admin 跳转（v0.25）：未登录带回 next=admin；非管理员回 App
+            cn = app.test_client()          # 全新的未登录 client
+            r1 = cn.get('/admin')
+            ok('E14 未登录访问 /admin → 302 且带 next=admin',
+               r1.status_code == 302 and 'next=admin' in (r1.headers.get('Location') or ''),
+               f"{r1.status_code} {r1.headers.get('Location')}")
+            if HU:
+                r2 = cu.get('/admin')
+                ok('E15 非管理员访问 /admin → 302 且不带 next',
+                   r2.status_code == 302 and 'next=' not in (r2.headers.get('Location') or ''),
+                   f"{r2.status_code} {r2.headers.get('Location')}")
+            r3 = ca.get('/admin')
+            ok('E16 管理员访问 /admin → 200', r3.status_code == 200, f'HTTP {r3.status_code}')
 
 # ── 清理本次测试新建的工作簿（彻底删除，含源模板目录）──────
 print('\n=== 清理测试数据 ===')

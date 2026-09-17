@@ -210,3 +210,12 @@ textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size
 .tbl tr.row-off td:first-child { text-decoration: line-through; }
 .chk-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #4a5560; cursor: pointer; }
 
+/* v0.25：导出筛选弹框的字段区（下拉单选 / 日期选择） */
+.filter-fields { display: flex; flex-direction: column; gap: 10px; margin: 10px 0 2px; }
+.filter-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #4a5560; }
+.filter-fields select, .filter-fields input[type="date"] {
+  padding: 9px 11px; border: 1px solid #d4d9de; border-radius: 6px;
+  font-size: 15px; width: 100%; box-sizing: border-box; background: #fff; color: #26303a;
+}
+.modal-actions .btn.primary { flex: 1.2; }
+

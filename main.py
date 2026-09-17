@@ -16,19 +16,20 @@ import shutil
 import sqlite3
 import threading
 import zipfile
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from functools import wraps
 from pathlib import Path
 
 import openpyxl
+from openpyxl.utils import get_column_letter
 from flask import (Blueprint, Flask, abort, jsonify, redirect, render_template,
                    request, send_file, session, url_for)
 
 import sync_cloud
 import track_export
-from param_parser import (ParamError, _s, check_unique_column, log_fields_of,
-                          parse_params, percent_cols_of, row_key_column,
-                          split_list, unique_key_of)
+from param_parser import (ParamError, _s, check_unique_column, export_filters_of,
+                          filter_options, filter_rows, log_fields_of, parse_params,
+                          percent_cols_of, row_key_column, split_list, unique_key_of)
 
 BASE = Path(__file__).resolve().parent
 DATA_DIR = BASE / 'data'
@@ -229,8 +230,11 @@ def index():
 
 @bp.route('/admin')
 def admin_page():
-    if not session.get('user') or session.get('role') != 'admin':
-        return redirect(url_for('sup.index'))
+    if not session.get('user'):
+        # 未登录：带着 next=admin 回登录页，登录后由前端送回 /admin（否则会停在 App 首页）
+        return redirect(url_for('sup.index', next='admin'))
+    if session.get('role') != 'admin':
+        return redirect(url_for('sup.index'))     # 已登录但非管理员：不提示、直接回 App
     return render_template('admin.html', user=session['user'])
 
 
@@ -340,7 +344,21 @@ def api_logout():
 # ────────────────────────── 工作簿 API ──────────────────────────
 
 def _norm_cell(v):
-    return '' if v is None else (v if isinstance(v, (int, float)) else str(v).strip())
+    """单元格归一化。
+
+    注意：**必须先判 datetime 再判 date** —— datetime 是 date 的子类，
+    且 str(datetime) 会得到 '2026-09-15 00:00:00'，会把日期列写成带时间的字符串
+    （导出的 Excel 里日期是真日期单元格，回传时必须还原成 'YYYY-MM-DD'，否则数据被污染）。
+    """
+    if v is None:
+        return ''
+    if isinstance(v, datetime):
+        return v.strftime('%Y-%m-%d') if v.time() == time.min else v.strftime('%Y-%m-%d %H:%M:%S')
+    if isinstance(v, date):
+        return v.strftime('%Y-%m-%d')
+    if isinstance(v, (int, float)):
+        return v
+    return str(v).strip()
 
 
 def _norm_rows(headers, rows, config=None):
@@ -960,8 +978,35 @@ _XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 _XLSM_MIME = 'application/vnd.ms-excel.sheet.macroEnabled.12'
 
 
-def _export_workbook(wid):
+_DATE_ONLY_RE = re.compile(r'^(\d{4})-(\d{1,2})-(\d{1,2})$')
+_DATETIME_RE = re.compile(r'^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?$')
+
+
+def _date_typed(text):
+    """日期文本 → (datetime, Excel 数字格式)；不是日期则 (None, None)。
+
+    只认 'YYYY-MM-DD' 与 'YYYY-MM-DD HH:MM[:SS]'（App 端与 Excel 日期单元格都长这样）。
+    """
+    s = ('' if text is None else str(text)).strip()
+    m = _DATE_ONLY_RE.match(s)
+    if m:
+        try:
+            return datetime(int(m[1]), int(m[2]), int(m[3])), 'yyyy-mm-dd'
+        except ValueError:
+            return None, None
+    m = _DATETIME_RE.match(s)
+    if m:
+        try:
+            return (datetime(int(m[1]), int(m[2]), int(m[3]),
+                             int(m[4]), int(m[5]), int(m[6] or 0)), 'yyyy-mm-dd hh:mm')
+        except ValueError:
+            return None, None
+    return None, None
+
+
+def _export_workbook(wid, filters=None):
     """用上传时留存的原始模板（source.xlsx/xlsm）回填数据行，保留模板全部格式。
+    v0.25：filters 为 {字段名: 值}，按「导出筛选」声明只筛行（不筛列）。
     返回 (BytesIO, 下载文件名, mimetype)；模板缺失 404。"""
     con = db()
     r = con.execute('SELECT * FROM workbooks WHERE id=?', (wid,)).fetchone()
@@ -974,14 +1019,40 @@ def _export_workbook(wid):
         abort(404, description='原始模板文件缺失（该工作簿为旧版上传），请重新上传后导出')
     headers = json.loads(r['headers'])
     rows = json.loads(r['rows'])
+    cfg = json.loads(r['config'])
+    # v0.25：按参数「导出筛选」声明的字段筛行（只筛行、不筛列；未声明的字段一律忽略）
+    rows = filter_rows(rows, headers, filters, dict(export_filters_of(headers, cfg)))
     wb = openpyxl.load_workbook(src, keep_vba=(ext == '.xlsm'))
     if r['sheet_name'] not in wb.sheetnames:
         abort(500, description=f'模板中找不到数据 sheet「{r["sheet_name"]}」')
     ws = wb[r['sheet_name']]
     if ws.max_row > 1:
         ws.delete_rows(2, ws.max_row - 1)   # 清掉模板里的示例/旧数据行，表头及格式保留
+    ncols = len(headers)
+
+    # 找出"整列都是日期文本"的列 → 导出成真日期。
+    # 目的：Excel 自动筛选对**真日期列**才给「日期筛选」（年/月/日 树），
+    # 纯文本日期只能给文本筛选，用户要的"日期选择"就出不来。
+    date_cols = set()
+    for i in range(ncols):
+        vals = [str(row[i]) for row in rows if i < len(row) and str(row[i] or '').strip()]
+        if vals and all(_date_typed(v)[0] for v in vals):
+            date_cols.add(i)
+
     for row in rows:
-        ws.append((list(row) + [''] * len(headers))[:len(headers)])
+        src_row = (list(row) + [''] * ncols)[:ncols]
+        ws.append(src_row)
+        n = ws.max_row
+        for i in date_cols:
+            dt, fmt = _date_typed(str(src_row[i]))
+            if dt is not None:
+                c = ws.cell(n, i + 1)
+                c.value = dt
+                c.number_format = fmt
+
+    # 自动筛选范围按**实际数据**重设：
+    # 模板自带的范围是上传时的旧值（行数一变就漏），源模板也可能压根没设。
+    ws.auto_filter.ref = f'A1:{get_column_letter(ncols)}{ws.max_row}'
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -1009,7 +1080,7 @@ def api_export(wid):
 def admin_list():
     con = db()
     rows = con.execute(
-        'SELECT id, name, sheet_name, uploaded_at, config, key_column,'
+        'SELECT id, name, sheet_name, uploaded_at, config, key_column, headers,'
         ' COALESCE(is_active, 1) AS is_active FROM workbooks ORDER BY id DESC').fetchall()
     con.close()
     out = []
@@ -1027,6 +1098,8 @@ def admin_list():
             'result_options': split_list(cfg.get('验收结果选项')),
             'unique_key': unique_key_of(cfg),      # v0.23：该工作簿声明的唯一键列（未声明则为空）
             'log_fields': split_list(cfg.get('日志字段')),
+            # v0.25：后台「下载 Excel」可用的筛选字段（声明 ∩ 表头；空数组＝该模板没配筛选）
+            'export_filters': [f for f, _k in export_filters_of(json.loads(r['headers']), cfg)],
         })
     return jsonify(workbooks=out)
 
@@ -1034,9 +1107,46 @@ def admin_list():
 @bp.route('/admin/api/workbooks/<int:wid>/download', methods=['GET'])
 @admin_required
 def admin_download(wid):
-    """后台下载：与前端导出同链路（按上传模板回填，保留格式）。"""
-    buf, name, mime = _export_workbook(wid)
+    """后台下载：与前端导出同链路（按上传模板回填，保留格式）。
+
+    v0.25：支持 `?<字段>=<值>` 形式的筛选，只筛行。**只认参数「导出筛选」里声明过、
+    且该工作簿表头确实存在的字段** —— 其它参数一律忽略（避免多传参数就把数据筛空）。
+    """
+    con = db()
+    r = con.execute('SELECT headers, config FROM workbooks WHERE id=?', (wid,)).fetchone()
+    con.close()
+    if not r:
+        abort(404)
+    headers = json.loads(r['headers'])
+    declared = [f for f, _k in export_filters_of(headers, json.loads(r['config']))]
+    filters = {f: request.args.get(f) for f in declared if request.args.get(f)}
+    buf, name, mime = _export_workbook(wid, filters)
     return send_file(buf, as_attachment=True, download_name=name, mimetype=mime)
+
+
+@bp.route('/admin/api/workbooks/<int:wid>/filter-options', methods=['GET'])
+@admin_required
+def admin_filter_options(wid):
+    """导出筛选弹框的字段与候选值。
+
+    字段清单 = 参数「导出筛选」声明 ∩ 该工作簿表头（**没有的字段不返回**，弹框也就不显示）。
+    select 类型附上候选值（该列当前数据里出现过的不同非空值）；date 类型不需要候选值。
+    """
+    con = db()
+    r = con.execute('SELECT headers, rows, config FROM workbooks WHERE id=?', (wid,)).fetchone()
+    con.close()
+    if not r:
+        abort(404)
+    headers = json.loads(r['headers'])
+    rows = json.loads(r['rows'])
+    fields = []
+    for field, kind in export_filters_of(headers, json.loads(r['config'])):
+        fields.append({
+            'field': field,
+            'type': kind,
+            'options': filter_options(rows, headers, field) if kind == 'select' else [],
+        })
+    return jsonify(fields=fields)
 
 
 @bp.route('/admin/api/accept-logs', methods=['GET'])

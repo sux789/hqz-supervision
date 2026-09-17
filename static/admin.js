@@ -66,10 +66,16 @@ async function loadWorkbooks() {
     tr.innerHTML = `<td>${escape(w.name)}${w.is_active ? '' : ' <span class="muted">（已下架）</span>'}</td>`
       + `<td>${escape(w.sheet_name)}</td><td class="param-cell">${param}</td>`
       + `<td>${escape(w.uploaded_at)}</td>`
-      + `<td><a class="btn" href="${withToken((window.SUP_BASE || '') + `/admin/api/workbooks/${w.id}/download`)}">下载 Excel</a>
+      + `<td><button class="btn" data-dl="${w.id}">下载 Excel</button>
           ${actions}</td>`;
     tb.appendChild(tr);
   }
+
+  // 下载 Excel（v0.25）：先弹筛选框（字段来自参数「导出筛选」，没有的字段不显示）
+  tb.querySelectorAll('[data-dl]').forEach((b) => b.addEventListener('click', () => {
+    const w = byId.get(Number(b.dataset.dl)) || {};
+    openFilterDialog(Number(b.dataset.dl), w.name || '').catch((e) => toast(e.message, true));
+  }));
 
   // 下架（软删除，C13）：名称确认 → App 端不再显示，数据与源模板全部保留
   tb.querySelectorAll('[data-off]').forEach((b) => b.addEventListener('click', async () => {
@@ -186,6 +192,64 @@ function confirmByName(title, hint, name, okText) {
     $('#dangerCancel').addEventListener('click', onCancel);
     inp.addEventListener('keydown', onKey);
   });
+}
+
+/* ── 导出筛选弹框（v0.25）────────────────────────────────────────────
+   字段与控件类型来自参数 sheet 的「导出筛选」（形如 标段|select;验收日期|date）。
+   后端只返回该工作簿**确实存在**的字段 → 没有的字段不会出现在这里。
+   只筛行：把选中的条件作为查询参数交给后台下载接口；全留空＝下载全部。 */
+async function openFilterDialog(wid, name) {
+  const mask = $('#filterModal');
+  const box = $('#filterFields');
+  $('#filterTitle').textContent = name ? `下载 Excel · ${name}` : '下载 Excel';
+  $('#filterErr').textContent = '';
+  box.innerHTML = '<span class="muted">加载筛选项…</span>';
+  mask.classList.remove('hidden');
+
+  let fields = [];
+  try {
+    fields = (await api(`/admin/api/workbooks/${wid}/filter-options`)).fields || [];
+  } catch (e) {
+    box.innerHTML = '';
+    $('#filterErr').textContent = '筛选项加载失败：' + e.message;
+    return;
+  }
+
+  if (!fields.length) {
+    box.innerHTML = '<span class="muted">该模板未声明「导出筛选」，可直接下载全部。</span>';
+  } else {
+    box.innerHTML = fields.map((f) => {
+      const fid = `flt_${wid}_${f.field}`;
+      const label = escape(f.field);
+      if (f.type === 'date') {
+        return `<label for="${fid}">${label}（日期，等于）`
+             + `<input type="date" id="${fid}" data-field="${label}"></label>`;
+      }
+      const opts = ['<option value="">全部</option>']
+        .concat((f.options || []).map((o) => `<option value="${escape(o)}">${escape(o)}</option>`))
+        .join('');
+      return `<label for="${fid}">${label}（下拉单选，${(f.options || []).length} 个可选）`
+           + `<select id="${fid}" data-field="${label}">${opts}</select></label>`;
+    }).join('');
+  }
+
+  const go = (withFilter) => {
+    const params = {};
+    if (withFilter) {
+      box.querySelectorAll('[data-field]').forEach((el) => {
+        const v = (el.value || '').trim();
+        if (v) params[el.dataset.field] = v;      // 空值不带参数 = 该条件不筛
+      });
+    }
+    mask.classList.add('hidden');
+    // 与原有下载同链路（导航式下载，浏览器按 Content-Disposition 落盘，页面不跳走）
+    location.href = withToken((window.SUP_BASE || '') + `/admin/api/workbooks/${wid}/download`
+                              + (Object.keys(params).length ? '?' + new URLSearchParams(params) : ''));
+    toast(withFilter && Object.keys(params).length ? '开始导出（已按条件筛选）' : '开始导出（全部）');
+  };
+  $('#filterOk').onclick = () => go(true);
+  $('#filterAll').onclick = () => go(false);
+  $('#filterCancel').onclick = () => mask.classList.add('hidden');
 }
 
 $('#adminFile').addEventListener('change', async (e) => {

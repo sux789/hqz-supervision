@@ -178,7 +178,24 @@
     </div>
   </div>
 
+  <!-- v0.25：导出筛选弹框（点「下载 Excel」打开）
+       字段与控件类型来自参数 sheet 的「导出筛选」，后端只返回该工作簿**确实存在**的字段；
+       只筛行（按值过滤），留空 = 导出全部。 -->
+  <div id="filterModal" class="modal-mask hidden">
+    <div class="modal-box">
+      <h3 id="filterTitle">筛选后下载 Excel</h3>
+      <p class="muted">选择条件后导出，结果**只含符合条件的行**；全部留空即导出全部。</p>
+      <div id="filterFields" class="filter-fields"></div>
+      <div id="filterErr" class="err"></div>
+      <div class="modal-actions">
+        <button id="filterCancel" class="btn">取消</button>
+        <button id="filterAll" class="btn">下载全部</button>
+        <button id="filterOk" class="btn primary">筛选并下载</button>
+      </div>
+    </div>
+  </div>
+
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
-  <script src="{{ url_for('static', filename='admin.js') }}?v=0.24"></script>
+  <script src="{{ url_for('static', filename='admin.js') }}?v=0.25"></script>
 </body>
 </html>

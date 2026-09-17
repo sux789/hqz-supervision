@@ -13,8 +13,9 @@ BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
 
 from param_parser import (  # noqa: E402
-    ParamError, check_unique_column, log_fields_of, parse_params,
-    percent_cols_of, row_key_column, unique_key_of)
+    ParamError, check_unique_column, export_filters_of, filter_options,
+    filter_rows, log_fields_of, parse_params, percent_cols_of,
+    row_key_column, unique_key_of)
 from main import _pick_data_sheet  # noqa: E402
 
 HDR = ['key', 'value', '类型', '默认值', '说明', '示例']
@@ -137,6 +138,59 @@ ok('D3 无 data、单非参数 sheet → 取它（旧模板兼容）',
 ok('D4 无 data、多非参数 sheet → 报错', pick(['甲', '乙', '参数']).startswith('ERR'))
 ok('D5 只有参数 → 报错', pick(['参数']).startswith('ERR'))
 ok('D6 歧义报错里列出全部 sheet 名', '甲' in pick(['甲', '乙', '参数']) and '乙' in pick(['甲', '乙', '参数']))
+
+# ── 导出筛选（E，v0.25）──────────────────────────────────────
+print('\n=== E. 导出筛选：声明、候选值、筛行 ===')
+FH = ['标段', '乡镇', '验收人', '验收日期']
+FROWS = [['10标段', 'A乡', '张三', '2026-09-10'],
+         ['6标段', 'B乡', '李四', '2026-09-11 09:30:00'],
+         ['7标段', 'A乡', '张三', '2026-09-12'],
+         ['8标段', '', '', '']]
+FCFG = {'导出筛选': '标段|select;乡镇|select;验收人|select;验收日期|date'}
+
+
+def fsel(filters):
+    return filter_rows(FROWS, FH, filters, dict(export_filters_of(FH, FCFG)))
+
+
+passes('E1 声明字段 = 声明 ∩ 表头（顺序保持）',
+       lambda: export_filters_of(FH, FCFG),
+       lambda r: r == [('标段', 'select'), ('乡镇', 'select'), ('验收人', 'select'), ('验收日期', 'date')])
+passes('E2 表头里没有的声明字段被剔除（不提示筛选）',
+       lambda: export_filters_of(FH, {'导出筛选': '标段|select;不存在的列|select;也要剔除|date'}),
+       lambda r: r == [('标段', 'select')])
+passes('E3 未声明「导出筛选」→ 空清单（不显示弹框）',
+       lambda: export_filters_of(FH, {}), lambda r: r == [])
+passes('E4 下拉候选值按「数据中首次出现」去重（不按字典序，中文值不会被打乱）',
+       lambda: filter_options(FROWS, FH, '标段'),
+       lambda r: r == ['10标段', '6标段', '7标段', '8标段'])
+passes('E5 候选值跳过空单元格', lambda: filter_options(FROWS, FH, '乡镇'),
+       lambda r: r == ['A乡', 'B乡'])
+passes('E6 字段不在表头 → 无候选值', lambda: filter_options(FROWS, FH, '小班号'),
+       lambda r: r == [])
+passes('E7 select 精确匹配', lambda: [r[0] for r in fsel({'标段': '7标段'})], lambda r: r == ['7标段'])
+passes('E8 date 单日匹配（值带时间也命中）',
+       lambda: [r[0] for r in fsel({'验收日期': '2026-09-11'})], lambda r: r == ['6标段'])
+passes('E9 多条件 AND', lambda: len(fsel({'标段': '7标段', '乡镇': 'A乡'})), lambda r: r == 1)
+passes('E10 多条件之一不匹配 → 0 行', lambda: len(fsel({'标段': '7标段', '乡镇': 'B乡'})),
+       lambda r: r == 0)
+passes('E11 空值条件不生效', lambda: len(fsel({'标段': '', '验收人': None})), lambda r: r == 4)
+passes('E12 未声明的字段被忽略（不会把数据筛空）',
+       lambda: len(filter_rows(FROWS, FH, {'小班号': 'X'}, {})), lambda r: r == 4)
+passes('E13 声明字段值不存在 → 0 行', lambda: len(fsel({'标段': '不存在'})), lambda r: r == 0)
+
+# E14~E16 用一组与 FH 匹配的合法基底（功能不含拍照，故拍照三件套可不写）
+FBASE = [['可编辑列', '验收人;验收日期'], ['功能', '轨迹']]
+
+raises('E14 控件类型不支持 → 报错',
+       lambda: parse_params(prows(*FBASE, ['导出筛选', '标段|checkbox']), FH), '不支持')
+raises('E15 字段不在表头 → 报错',
+       lambda: parse_params(prows(*FBASE, ['导出筛选', '小班号|select']), FH), '不在数据 sheet 表头')
+raises('E16 缺控件类型（只有字段名）→ 报错',
+       lambda: parse_params(prows(*FBASE, ['导出筛选', '标段']), FH), '格式应为')
+passes('E17 合法声明 → 通过',
+       lambda: parse_params(prows(*FBASE, ['导出筛选', '标段|select;验收日期|date']), FH),
+       lambda c: c['导出筛选'] == '标段|select;验收日期|date')
 
 print('\n' + '=' * 62)
 print(f'通过 {_pass} / 失败 {_fail}')

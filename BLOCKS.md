@@ -16,3 +16,6 @@
 | B9 | 回归网 | `tests/test_unit.py`、`tests/test_e2e.py`、`tests/run_all.sh` | 仓库根 | 通过/失败计数 + 退出码 | B1–B8 |
 | B10 | 下架守卫（C13） | `main.py::_inactive_for` | con + wid | True/False（已下架且非管理员） | — |
 | B11 | 危险操作确认（C13） | `static/admin.js::confirmByName` + `templates/admin.html#dangerModal` | 对象名称 | Promise<boolean> | — |
+| B12 | 防抖保存与离场冲刷（C14） | `static/app.js::scheduleRowSave/flushRowSave/flushRowSaveUnloading` | 编辑中的行（wid/ridx/values 快照） | 落库请求（可 await / keepalive） | B7 |
+| B13 | 导出筛选（C14） | `param_parser.py::export_filters_of/filter_options/filter_rows` | headers + config + 筛选条件 | 过滤后的行 / 字段清单 | B1 |
+| B14 | 后台下载筛选弹框 | `static/admin.js::openFilterDialog` + `templates/admin.html#filterModal` | `GET /admin/api/workbooks/<id>/filter-options` | 带查询参数的下载 URL | B13 |
