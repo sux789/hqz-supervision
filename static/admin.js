@@ -122,8 +122,9 @@ async function loadWorkbooks() {
 if ($('#chkShowOff')) $('#chkShowOff').addEventListener('change', () => loadWorkbooks().catch((e) => toast(e.message, true)));
 
 async function loadTracks() {
-  const data = await api('/admin/api/tracks');
   const tb = $('#tblTrack tbody');
+  if (!tb) return;              // v0.27：轨迹卡片被注释掉时静默跳过，别报错
+  const data = await api('/admin/api/tracks');
   tb.innerHTML = '';
   if (!data.tracks.length) {
     tb.innerHTML = '<tr><td colspan="3" class="muted">暂无轨迹文件</td></tr>';
@@ -392,7 +393,9 @@ $('#adminFile').addEventListener('change', async (e) => {
   await loadWorkbooks();
 });
 
-$('#btnZip').addEventListener('click', () => { location.href = withToken((window.SUP_BASE || '') + '/admin/api/tracks.zip'); });
+/* v0.27：轨迹卡片被注释掉后 #btnZip 不存在 —— 必须用 on() 包一层，
+   否则顶层 addEventListener 会在 null 上报错、整个后台脚本加载失败（整页失效）。 */
+on('#btnZip', 'click', () => { location.href = withToken((window.SUP_BASE || '') + '/admin/api/tracks.zip'); });
 
 /* ── 相片云同步（doc/007） ── */
 function fmtTokenExp(ts) {

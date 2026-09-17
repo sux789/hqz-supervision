@@ -51,6 +51,11 @@
     </section>
 -->
 
+    <!-- v0.27：按用户要求隐藏「轨迹下载」卡片（GPX 列表 tblTrack + 打包下载按钮 btnZip）。
+         后端接口（/admin/api/tracks、/admin/api/tracks.zip、/admin/api/tracks/<name>）与
+         data/tracks/ 里的数据全部保留 —— 删掉这段注释即可整块恢复。
+         注意：#btnZip 的监听已改用 on() 包装，恢复卡片后无需改 JS。 -->
+<!--
     <section class="card">
       <h2>轨迹下载</h2>
       <p class="muted">前端（B3）产生的 GPX 轨迹将出现在这里。</p>
@@ -60,6 +65,7 @@
         <tbody></tbody>
       </table>
     </section>
+-->
 
     <section class="card">
       <h2>图片压缩（手机端）</h2>
@@ -227,6 +233,6 @@
   </div>
 
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
-  <script src="{{ url_for('static', filename='admin.js') }}?v=0.26"></script>
+  <script src="{{ url_for('static', filename='admin.js') }}?v=0.27"></script>
 </body>
 </html>
