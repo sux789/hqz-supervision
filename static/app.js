@@ -379,6 +379,80 @@ function setSaveStatus(text, cls) {
   s.className = 'save-status ' + cls;
 }
 
+/* ── 保存可靠性（v0.28 重做）────────────────────────────────────────
+   用户实测中招两次：①填了备注点返回 ②填了备注切到别的 App 再切回来 —— 备注都没了。
+   v0.25 只修了一半，因为**把编辑器的行为想当然了**：
+     · 编辑器（jspreadsheet）把值放在它自己的 <input> 里，只在 blur / Enter 触发它
+       自己的 onchange 时才把值交出来；
+     · **不能假定它会派发能被外部监听的 input 事件**（混淆源码里无法确认，实测在无头
+       环境也复现不到）。只要它不派发，任何"逐键捕获"都是死代码。
+   所以 v0.28 改成三条不依赖编辑器实现的路径：
+     ① 任何离场/切后台时刻，**直接从 DOM 把值读回内存**（syncGridIntoAllRows）；
+     ② 文档级捕获监听 input / keyup / focusout，命中值格就同步（捕获阶段，谁也拦不住）；
+     ③ 每次改动同步写一份**本地草稿**（localStorage 是同步写入，进程被杀也不丢），
+        启动 / 切回前台时若有草稿就自动补交。
+   ─────────────────────────────────────────────────────────────────── */
+
+const DRAFT_KEY = 'hqz_sup_draft';
+const DRAFT_MAX_AGE = 12 * 3600 * 1000;   // 超 12 小时的草稿不再自动补交（怕覆盖别人后来的修改）
+
+function saveDraft(job) {
+  const j = job || pendingSave;
+  if (!j) return;
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(Object.assign({ ts: Date.now() }, j)));
+  } catch (e) { /* 隐私模式/配额满：忽略，不影响主流程 */ }
+}
+function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
+function readDraft() {
+  try {
+    const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null');
+    return (d && d.wid && Array.isArray(d.values)) ? d : null;
+  } catch (e) { return null; }
+}
+
+/* 把「值格」里当前显示/编辑中的内容读回 allRows —— 不依赖编辑器是否提交。
+   编辑器在编辑时 td 里会有 <input>，取它的 value；否则取 td 的显示文本。 */
+function syncGridIntoAllRows() {
+  if (!formGrid || !cur || curIdx < 0 || !allRows[curIdx]) return false;
+  let editable;
+  try { editable = new Set(cfgList('可编辑列')); } catch (e) { return false; }
+  let changed = false;
+  document.querySelectorAll('#formEl tbody tr').forEach((tr, y) => {
+    const h = cur.headers[y];
+    if (!h || !editable.has(h) || y >= allRows[curIdx].length) return;
+    const td = tr.children[1];
+    if (!td) return;
+    const ed = td.querySelector('input, textarea, [contenteditable="true"]');
+    const raw = ed ? (ed.value !== undefined && ed.value !== null ? ed.value : ed.textContent)
+                   : td.textContent;
+    const nv = raw == null ? '' : String(raw);
+    if (nv !== String(allRows[curIdx][y] == null ? '' : allRows[curIdx][y])) {
+      allRows[curIdx][y] = nv;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+/* 该行与"服务器已保存的版本"是否不同 —— onchange 压根没触发时靠它决定要不要存 */
+function rowDiffersFromSaved(ridx, values) {
+  const base = (cur && cur.rows && cur.rows[ridx]) || [];
+  for (let i = 0; i < values.length; i++) {
+    if (String(values[i] == null ? '' : values[i]) !== String(base[i] == null ? '' : base[i])) return true;
+  }
+  return false;
+}
+
+/* 组装"待落库任务"：优先用已排队的，其次看 DOM 里是否与已存版本有差异 */
+function buildSaveJob() {
+  if (pendingSave) return pendingSave;
+  if (cur && curIdx >= 0 && allRows[curIdx] && rowDiffersFromSaved(curIdx, allRows[curIdx])) {
+    return { wid: cur.id, ridx: curIdx, values: allRows[curIdx].slice() };
+  }
+  return null;
+}
+
 let saveTimer = null, saveSeq = 0, pendingSave = null;
 
 /* 记下"待落库的行"，并**快照 wid/ridx/values**。
@@ -388,16 +462,18 @@ function scheduleRowSave() {
   if (!cur || curIdx < 0 || !allRows[curIdx]) return;
   setSaveStatus('⏳ 保存中…', 'saving');
   pendingSave = { wid: cur.id, ridx: curIdx, values: allRows[curIdx].slice() };
+  saveDraft();                                 // 同步写本地草稿（防进程被杀）
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flushRowSave, 800);   // 输入停顿 0.8s 自动落库
 }
 
 /* 立即把待保存的行落库（可 await）。**任何离场前都必须调用**：点返回、路由切换、
-   切后台、关页 —— 否则节流窗口（800ms）内的编辑会丢。
-   （用户实测：填了验收备注马上点返回，重新进来备注没了。） */
+   切后台、关页 —— 否则节流窗口（800ms）内的编辑会丢。 */
 async function flushRowSave() {
   clearTimeout(saveTimer); saveTimer = null;
-  const job = pendingSave; pendingSave = null;
+  syncGridIntoAllRows();                        // ← 先把 DOM/编辑器里的最新值收进内存
+  const job = buildSaveJob();
+  pendingSave = null;
   if (!job) return;
   const seq = ++saveSeq;
   try {
@@ -406,6 +482,8 @@ async function flushRowSave() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ values: job.values }),
     });
+    if (cur && cur.rows && cur.rows[job.ridx]) cur.rows[job.ridx] = job.values.slice();
+    clearDraft();
     if (seq === saveSeq) setSaveStatus('✓ 已保存', 'ok');
   } catch (e) {
     if (seq === saveSeq) setSaveStatus('✗ 保存失败（改动仍在页面，重新编辑即重试）', 'err');
@@ -413,11 +491,15 @@ async function flushRowSave() {
 }
 
 /* 页面可能被卸载时的最后一搏：keepalive 请求在页面销毁后仍会发出。
-   不用 sendBeacon —— 它无法携带 X-Sup-Token 头，只能把令牌塞进 URL（会进网关访问日志）。 */
+   不用 sendBeacon —— 它无法携带 X-Sup-Token 头，只能把令牌塞进 URL（会进网关访问日志）。
+   同时**先把草稿写盘**：万一这个请求也没发出去，下次启动/回到前台还能补交。 */
 function flushRowSaveUnloading() {
-  const job = pendingSave; pendingSave = null;
   clearTimeout(saveTimer); saveTimer = null;
+  syncGridIntoAllRows();
+  const job = buildSaveJob();
+  pendingSave = null;
   if (!job) return;
+  saveDraft(job);                               // 先落草稿，再尝试发送
   const tok = getToken();
   const headers = { 'Content-Type': 'application/json' };
   if (tok) headers['X-Sup-Token'] = tok;
@@ -425,33 +507,67 @@ function flushRowSaveUnloading() {
     fetch((window.SUP_BASE || '') + `/api/workbooks/${job.wid}/rows/${job.ridx}`, {
       method: 'POST', headers, keepalive: true,
       body: JSON.stringify({ values: job.values }),
-    }).catch(() => {});
+    }).then((r) => { if (r && r.ok) clearDraft(); }).catch(() => {});
   } catch (e) {}
+}
+
+/* 启动 / 切回前台时补交上次没送出去的草稿 */
+let draftSubmitting = false;
+async function submitDraftIfAny() {
+  if (draftSubmitting) return;
+  const d = readDraft();
+  if (!d) return;
+  if (Date.now() - (d.ts || 0) > DRAFT_MAX_AGE) { clearDraft(); return; }   // 太旧，丢弃
+  draftSubmitting = true;
+  try {
+    await api(`/api/workbooks/${d.wid}/rows/${d.ridx}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: d.values }),
+    });
+    clearDraft();
+    toast('已补交上次未保存的修改');
+  } catch (e) {
+    /* 网络/鉴权问题：草稿留着，下次启动或回到前台再试 */
+  } finally {
+    draftSubmitting = false;
+  }
 }
 
 document.addEventListener('pagehide', flushRowSaveUnloading);
 window.addEventListener('beforeunload', flushRowSaveUnloading);
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') flushRowSaveUnloading();
+  if (document.visibilityState === 'hidden') {
+    syncGridIntoAllRows();        // ★ 顺序很重要：切后台时编辑器往往还没提交，先把值收回来
+    flushRowSaveUnloading();
+  } else {
+    submitDraftIfAny();           // 回到前台：补交可能没发出去的草稿
+  }
 });
 
-/* 逐键兜底（v0.25）：jspreadsheet 的 onchange 要等"提交"（blur / Enter）才触发。
-   用户正在输入就直接点返回/切后台时，onchange 可能还没跑 —— 此时 allRows 里还是旧值，
-   即便离场时冲刷也只会把旧值存上去。这里监听输入框的 input 事件，把每次按键先同步进
-   allRows，保证离场冲刷拿到的是最新内容。 */
-$('#formEl').addEventListener('input', (e) => {
-  if (!cur || curIdx < 0 || !formGrid || !allRows[curIdx]) return;
-  const td = e.target.closest && e.target.closest('td');
-  const tr = td && td.closest('tr');
+/* 文档级捕获（v0.28）：不再假设编辑器会派发 input 事件 —— 用**捕获阶段**监听
+   input / keyup / focusout，只要命中值格就先把值同步进 allRows。
+   捕获阶段意味着不管编辑器自己怎么处理事件，我们都能先拿到。 */
+function captureCellEvent(e) {
+  if (!cur || curIdx < 0 || !allRows[curIdx]) return;
+  const el = e.target;
+  if (!el || typeof el.closest !== 'function' || !el.closest('#formEl')) return;
+  const td = el.closest('td'), tr = td && td.closest('tr');
   if (!td || !tr || !tr.parentNode) return;
   const y = [...tr.parentNode.children].indexOf(tr);   // 行号 = 字段在表头中的下标
   const x = [...tr.children].indexOf(td);
-  if (x !== 1 || y < 0) return;                        // 只有第 2 列（值）是可编辑的
+  if (x !== 1 || y < 0 || y >= allRows[curIdx].length) return;   // 只有第 2 列（值）可编辑
   const h = cur.headers[y];
-  if (!h || !cfgList('可编辑列').includes(h)) return;   // 只收「可编辑列」
-  allRows[curIdx][y] = e.target.value;
+  if (!h || !cfgList('可编辑列').includes(h)) return;             // 只收「可编辑列」
+  const v = (el.value !== undefined && el.value !== null) ? el.value : el.textContent;
+  const nv = v == null ? '' : String(v);
+  if (nv === String(allRows[curIdx][y] == null ? '' : allRows[curIdx][y])) return;
+  allRows[curIdx][y] = nv;
   scheduleRowSave();
-});
+}
+document.addEventListener('input', captureCellEvent, true);
+document.addEventListener('keyup', captureCellEvent, true);
+document.addEventListener('focusout', captureCellEvent, true);
 
 function renderForm() {
   const editable = new Set(cfgList('可编辑列'));
@@ -1465,6 +1581,7 @@ async function boot() {
     $('#whoami').textContent = me.user || '';
     await route();
     ensurePermissionsUpfront();           // 登录后一次性申请权限（见函数注释）
+    await submitDraftIfAny();             // v0.28：补交上次没送出去的草稿（进程被杀/切后台丢包）
     await recoverPendingVideo();          // 相机返回导致页面重载时，补记录像结果
     await restoreTrackIfAny();            // 轨迹：页面被重载后接着录（原生在跑则续采）
   } catch (e) {
