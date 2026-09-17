@@ -433,7 +433,11 @@ async function loadSyncSettings() {
   $('#vAudio').value = s.video_audio_k ?? '96';
   $('#vMaxMb').value = s.video_max_mb ?? '300';
   $('#vFfmpeg').value = s.video_ffmpeg || '';
-  $('#syncPath').textContent = `${s.sync_baidu_app_dir}/${s.sync_baidu_prefix}/{参数目录}/{文件名}.jpg`;
+  // v0.29.2：拼接后折叠重复斜杠 —— 「网盘应用目录」若填成 /apps/x/，
+  // 原来的 `${app_dir}/${prefix}/…` 会显示成 /apps/x//supervision/…（用户实测反馈）
+  const joinPath = (...ps) => ps.join('/').replace(/\/{2,}/g, '/');
+  $('#syncPath').textContent = joinPath(
+    s.sync_baidu_app_dir || '', s.sync_baidu_prefix || '', '{参数目录}', '{文件名}.jpg');
 }
 
 async function loadSyncStatus() {

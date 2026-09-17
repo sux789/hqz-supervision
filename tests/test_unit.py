@@ -288,6 +288,31 @@ passes('G6 不传 cfg/users → 退化为只看数据（老行为）',
 passes('G7 无参数无用户时仍是数据首现顺序',
        lambda: filter_options(GROWS, GH, '乡镇', GCFG, GUSERS), lambda r: r == ['羊街乡'])
 
+# ── H. 云同步远端路径规范化（v0.29.2）────────────────────────
+# 起因：用户把「网盘应用目录」填成 /apps/x/ 时，面板显示与拼接会出现 //
+print('\n=== H. 云同步远端路径：折叠重复斜杠 ===')
+import sync_cloud as _SC  # noqa: E402
+
+
+def _pp(app_dir, prefix, subdir='data/YJ-515', fname='a.jpg'):
+    return _SC.photo_paths({'sync_baidu_app_dir': app_dir, 'sync_baidu_prefix': prefix},
+                           subdir, fname)
+
+
+passes('H1 应用目录尾部带斜杠 → 不产生 //',
+       lambda: _pp('/apps/supervision/', 'supervision'),
+       lambda r: r[1] == '/apps/supervision/supervision/data/YJ-515/a.jpg')
+passes('H2 用户填了连续斜杠 → 折叠为单斜杠',
+       lambda: _pp('/apps//x//', '/sub//d/'),
+       lambda r: r == ('sub/d/data/YJ-515/a.jpg', '/apps/x/sub/d/data/YJ-515/a.jpg'))
+passes('H3 七牛 key 不以 / 开头', lambda: _pp('/apps/x', '/p/')[0][0] != '/', lambda r: r is True)
+passes('H4 无子目录时路径正确',
+       lambda: _pp('/apps/book_translator', 'supervision', subdir='')[1],
+       lambda r: r == '/apps/book_translator/supervision/a.jpg')
+passes('H5 历史成功配置的结构保持一致',
+       lambda: _pp('/apps/book_translator', 'supervision')[1],
+       lambda r: r == '/apps/book_translator/supervision/data/YJ-515/a.jpg')
+
 print('\n' + '=' * 62)
 print(f'通过 {_pass} / 失败 {_fail}')
 sys.exit(1 if _fail else 0)

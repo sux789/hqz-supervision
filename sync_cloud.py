@@ -141,11 +141,29 @@ def sync_ready(s: dict):
     return (not missing), missing
 
 
+def _norm_slashes(p: str) -> str:
+    """把连续斜杠折叠成单个。
+
+    v0.29.2：用户把「网盘应用目录」填成 `/apps/x/` 时，原拼接会产出 `/apps/x//…`
+    （后台面板显示的路径就出现过 `//`，用户实测反馈）。这里统一收口。
+    """
+    out = p or ''
+    while '//' in out:
+        out = out.replace('//', '/')
+    return out
+
+
 def photo_paths(s: dict, subdir: str, filename: str):
-    """→ (七牛 key, 百度 remote_path)：与手机相册 Pictures/{目录}/{文件名}.jpg 镜像。"""
+    """→ (七牛 key, 百度 remote_path)：与手机相册 Pictures/{目录}/{文件名}.jpg 镜像。
+
+    v0.29.2：①重复斜杠统一折叠；②prefix 也按 `/` 切段规范化（防用户填成 `/a/b/`），
+    并去掉 key 的前导斜杠（七牛 key 不应以 `/` 开头）。
+    """
     sub = '/'.join(p for p in (subdir or '').split('/') if p)
-    key = f"{s['sync_baidu_prefix']}/{sub}/{filename}" if sub else f"{s['sync_baidu_prefix']}/{filename}"
-    remote = f"{s['sync_baidu_app_dir'].rstrip('/')}/{key}"
+    prefix = '/'.join(p for p in (s.get('sync_baidu_prefix') or '').split('/') if p)
+    key = f'{prefix}/{sub}/{filename}' if sub else f'{prefix}/{filename}'
+    key = _norm_slashes(key).lstrip('/')
+    remote = _norm_slashes(f"{s.get('sync_baidu_app_dir') or ''}/{key}")
     return key, remote
 
 
