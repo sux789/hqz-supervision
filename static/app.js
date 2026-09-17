@@ -808,12 +808,17 @@ function rowSubdir() {
 
 /* 模板渲染：{{列名}}→行值；{{sheet名称}}→当前sheet；{{时间}}→YYYYMMDD_HHMMSS；
    {{拍照人}}→当前登录用户（C02 保留字） */
+/* 模板渲染：{{列名}}→行值；{{sheet名称}}→当前sheet；{{时间}}→YYYYMMDD_HHMMSS；
+   {{拍照人}}→当前登录用户；{{工作簿id}}/{{工作簿名}}/{{工作簿文件名}}→工作簿级（v0.29.3，C02 保留字） */
 function renderTpl(tpl, row, now) {
   return (tpl || '').replace(/\{\{(.+?)\}\}/g, (_, key) => {
     key = key.trim();
     if (key === 'sheet名称') return cur.sheet_name;
     if (key === '时间') return now;
     if (key === '拍照人') return ($('#whoami').dataset.user || '').trim();
+    if (key === '工作簿id') return cur ? String(cur.id) : '';
+    if (key === '工作簿名') return cur ? String(cur.name || '').replace(/\.[^.]+$/, '') : '';  // 不含扩展名
+    if (key === '工作簿文件名') return cur ? String(cur.name || '') : '';                      // 含扩展名
     const i = cur.headers.indexOf(key);
     return i >= 0 ? String(row[i] == null ? '' : row[i]).trim() : '';
   });
