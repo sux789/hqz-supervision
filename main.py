@@ -1362,6 +1362,16 @@ _SYNC_EDITABLE = (set(sync_cloud.SYNC_DEFAULTS) | set(sync_cloud.VIDEO_DEFAULTS)
                   | set(sync_cloud.PHOTO_DEFAULTS))  # 允许后台写入的键（压缩与同步都可改）
 _SYNC_SECRET = sync_cloud.SECRET_KEYS
 
+# v0.29.1：配置键 → 人话（报错与"缺配置"提示直接告诉用户去填哪一项，不再甩英文 key）
+_SYNC_LABELS = {
+    'sync_qiniu_ak': '七牛 AccessKey',
+    'sync_qiniu_sk': '七牛 SecretKey',
+    'sync_qiniu_bucket': '七牛 Bucket',
+    'sync_baidu_app_key': '百度 AppKey',
+    'sync_baidu_secret_key': '百度 SecretKey',
+    'sync_baidu_token': '百度 token（粘贴 token JSON）',
+}
+
 
 def _mask(s: dict) -> dict:
     out = dict(s)
@@ -1382,7 +1392,8 @@ def admin_sync_get():
     s = sync_cloud.get_settings(con)
     con.close()
     ready, missing = sync_cloud.sync_ready(s)
-    return jsonify(settings=_mask(s), ready=ready, missing=missing)
+    return jsonify(settings=_mask(s), ready=ready, missing=missing,
+                   missing_labels=[_SYNC_LABELS.get(m, m) for m in missing])
 
 
 @bp.route('/admin/api/sync/settings', methods=['POST'])
@@ -1408,10 +1419,20 @@ def admin_sync_set():
             if k == 'sync_enabled' and v == '1':
                 s = sync_cloud.get_settings(con)
                 probe = dict(s)
-                probe.update({kk: str(vv).strip() for kk, vv in (data.get('settings') or {}).items()})
+                # ⚠️ v0.29.1 修复：secret 提交空串时**不能拿去覆盖校验**。
+                # 前端出于安全不回填密码框（placeholder 写着「留空保持不变」），提交上来是空串；
+                # 原来无条件 update，空串把真实密钥覆盖掉 → sync_ready 误判「缺配置」→
+                # 明明配置齐全却开不了开关（用户实测："开启失败，缺配置：sync_baidu_secret_key"）。
+                # 落库那一步本来就有 `secret 留空＝保持原值`，这里与它对齐口径。
+                for kk, vv in (data.get('settings') or {}).items():
+                    sv = str(vv).strip()
+                    if kk in _SYNC_SECRET and not sv:
+                        continue
+                    probe[kk] = sv
                 ok, missing = sync_cloud.sync_ready(probe)
                 if not ok:
-                    return jsonify(error='开启失败，缺配置：' + '、'.join(missing)), 400
+                    return jsonify(error='开启失败，还缺这些配置：'
+                                   + '、'.join(_SYNC_LABELS.get(m, m) for m in missing)), 400
             sync_cloud.set_setting(con, k, v)
         con.commit()
         s = sync_cloud.get_settings(con)

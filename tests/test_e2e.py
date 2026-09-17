@@ -700,6 +700,57 @@ else:
                ca.post(f'/api/workbooks/{wid}/rollback', json={'confirm': 'upd-base.xlsx'},
                        headers=HA).status_code == 400)
 
+# ── G. 云同步开关：留空 secret 不该被误判「缺配置」（v0.29.1）──
+# 场景：前端出于安全不回填密码框（placeholder「留空保持不变」），提交上来是空串；
+# 后端校验时若拿空串覆盖真实密钥，就会"配置齐全却开不了开关"（用户实测就是这个报错）。
+# 全程在**数据库副本**上跑，不动本地库。
+print('\n=== G. 云同步：留空 secret 开启开关 ===')
+import sqlite3 as _sq  # noqa: E402
+import main as _M  # noqa: E402
+
+_orig_db = _M.DB_PATH
+_tmpdb = Path(tempfile.mkdtemp()) / 'sync.sqlite3'
+shutil.copy2(_orig_db, _tmpdb)
+_M.DB_PATH = _tmpdb
+try:
+    cg = app.test_client()                      # 独立 client（C14 教训：身份别共用 client）
+    _t = (cg.post('/api/login', json={'username': ADMIN[0], 'password': ADMIN[1]}).get_json() or {}).get('token')
+    HG = {'X-Sup-Token': _t}
+
+    g0 = cg.get('/admin/api/sync/settings', headers=HG).get_json() or {}
+    if not g0.get('ready'):
+        skip('G1~G5', f'本地库云同步配置不全（缺 {g0.get("missing")}），无法验证')
+    else:
+        ok('G1 副本上配置齐全（ready=True）', g0.get('ready') is True, f"labels={g0.get('missing_labels')}")
+
+        r = cg.post('/admin/api/sync/settings', headers=HG, json={'settings': {
+            'sync_enabled': '1',
+            'sync_qiniu_sk': '',                # 密码框留空 → 前端就是这样提交空串
+            'sync_baidu_secret_key': '',
+        }})
+        ok('G2 ★ 留空 secret 不再误判缺配置 → 开启成功',
+           r.status_code == 200 and (r.get_json() or {}).get('ok'),
+           f"HTTP {r.status_code} {(r.get_json() or {}).get('error', '')}")
+
+        g1 = (cg.get('/admin/api/sync/settings', headers=HG).get_json() or {}).get('settings', {})
+        ok('G3 空串没把真实密钥清掉（留空=保持原值）',
+           bool(g1.get('has_qiniu_sk')) and bool(g1.get('has_baidu_secret')),
+           f"has_qiniu_sk={g1.get('has_qiniu_sk')} has_baidu_secret={g1.get('has_baidu_secret')}")
+        ok('G4 开关已落库为启用', g1.get('sync_enabled') == '1', str(g1.get('sync_enabled')))
+
+        # 真缺配置时：报错要能读懂（中文标签，不是英文 key）
+        _c = _sq.connect(_tmpdb)
+        _c.execute("UPDATE settings SET value='' WHERE key='sync_baidu_secret_key'")
+        _c.commit(); _c.close()
+        g2 = cg.get('/admin/api/sync/settings', headers=HG).get_json() or {}
+        r = cg.post('/admin/api/sync/settings', headers=HG, json={'settings': {'sync_enabled': '1'}})
+        ok('G5 真缺配置 → 拦下且报错给中文标签',
+           r.status_code == 400 and '百度 SecretKey' in (r.get_json() or {}).get('error', '')
+           and g2.get('missing_labels') == ['百度 SecretKey'],
+           f"{(r.get_json() or {}).get('error')}")
+finally:
+    _M.DB_PATH = _orig_db               # 还原，别影响其余用例
+
 # ── 清理本次测试新建的工作簿（彻底删除，含源模板目录）──────
 print('\n=== 清理测试数据 ===')
 for _wid in sorted(set(CREATED)):

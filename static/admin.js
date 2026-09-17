@@ -417,7 +417,8 @@ async function loadSyncSettings() {
   $('#syncBaiduPrefix').value = s.sync_baidu_prefix || '';
   $('#syncKeepDays').value = s.sync_keep_days != null ? s.sync_keep_days : '30';
   $('#syncReady').textContent = data.ready
-    ? '✓ 配置齐全' : '⚠ 缺配置：' + data.missing.join('、');
+    ? '✓ 配置齐全'
+    : '⚠ 还缺：' + ((data.missing_labels || data.missing || []).join('、'));
   $('#pMaxSide').value = s.photo_max_side ?? '1440';
   $('#pQuality').value = s.photo_quality ?? '0.8';
   $('#vPhoneRec').value = s.video_phone_rec ?? '1';
