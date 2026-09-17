@@ -412,21 +412,41 @@ function readDraft() {
 }
 
 /* 把「值格」里当前显示/编辑中的内容读回 allRows —— 不依赖编辑器是否提交。
-   编辑器在编辑时 td 里会有 <input>，取它的 value；否则取 td 的显示文本。 */
+
+   ⚠️ v0.28.2 修正（v0.28 在这里写坏过线上数据，务必看清）：
+   jspreadsheet 渲染的每行是 **3 个格子 = [行号, 字段名, 值]**（不是 2 个！），
+   v0.28 我按"2 列"取了 `tr.children[1]`，取到的是**字段名**，于是把字段名当值写库 ——
+   用户看到的就是"值变成了 label"。
+   现在三重保险：
+     ① 值来源优先用官方 API `formGrid.getData()[y][1]`（不猜 DOM 位置）；
+     ② 编辑中未提交的值取**最后一个格子**里的 <input>（值列永远在最后），
+        不写死下标，首列有没有行号列都不影响；
+     ③ **安全闸**：读到的值若等于该行自己的字段名，判定为读错，直接丢弃并告警 ——
+        真值恰好等于字段名的可能性可忽略，而这是本次事故的唯一特征。 */
 function syncGridIntoAllRows() {
   if (!formGrid || !cur || curIdx < 0 || !allRows[curIdx]) return false;
+  let data;
+  try { data = formGrid.getData(); } catch (e) { return false; }
+  if (!Array.isArray(data)) return false;
   let editable;
   try { editable = new Set(cfgList('可编辑列')); } catch (e) { return false; }
+  const trs = document.querySelectorAll('#formEl tbody tr');
   let changed = false;
-  document.querySelectorAll('#formEl tbody tr').forEach((tr, y) => {
-    const h = cur.headers[y];
-    if (!h || !editable.has(h) || y >= allRows[curIdx].length) return;
-    const td = tr.children[1];
-    if (!td) return;
-    const ed = td.querySelector('input, textarea, [contenteditable="true"]');
-    const raw = ed ? (ed.value !== undefined && ed.value !== null ? ed.value : ed.textContent)
-                   : td.textContent;
-    const nv = raw == null ? '' : String(raw);
+  cur.headers.forEach((h, y) => {
+    if (!editable.has(h) || y >= allRows[curIdx].length) return;
+    let v = (data[y] && data[y].length > 1) ? data[y][1] : '';
+    const tr = trs[y];
+    if (tr) {                                    // 编辑中的值优先
+      const cells = tr.children;
+      const vcell = cells[cells.length - 1];     // 值列永远在最后一格
+      const ed = vcell && vcell.querySelector('input, textarea, [contenteditable="true"]');
+      if (ed) v = (ed.value !== undefined && ed.value !== null) ? ed.value : ed.textContent;
+    }
+    const nv = v == null ? '' : String(v);
+    if (nv === h) {                              // 安全闸：字段名绝不会是值
+      console.warn('[syncGrid] 读到字段名而非值，已忽略：', h);
+      return;
+    }
     if (nv !== String(allRows[curIdx][y] == null ? '' : allRows[curIdx][y])) {
       allRows[curIdx][y] = nv;
       changed = true;
@@ -547,7 +567,9 @@ document.addEventListener('visibilitychange', () => {
 
 /* 文档级捕获（v0.28）：不再假设编辑器会派发 input 事件 —— 用**捕获阶段**监听
    input / keyup / focusout，只要命中值格就先把值同步进 allRows。
-   捕获阶段意味着不管编辑器自己怎么处理事件，我们都能先拿到。 */
+   捕获阶段意味着不管编辑器自己怎么处理事件，我们都能先拿到。
+   ⚠️ v0.28.2：值格是**最后一个**格子（首列是 jspreadsheet 的行号列），
+   原来写死 `x !== 1` 判成了字段格，导致真实输入根本收不到（也顺带踩过数据写坏的坑）。 */
 function captureCellEvent(e) {
   if (!cur || curIdx < 0 || !allRows[curIdx]) return;
   const el = e.target;
@@ -556,11 +578,12 @@ function captureCellEvent(e) {
   if (!td || !tr || !tr.parentNode) return;
   const y = [...tr.parentNode.children].indexOf(tr);   // 行号 = 字段在表头中的下标
   const x = [...tr.children].indexOf(td);
-  if (x !== 1 || y < 0 || y >= allRows[curIdx].length) return;   // 只有第 2 列（值）可编辑
+  if (x !== tr.children.length - 1 || y < 0 || y >= allRows[curIdx].length) return;  // 只认值格
   const h = cur.headers[y];
   if (!h || !cfgList('可编辑列').includes(h)) return;             // 只收「可编辑列」
   const v = (el.value !== undefined && el.value !== null) ? el.value : el.textContent;
   const nv = v == null ? '' : String(v);
+  if (nv === h) return;                                           // 安全闸：字段名绝不是值
   if (nv === String(allRows[curIdx][y] == null ? '' : allRows[curIdx][y])) return;
   allRows[curIdx][y] = nv;
   scheduleRowSave();
