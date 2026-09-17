@@ -1635,10 +1635,31 @@ document.addEventListener('visibilitychange', () => {
 
 /* 启动时一次性申请权限（v0.15）：把弹窗集中到"刚进 App"这一步，
    之后拍照/录像/轨迹都不再中途弹权限（Android 不允许安装即授权，只能首次运行时申请）。 */
+/* v0.15：把弹窗集中到"刚进 App"这一步，之后拍照/录像/轨迹都不再中途弹权限。
+   v0.28.1 修正：**引导改成按"安装"记一次，而不是只记在内存里**。
+   原因（用户实测："视频保存后华为弹出应用信息"）：录像走系统相机时，华为省电策略常把页面
+   重载，内存里的 permsAsked 随之归零 → 回来 boot() 又跑一遍 ensureBackground() →
+   原生里的 openAutostartSettings()/requestIgnoreBatteryOptimizations() 是**无条件**执行的，
+   于是每次都再弹一次「电池优化白名单」对话框 + 跳一次华为「自启动/后台运行」页。
+   现在用 localStorage 记住（键名带版本号，将来需要重新引导时升版本号即可）。
+   需要手动再跑一次：控制台执行 supAskPermsAgain()。 */
+const PERMS_ASKED_KEY = 'hqz_sup_perms_asked_v1';
 let permsAsked = false;
+
+function permsAlreadyAsked() {
+  try { return localStorage.getItem(PERMS_ASKED_KEY) === '1'; } catch (e) { return false; }
+}
+function supAskPermsAgain() {          // 手动重置（排查/用户反馈"权限没给全"时用）
+  try { localStorage.removeItem(PERMS_ASKED_KEY); } catch (e) {}
+  permsAsked = false;
+  ensurePermissionsUpfront();
+  return '已重置，将重新引导一次权限';
+}
+
 async function ensurePermissionsUpfront() {
-  if (permsAsked) return;
+  if (permsAsked || permsAlreadyAsked()) { permsAsked = true; return; }
   permsAsked = true;
+  try { localStorage.setItem(PERMS_ASKED_KEY, '1'); } catch (e) {}   // 立刻记上，中途失败也不重复骚扰
   const plugin = (isNativeApp() && window.Capacitor && window.Capacitor.Plugins)
     ? window.Capacitor.Plugins.AppPermissions : null;
   if (!plugin) return;                    // 浏览器内不做原生申请

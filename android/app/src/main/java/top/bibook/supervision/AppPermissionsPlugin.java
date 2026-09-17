@@ -183,7 +183,12 @@ public class AppPermissionsPlugin extends Plugin {
         if (!ignoring) {
             ret.put("batteryAsked", requestIgnoreBatteryOptimizations(pkg));
         }
-        ret.put("autostartOpened", openAutostartSettings());
+        ret.put("autostartOpened", ignoring ? false : openAutostartSettings());
+        // ↑ v0.28.1：原来是无条件跳「自启动/后台运行管理」页。
+        //   录像走系统相机时页面常被系统重载，boot() 会再走一遍引导 → 每次都再跳一次引导页，
+        //   用户看到的就是"视频保存后华为弹出应用信息"。已在电池优化白名单就不用再引导。
+        //   注意：本改动需**重新出包**才生效（当前线上 APK 仍是旧行为，JS 侧已用
+        //   localStorage 记住"引导过"来兜住这个症状）。
         call.resolve(ret);
     }
 
