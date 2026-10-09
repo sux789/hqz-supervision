@@ -21,3 +21,4 @@
 | B14 | 后台下载筛选弹框 | `static/admin.js::openFilterDialog` + `templates/admin.html#filterModal` | `GET /admin/api/workbooks/<id>/filter-options` | 带查询参数的下载 URL | B13 |
 | B15 | 按唯一键合并更新（C15） | `param_parser.py::merge_rows` | 旧/新 headers+rows + 唯一键 + 保护列 | `(merged_rows, stats)` | — |
 | B16 | 更新与回滚接口（C15） | `main.py::api_update / api_rollback` + `workbook_backups` 表 | xlsx 字节流 + confirm 名称 | 就地更新的工作簿 / 还原 | B4、B15 |
+| B17 | 照片 EXIF 读取/回写（doc/017） | `static/photo_exif.js` + `static/vendor/piexif.js` + `app.js::exifOf/preserveExif` | 原片 JPEG（Blob/dataUrl） | 带原片 EXIF 的压缩图（Orientation 归一、无 MakerNote） | 拍照流程 |

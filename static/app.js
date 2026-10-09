@@ -923,7 +923,8 @@ async function drawWatermark(file, remark, coords, opts) {
   bmp.close && bmp.close();
 
   // 首行：完整时间戳 yyyy-MM-dd HH:mm:ss（本地时区；C06：水印时间不参数化）
-  const now = new Date();
+  // v0.30：优先用原片 EXIF 的拍摄时间（opts.takenAt），更贴近快门时刻；EXIF 缺失退回当前时间
+  const now = (opts && opts.takenAt instanceof Date && !isNaN(opts.takenAt)) ? opts.takenAt : new Date();
   const p2 = (n) => String(n).padStart(2, '0');
   const stamp = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`
     + ` ${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}`;
@@ -996,6 +997,41 @@ function isNativeApp() {
     && window.Capacitor.isNativePlatform());
 }
 
+/* ── EXIF（v0.30，doc/017）────────────────────────────────────────
+   压缩是 Canvas 像素重绘，**必然丢掉全部 EXIF**（经纬度/拍摄时间/机型）。
+   这里做两件事：
+   ① 水印的坐标/时间**优先取原片 EXIF**（相机定位通常比浏览器 geolocation 权威，
+      且不依赖定位权限与 2.5s 超时）；EXIF 缺失再退回原行为（getCoords / 当前时间）
+   ② 把原片 EXIF **回写进压缩图** —— 云端那份因此是机器可读的
+   纯逻辑在 static/photo_exif.js（浏览器/node 通用，tests/test_exif.js 自动化覆盖 20 项）。
+   任何失败都静默退回原行为 —— EXIF 属锦上添花，绝不能因为它丢照片。 */
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
+async function exifOf(file) {
+  try {
+    if (!(window.piexif && window.PhotoExif && file)) return null;
+    if (!/jpe?g/i.test(file.type || file.name || '')) return null;   // 只处理 JPEG
+    return PhotoExif.exifOfDataUrl(await blobToDataUrl(file), window.piexif);
+  } catch (e) { return null; }
+}
+
+async function preserveExif(origFile, blob) {
+  try {
+    if (!(window.piexif && window.PhotoExif && origFile)) return blob;
+    if (!/jpe?g/i.test(origFile.type || origFile.name || '')) return blob;
+    const url = PhotoExif.preserveExifDataUrl(
+      await blobToDataUrl(origFile), await blobToDataUrl(blob), window.piexif);
+    return await (await fetch(url)).blob();
+  } catch (e) { return blob; }       // 任何失败都不影响出图
+}
+
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -1016,14 +1052,22 @@ $('#photoInput').addEventListener('change', async (e) => {
     const ts = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') +
       String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') +
       String(now.getMinutes()).padStart(2, '0') + String(now.getSeconds()).padStart(2, '0');
-    const coords = await getCoords();
+    // v0.30：水印坐标/时间**优先取原片 EXIF**（相机定位通常比浏览器 geolocation 权威，
+    //        且不依赖定位权限与超时）；EXIF 缺失再退回设备定位 / 当前时间（原行为）
+    const meta = await exifOf(file);
+    const coords = (meta && meta.lat != null)
+      ? meta.lat.toFixed(5) + ',' + meta.lng.toFixed(5)
+      : await getCoords();
     const remark = renderTpl(cur.config['相片备注'] || '', row, ts);
     // 压缩参数优先级（v0.16）：参数 sheet「压缩最长边/压缩质量」→ 后台「图片压缩」默认 → 内置兜底
     const cp = (await loadCompressParams()).photo || {};
     const maxSide = parseInt(cur.config['压缩最长边'], 10) || cp.max_side || PHOTO_MAX_SIDE;
     const quality = Math.min(1, Math.max(0.1,
       parseFloat(cur.config['压缩质量']) || cp.quality || PHOTO_QUALITY));
-    const blob = await drawWatermark(file, remark, coords, { maxSide, quality });
+    // v0.30：drawWatermark 之后立刻回写原片 EXIF（压缩管线本身会丢），
+    //        后续存相册 / 下载 / 云同步用的都是这份带 EXIF 的图
+    const blob = await preserveExif(file, await drawWatermark(file, remark, coords,
+      { maxSide, quality, takenAt: meta && meta.takenAt }));
     const filename = sanitizeSeg(renderTpl(cur.config['相片文件名'] || '', row, ts)) || 'photo';
     const subdir = rowSubdir();
     const xh = keyVal();
