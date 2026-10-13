@@ -28,3 +28,7 @@ generated-images/
 
 # macOS 垃圾文件
 .DS_Store
+
+# 验收流程设计本地备份
+data/验收流程设计/*.bak_*
+data/验收流程设计/.~*

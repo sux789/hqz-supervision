@@ -1,39 +1,41 @@
 # hqz-supervision 长期记忆
 
-- **当前线上版本 v0.29.2（2026-09-17 部署）**：https://forest.bibook.top/supervision 。部署前备份线上代码到 `/home/www/bibook_deploy/backups/supervision_<时间戳>.tar.gz`（回滚用）。部署走 `./deploy.sh`（rsync 代码 + 重启 gateway，**不碰数据库**）。
-- **后台卡片可见性现状（v0.29）**：**可见** = 模板管理 / 图片压缩 / 视频压缩 / **云同步（照片→七牛→百度）** / 验收变更日志；**仍注释隐藏** = 用户管理（`tblUsers`）、轨迹下载（`tblTrack`/`btnZip`）。做法一律是"整块 `<!-- -->` 注释掉、后端接口与数据全保留"，恢复时**只需解锁注释、不必改 JS**（相关 JS 早已用 `on()` 与 `if (!$('#…')) return;` 守卫）。
-- **云同步线上事实（2026-09-17 13:15 复核，已更正前一版误报）**：`sync_enabled = 1`（**已开启**，用户自行打开）；今日 12:53/12:54 两张照片 `baidu_ok`，**全链路已验证通**。路径 = `app_dir(/apps/supervision/) + prefix(supervision) + {参数目录}` → `/apps/supervision/supervision/{参数目录}/{文件名}`（**supervision 两次，冗余但可用**；09-13 历史成功路径是 `/apps/book_translator/supervision/…`；应用目录由百度应用 app_key 固定，**改配置前先确认**）。**排查"照片没同步"第一步永远先看 `sync_enabled`** —— 关着时 App 拿到 `/api/sync/enabled=false` 就**静默跳过上传**，表现为 `/api/photo` 零请求、`photo_sync` 无新记录（2026-09-17 的"没同步成功"就是这个原因）。`photo_sync` 里的 61 条 `received` 是 **09-13 遗留的 video 记录**（C09 视频不上云，会永远停在 received），**不是待推送的照片**（前一版"65 张照片待推送"的说法是误报）。
-- **云同步开关相关（v0.29.1 修）**：POST `/admin/api/sync/settings` 开启时的**校验**必须与落库口径一致 —— 前端出于安全**不回填密码框**、提交空串，若拿空串覆盖真实密钥就会"配置齐全却报缺配置"。现在空 secret 一律跳过；报错与面板提示用 `_SYNC_LABELS` 显示中文（如「百度 SecretKey」）。
-- **校验"HTML 元素是否真的生效"的正确姿势**：先 `re.sub(r'<!--.*?-->','',html)` **去掉注释**，再查 `id="x"` 是否存在。直接正则找 `<h2>` / `id=` 会把注释块里的文字也算进来 → 误报（v0.29 我第一次就误报了"用户管理未注释"）。
-- **照片元数据（2026-10-09 答复）**：压缩后照片**不含任何 EXIF**（经纬度/拍摄时间/机型全丢）—— 压缩是 Canvas 像素重绘（`drawImage`→画水印→`toBlob('image/jpeg')`，app.js `drawWatermark`），管线必然丢元数据，非 bug；服务器 `api_photo` 原样收不压缩。**但坐标没丢**：拍照时 `getCoords()` 单独取定位，把 `坐标：lat,lng`（5 位小数，2.5s 超时则略）+ `时间：yyyy-MM-dd HH:mm:ss` + `备注：…` 作为**水印文字**烙在画面左下角。手机系统相册里的原图 EXIF 完整（相机 app 存的，App 未动）。轨迹 GPS 另存在轨迹数据里。若需机器可读 EXIF：原生侧 ExifInterface 拷贝（需重新出包）。
-- **🚨 C19 从 UI 读值回写数据的三条铁律（v0.28.2，起因：v0.28 把字段名当值写坏线上 12 处）**：①**读值优先用官方 API**（`formGrid.getData()[y][1]`），**DOM 取值禁止写死下标** —— jspreadsheet 每行是 **3 个格子 = [行号, 字段名, 值]**（`children[1]` 是字段名！），**结构必须实测，不得按"应该几列"推断**。②**必须有 sanity 闸**：值若等于该行自己的标签/字段名 → 判读错，丢弃 + `console.warn`，绝不落库。③**"读→自动保存"链路必须先确认读源正确**（读错值＋自动保存＝静默数据损坏）；**调试输出里"不该长这样"的值必须当场解释清楚**（本次信号 `值格HTML片段:"验收备注"` 已出现却被我跳过）。④**验证一律用临时数据**，禁止拿真实工作簿调试。⑤**审计日志必须记 `old_value`** —— 本次全靠它精确还原被覆盖的真值（12 处）。**事故还原脚本思路**：`new_value == field` 是污染特征 → 按 (工作簿,行,字段) 取最早一条的 `old_value` 还原；若之后还有非事故变更则跳过交人工确认。
-- **C18 用户打扰必须幂等（v0.28.1）**：任何"只做一次"的引导/弹窗/跳转（权限申请、电池优化白名单、厂商自启动页）**必须把"已做过"持久化到 `localStorage`（键名带版本号）**，**禁止只记在内存变量里** —— 页面被系统重载（录像/拍照走系统相机时国产 ROM 常重载）后内存标志归零，会变成**每次回来都再弹一次**（用户实测："视频保存后华为弹出应用信息"）。进入函数要**立刻**落标志；留手动重置入口 `supAskPermsAgain()`。**原生侧**同类动作要先判断"是否已满足"再执行（`openAutostartSettings()` 已改为 `ignoring ? false : …`，**需重新出包才生效**）。
-- **C17 不可假定第三方组件的行为（v0.28）**：①对编辑器/第三方库，**关键数据不得依赖"它会不会派发事件"**（混淆源码里无法确认时，就当作"不会派发"设计）；在离场/承载边界上**直接读 DOM** 取真实值（编辑中取 `<input>.value`，否则取单元格文本）。②**关键写入必须有落盘草稿**：每次改动同步写 `localStorage`（同步写入，进程被杀也不丢），启动/**切回前台**自动补交，成功才清；国产 ROM 后台会冻结定时器，故"切回前台"也要触发补交。③**切后台顺序必须是"先收值再冲刷"**（编辑器往往还没提交）。④**验证不得自证循环**：自己造输入再派发事件、观察自己的监听器，只证明"监听器存在"，**不算验证**；必须走真实交互路径。**应用改动前先自问："我是不是又在替第三方组件假设行为？"**
-- **C16 前端脚本健壮性（v0.27）**：**任何"可能不存在"的元素引用都要走 `on()` 或空值守卫，禁止顶层裸 `addEventListener`** —— 卡片/按钮被注释掉后 `$('#x')` 返回 `null`，`null.addEventListener` 抛 TypeError 会让**整个脚本加载失败、整页失效**（症状是"所有按钮都没反应"，极易误判成后端问题）。删元素/注释卡片前先确认引用处已包 `on()`，并给加载函数加 `if (!el) return;`，同步提 `?v=`（C08）。后台「轨迹下载」卡片（`tblTrack`/`btnZip`）已在 v0.27 注释掉，后端接口与 `data/tracks/` 保留。
-- **⚠️ 往 CONSTRAINTS.md 追加约束行的正确做法（同一个错误犯过两次）**：用 Edit 时 **old_string 绝不能只写行首**（曾写 `| C15 | 就地更新与合并（v0.26）` → 把 C15 整行截断、编号被新约束顶掉；v0.24 加 C12 时也犯过）。**必须锚定上一行的行尾完整片段（含结尾的 `| vX | 链 |`）**，或用脚本按行索引插入。加完用脚本校验每行"未转义竖线分隔后列数 == 4"。行内若出现 `|`（如 `` `字段|select` ``）必须写成 `\|`（C02 的约定），否则 markdown 表格被撑出多余列。
-- **未决（原生侧，缺证据）**：用户报"视频保存后华为弹出应用信息"。已排查：`ACTION_MEDIA_SCANNER_SCAN_FILE` 有 `SDK_INT<Q` 守卫（不是它）；"应用信息"页（`ACTION_APPLICATION_DETAILS_SETTINGS`）只在相机权限被拒、录像**前**调用，与"保存后"不符；`KeepAliveService` 的 FGS 声明完整。**需用户给弹窗原文/截图**；**本机无 Android SDK**，原生改动需在能构建 APK 的机器上出包（versionCode 8 / versionName 0.8，签名证书有效至 2056）。
-- **⚠️ 往 CONSTRAINTS.md 追加约束行的正确做法（同一个错误犯过两次）**：用 Edit 时 **old_string 绝不能只写行首**（曾写 `| C15 | 就地更新与合并（v0.26）` → 把 C15 整行截断、编号被新约束顶掉；v0.24 加 C12 时也犯过）。**必须锚定上一行的行尾完整片段（含结尾的 `| vX | 链 |`）**，或用脚本按行索引插入。加完用脚本校验每行"未转义竖线分隔后列数 == 4"。行内若出现 `|`（如 `` `字段|select` ``）必须写成 `\|`（C02 的约定），否则 markdown 表格被撑出多余列。
-- **C15 就地更新与合并（v0.26）**：①**「更新 Excel」必须就地更新、保留原工作簿 id**（`accept_logs` 绑 `workbook_id+row_idx`、下架状态、App 习惯都靠它不断链），只有「上传」才新建 —— **事实：重新上传永不覆盖、永远新建**（实测 ids `[2,3]`→`[2,3,66]`）。②合并**以既有行顺序为基准**：匹配的行**原地**合并（老行 row_idx 不变 → 变更日志不错位），新表的行**追加末尾**，旧表有而新表没有的行**保留不删**。③冲突取值：**只有「可编辑列」（旧∪新）旧值非空优先，其余列以新表为准** —— 否则"填到一半改 Excel"（改原始数据、加列）永远不生效。④按**列名**对齐（可增删换序），数值类型必须保留（别把 108.87 变文本）。⑤**不设"重合比例"自动闸门**（删掉一批小班后重合率很低但仍是同一份数据；传错文件也可能凑巧重合）→ 改为「预览统计 + 输入工作簿名确认」；`?dry=1` 只算不写。⑥**必须可回滚**：写库前自动备份 DB 行 + 源模板文件（`workbook_backups`，每簿最多 5 份）。⑦唯一键列名两边不一致、或该列在任一侧缺失 → 拒绝更新。
-- **两条事实备查**：①导出的 Excel **自带「参数」sheet** → "下载→改参数→重传"这条路径一直可用（缺点是会多出一个工作簿、旧的要手动清）；②`/api/workbooks`（App 端）**只列未下架的**，下架的工作簿不在该列表出现（别误判成"被删"）。
-- **C14 保存与离场纪律（v0.25）**：①**任何防抖/节流保存都必须能在离场前冲刷**——点返回 / 路由切换 / 切后台 / 关页重载四条路径全要调 `flushRowSave()`，卸载用 `fetch(keepalive:true)`（**禁用 `sendBeacon`**：带不了 `X-Sup-Token` 头，只能把令牌塞 URL → 落访问日志）。②待保存任务**必须快照 `wid/ridx/values`**，禁止延后按 `cur/curIdx` 取值（切了工作簿会把 A 写进 B）。③编辑器（jspreadsheet）`onchange` 只在 blur/Enter 触发，**必须另加逐键捕获**（委托 `input`）把输入同步进内存，否则冲刷上去是旧值。④`datetime` 必须先于 `date` 判断（子类，且 `str()` 带 `00:00:00` 污染数据）。⑤后台「下载 Excel」筛选**只筛行**，字段由参数 `导出筛选`（`字段|select`/`字段|date`）声明，弹框只显示**声明 ∩ 该工作簿表头**（没有的字段不提示），下载接口只认声明过的字段。⑥从登录页回跳要带 `?next=<原页>`，登录后送回原页；非管理员静默回 App 并清 next。
-- **C13 可见性与权限必须分开（v0.24）**：①**「下架」= 软删除**（`workbooks.is_active=0`）：只让 App/user 端看不见、不能操作（列表不列 + 读/写/导出/拍照/录像一律 403），数据/源 Excel/日志/照片全保留，管理员放行，可 `POST /api/workbooks/<id>/restore` 上架；彻底删除只走 `DELETE ?purge=1`，且只暴露在已下架列表里。②**前端隐藏一律不是权限**，边界只在服务端 `@login_required`/`@admin_required`；**禁止**用 URL 参数（如 `?showdel=1`）当权限或"危险模式"开关（会因存书签而常开、随链接扩散、被后来人误当权限＝假安全）。③**不可逆操作必须要求照着输入对象名称确认**，且用**自建 DOM 弹层**而非 `window.prompt`（Android WebView 默认不实现 `onJsPrompt`，手机上会失效）。④**标志位为 0 时禁止写在 `or` 左侧**（`int(r['a'] or 1)` 会把 0 吃成 1，守卫永久失效）。
-- **C12 多应用同域跳转铁律（v0.23.1）**：本项目与 survey/cam/forest 等**共用域名 forest.bibook.top，靠 gateway 按前缀分发**。应用内一切跳转/回退/下载地址**必须**用 `window.SUP_BASE`（= Flask 注入的 `request.script_root`，如 `/supervision`）锚定本应用，**禁止硬编码 `'/'` 或裸路径**——`'/'` 是网关首页（所有应用入口），用户会被丢进别的应用、再拿本应用账号反复试密码。2026-09-14 何明星「退出」即踩此坑。
-- **排查"登录不上"的方法论（务必先做）**：**先看访问日志有没有失败的登录请求**（`grep "POST /supervision/api/login" access.log`）。一条失败都没有 ⇒ 请求根本没到服务器 ⇒ 问题在客户端/落点/缓存，**不在鉴权**，不要去改密码或翻鉴权代码。日志路径 `/home/www/bibook_deploy/apps/gateway/logs/access.log`。
-- **写测试的三条硬规矩（踩过）**：①**多身份必须各用独立 `test_client`**——`auth_user()` 优先读 session，同一 client 先后登录管理员与普通用户会让后者覆盖前者（表现为"管理员被判 403"）。②**不要写死模板文件名与期望结果**——用户会改名/增删模板；改为从 `data/*.xlsx` 自动发现 + 期望从文件内容独立推断，缺依赖标 `SKIP`。③**每套用例要用与自家表头匹配的参数基底**——拿别人的 `FULL` 常量配另一套表头，会先被"占位符不是表头"拦下，测不到目标分支。
-- **gateway 部署事实**：应用进程内挂载在 `/home/www/bibook_deploy/apps/gateway`（gunicorn:8090 + Werkzeug DispatcherMiddleware 按 `.appspec` 前缀剥离分发），`.appspec` 里 `auth: global`。
-- 定位（v0.2 修正）：通用 Excel 网格填表工具——上传多个 xlsx 选择进入，无样地/GDB/调查业务，行为全由参数 sheet 驱动；不影响 hqz-survey 线上，独立 appId 不重复。
-- **gateway 部署事实**：应用进程内挂载在 `/home/www/bibook_deploy/apps/gateway`（gunicorn:8090 + Werkzeug DispatcherMiddleware 按 `.appspec` 前缀剥离分发），`.appspec` 里 `auth: global`。
-- 定位（v0.2 修正）：通用 Excel 网格填表工具——上传多个 xlsx 选择进入，无样地/GDB/调查业务，行为全由参数 sheet 驱动；不影响 hqz-survey 线上，独立 appId 不重复。
-- 核心契约（C01/C02）：数据 sheet 行为一律由「参数」sheet 驱动，禁硬编码；参数语法固定——表头 key|value|类型|默认值|说明|示例，多值 `;`、子字段 `|`、目录 `/`、文件名段 `_`、占位符 `{{列名}}/{{sheet名称}}/{{时间}}`，未知 key/全角分隔符/占位符列名不匹配必须带行号报错。
-- 参数 13 键（v0.23）：相片备注/相片文件名/目录/验收结果选项/可编辑列/不显示列/功能/搜索选项/压缩最长边/压缩质量 + **unique-key**（唯一键列名，只认英文写法）/**日志字段**（两用：变更日志审计 + 前端结果联动，由后端 `log_fields` 下发）/**百分比列**。后三个均**可选**，缺省走内置默认。
-- **必填 key 按需（v0.23）**：`可编辑列`、`功能` 恒必填；`相片备注`/`相片文件名`/`目录` **仅在「功能」含 拍照/视频 时必填**——纯填表不拍照的 Excel 不必硬写拍照模板。
-- **C11 唯一键与通用化（v0.23，doc/010）总目标：同一套 App 装不同 Excel 尽量不改代码**：①数据 sheet 优先精确取名为 `data`（多余 sheet 可容忍），否则要求"有且仅有 1 个非「参数」sheet"，否则明确报错；旧写法 `next(n for n in sheetnames if n != '参数')` 一带说明页就静默取错表。②`unique-key` 声明后该列**必须非空且唯一**，违反**拒绝上传**并报错带 Excel 行号；且不得出现在「可编辑列」中；**未声明则不校验**（用户口径）。③行标识全链路参数化：`keyCol()/keyVal()`（参数 → 后端 `key_column` → 兜底小班号），前端原有 12 处 `rowVal('小班号')` 已清干净。④结果联动按列名判角色（含 人/员→当前用户；含 日期/时间→今天），换列名不改代码。⑤`workbooks` 表加 `key_column`（纯加列，老工作簿回落小班号）。⑥`api_delete` 连带清源模板目录 + `accept_logs`/`photo_sync` 关联行（原只删 DB 行，会留孤儿目录）。
-- **工具与回归网（v0.23 新增）**：`tools/check_template.py` 模板体检器（只读，FATAL/PENDING/WARN，非模板自动 SKIP，退出码 0=可上传）；`tests/test_unit.py`(31) / `tests/test_e2e.py`(19) / `tests/run_all.sh` 一键全量。**改模板先跑体检器；改代码先跑 run_all.sh**。
-- **目录名陷阱**：`/Users/sux/Desktop/hqz-supervision` 末尾含 **U+200C 零宽不连字符**，shell 里手写路径会 "No such file or directory"；脚本里用 `glob.glob("/Users/sux/Desktop/hqz-supervision*")` 取真实路径。
-- `validate.py` / `check_invariants.py` / `compare.py` / `make_baseline.sh` **仍是未填的占位骨架**（`validate.py` 里是 `REQUIRED=["关键列1"]`；`make_baseline.sh` 的生成命令是 `python main.py --data data/ --out`，而本项目 main.py 是 Flask app 不接受 `--out`）——用到前必须先改写。
-- 关键文档：doc/001-参数sheet配置规范.md、doc/002-拍照轨迹功能迁移设计.md（迁移批次 B1 param_parser+grid_render → B2 photo_mgr → B3 track_mgr）、doc/007-相片云同步设计.md、doc/010-唯一键参数化与通用化.md。
-- v0.9 相片云同步（已上线）：App 拍照 → /api/photo 中转 → 七牛 zz-1 暂存 + data/pending 缓冲 → 百度网盘 /apps/book_translator/supervision/{参数目录}/（app_key 决定固定目录）；状态机 received→qiniu_ok→baidu_ok，百度成功删 pending、七牛副本 30 天清理；sync_cloud.py 纯标准库（服务器 shared_venv 无 requests/qiniu）；凭证在 settings 表（双端已配，enabled=1）；七牛 io 回读域名未开放（需绑下载域名），pending 为主要回读源。
-- hqz-survey 硬编码位置备查：app.js buildPhotoName L3033 / photoSaveSubdir L3005 / PHOTO_SAVE_DIR L2984 / EXPORT_SAVE_DIR L3031。
-- 模板自带 inspect.py 与 stdlib 冲突：目录内跑 python 需 cd /tmp。
-- 运维时间点：**forest.bibook.top 的 HTTPS 证书 2026-11-30 到期**（90 天免费证书，需提前续，否则 App 打不开）；登录令牌 180 天、会话 cookie 30 天；debug APK 签名证书有效至 2056（无试用期）。APK 分发走自建短链 /supervision/apk（CI 产物 scp 到 apps/supervision/static/，旧包保留可回滚，/apk 取版本号最大者）。
-- Android 打包（v0.3.1）：Capacitor6 远程URL壳模式（同 hqz-survey），appId top.bibook.supervision / appName 监督验收 / URL 占位 forest.bibook.top/supervision；android/ 已生成并提交，构建需装 SDK 的机器（本机无 Android SDK）；前端桥接约定 waitForCapacitor()。GitHub 远程 git@github.com:sux789/hqz-supervision.git，建仓后 push。
+> 详细版见 `doc/018-功能总览（开发交接）.md` 与 `STATE.md`。本文件只留**不能从代码/文档直接推导的判断与教训**。
+
+## 定位与部署
+- 通用 Excel 网格填表工具（无样地/GDB 业务，行为全由参数 sheet 驱动），appId `top.bibook.supervision`，后端 https://forest.bibook.top/supervision；gateway 进程内挂载（gunicorn:8090 + DispatcherMiddleware，appspec `auth: global`）。
+- 部署走 `./deploy.sh`（rsync 代码 + 重启 gateway，**不碰数据库**），部署前必备份 `/home/www/bibook_deploy/backups/`。访问日志 `/home/www/bibook_deploy/apps/gateway/logs/access.log`。
+- **forest.bibook.top 证书 2026-11-30 到期**（90 天免费），需提前续。本机无 Android SDK，原生改动需在能出包的机器上做。
+
+## 环境陷阱
+- 工作目录名末尾含 **U+200C 零宽字符**，shell 手写路径会 No such file；脚本里用 `glob.glob("/Users/sux/Desktop/hqz-supervision*")` 取真实路径。
+- 模板自带 `inspect.py` 与标准库冲突，目录内跑 python 需 `cd /tmp`。
+- 用 Edit 往 `CONSTRAINTS.md` 追加行时 **old_string 必须锚定上一行完整行尾**，只写行首会截断整行（犯过两次）；行内 `|` 须写成 `\|`，加完用脚本校验列数 == 4。
+
+## 后台卡片可见性（v0.29）
+- **可见**：模板管理 / 图片压缩 / 视频压缩 / 云同步 / 验收变更日志；**注释隐藏**：用户管理（`tblUsers`）、轨迹下载（`tblTrack`/`btnZip`）。
+- 做法 = 整块 `<!-- -->` 注释，后端接口与数据全保留；恢复**只需解锁注释、不必改 JS**（JS 早已用 `on()` 与 `if (!$('#…')) return;` 守卫）。
+- 校验"元素是否生效"必须先 `re.sub(r'<!--.*?-->','',html)` **去注释**再查，否则误报。
+
+## 云同步事实
+- 排查"照片没同步"**第一步永远先看 `sync_enabled`** —— 关闭时 App 拿到 `/api/sync/enabled=false` 就静默跳过，表现为 `/api/photo` 零请求。
+- `photo_sync` 里 61 条 `received` 是 09-13 遗留 **video** 记录（视频不上云，永远停 received），**不是待推送照片**。
+- 路径 = `app_dir(/apps/supervision/) + prefix + 目录模板`；app_dir 由百度 app_key 固定，改配置前先确认。v0.29.2 已做斜杠折叠（用户会填 `/apps/x/` 导致 `//`）。空 secret 一律跳过（前端不回填密码框，否则会覆盖真密钥）。
+- `sync_cloud.py` / `track_export.py` 必须**纯标准库**（服务器 shared_venv 无 requests/qiniu）。
+
+## 最重要的教训（按代价排序）
+- **C19 读值回写**：jspreadsheet 每行是 **[行号, 字段名, 值] 三格**，`children[1]` 是字段名。v0.28 按两列取值 + 自动保存 → 线上写坏 12 处。读值优先官方 API `getData()`；DOM 禁写死下标；必须有 sanity 闸（值==字段名即判读错）；验证用临时数据；审计日志必记 `old_value`（全靠它还原）。还原脚本思路：`new_value == field` 是污染特征 → 按 (工作簿,行,字段) 取最早一条的 `old_value`。
+- **C17 不可假定第三方组件**：关键数据不依赖编辑器派不派发事件；离场边界直接读 DOM；关键写入有 localStorage 落盘草稿（启动/切回前台自动补交）；切后台**先收值再冲刷**；验证不得自证循环。
+- **C18 用户打扰幂等**：只做一次的引导必须持久化到 localStorage（键名带版本号），不能只记内存变量——国产 ROM 会重载页面。
+- **C12 多应用同域**：一切跳转用 `window.SUP_BASE` 锚定本应用，禁硬编码 `/`（`'/'` 是网关首页，会把用户丢进别的应用再反复试密码）。
+- **C14 保存纪律**：防抖保存必须在返回/路由/切后台/关页四条路径冲刷；任务快照 wid/ridx/values；卸载用 `fetch(keepalive)`，**禁用 `sendBeacon`**（带不了 `X-Sup-Token`）；`datetime` 判断先于 `date`；中文下拉**不能用字典序**（六标/七标/十标 会排错）。
+- **C13 可见性 ≠ 权限**：边界只在服务端；禁 URL 参数当权限开关；`int(r['a'] or 1)` 把 0 吃成 1；不可逆操作照名确认 + 自建弹层（`window.prompt` 在 Android WebView 不生效）。
+- **C16 脚本健壮**：可能不存在的元素必须 `on()`/空值守卫，否则顶层裸 `addEventListener` 抛 TypeError → **整脚本加载失败、整页失效**，症状像后端问题。
+- **C20 EXIF**：Canvas 压缩必然丢 EXIF；回写时 Orientation 强制 1、删尺寸标签、删 MakerNote；失败静默退回原行为。压缩图 EXIF 是 v0.30 用 piexifjs 回写的；坐标另作为**水印文字**烙在画面上。
+- **C15 就地更新**：「更新 Excel」必须保留原工作簿 id（重新上传永不覆盖、永远新建，实测 ids `[2,3]`→`[2,3,66]`）；以既有行顺序为基准合并；只有「可编辑列」旧值非空优先；写库前自动备份可回滚。
+- **两条事实备查**：①导出的 Excel **自带「参数」sheet** → "下载→改参数→重传"一直可用；②`/api/workbooks`（App 端）**只列未下架的**，别误判成"被删"。
+- **排查"登录不上"**：先看日志有没有失败登录请求。一条都没有 ⇒ 请求没到服务器 ⇒ 问题在客户端/落点，**不在鉴权**。
+- **写测试**：多身份必须各用独立 `test_client`（session 会互相覆盖，表现为"管理员被判 403"）；不写死模板文件名与期望；每套用例配自家表头的基底。
+- **`validate.py`/`check_invariants.py`/`compare.py`/`make_baseline.sh` 仍是空骨架**（模板遗留，`REQUIRED=["关键列1"]`、`main.py --out` 不存在），本项目用 `tests/run_all.sh`。
+- 回归：`bash tests/run_all.sh`（182 项：unit 77 + e2e 85 + exif 20），全绿才提交。模板体检 `python tools/check_template.py data/*.xlsx`。
+- 未决：用户报"视频保存后华为弹出应用信息"。JS 侧已修（引导幂等化，改网页即生效）；原生 `openAutostartSettings()` 已加"已满足就不跳"，**需重新出包**；仍需弹窗原文/截图才能彻底定位。

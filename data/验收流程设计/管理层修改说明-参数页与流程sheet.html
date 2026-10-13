@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>管理层修改说明 · 参数页与流程 sheet 怎么改</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --ink:#1f2937; --muted:#6b7280; --line:#e5e7eb;
+    --blue:#2563eb; --blue-bg:#eff6ff; --green:#059669; --green-bg:#ecfdf5;
+    --amber:#b45309; --amber-bg:#fffbeb; --red:#dc2626; --red-bg:#fef2f2; --gray-bg:#f3f4f6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.75;padding:32px 16px}
+  .wrap{max-width:980px;margin:0 auto}
+  header{margin-bottom:26px}
+  h1{font-size:26px;margin-bottom:8px}
+  .sub{color:var(--muted);font-size:14px}
+  .tag{display:inline-block;font-size:12px;padding:2px 10px;border-radius:999px;background:var(--green-bg);color:var(--green);border:1px solid #a7f3d0;margin-left:8px;vertical-align:middle}
+  section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px 24px;margin-bottom:20px}
+  h2{font-size:18px;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+  h3{font-size:15.5px;margin:18px 0 8px}
+  h2 .no{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;background:var(--blue);color:#fff;font-size:13px;flex:none}
+  p{margin-bottom:10px;font-size:14.5px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:10px 0}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--gray-bg);font-weight:600;white-space:nowrap}
+  code{background:var(--gray-bg);border:1px solid var(--line);border-radius:4px;padding:1px 6px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#111827}
+  .callout{border-radius:10px;padding:14px 16px;font-size:14px;margin:12px 0}
+  .callout.blue{background:var(--blue-bg);border:1px solid #bfdbfe}
+  .callout.green{background:var(--green-bg);border:1px solid #a7f3d0}
+  .callout.red{background:var(--red-bg);border:1px solid #fecaca}
+  .callout.amber{background:var(--amber-bg);border:1px solid #fde68a}
+  ol.steps{margin:8px 0 8px 22px;font-size:14.5px}
+  ol.steps li{margin-bottom:8px}
+  ul.tips{margin:6px 0 6px 22px;font-size:14px}
+  ul.tips li{margin-bottom:5px}
+  .ok{color:var(--green);font-weight:700}
+  .no{color:var(--red);font-weight:700}
+  .pill{display:inline-block;font-size:12px;padding:1px 8px;border-radius:999px;margin-right:4px}
+  .pill.can{background:var(--green-bg);color:var(--green);border:1px solid #a7f3d0}
+  .pill.cant{background:var(--red-bg);color:var(--red);border:1px solid #fecaca}
+  .pill.ask{background:var(--amber-bg);color:var(--amber);border:1px solid #fde68a}
+  footer{text-align:center;color:var(--muted);font-size:12.5px;padding:10px 0 30px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>管理层修改说明<span class="tag">给管理人员看 · 不需要懂程序</span></h1>
+  <div class="sub">适用文件：data/验收流程设计/造林项目-验收模板-含验收流程.xlsx　|　配套：《验收流程设计说明.md》《验收流程设计-附件按钮解说.html》</div>
+</header>
+
+<section>
+  <h2><span class="no">1</span>先搞清楚：这份 Excel 里每个页签是什么、能不能动</h2>
+  <table>
+    <tr><th style="width:16%">页签（sheet）</th><th style="width:12%">能不能改</th><th>它是什么</th></tr>
+    <tr>
+      <td><code>data</code></td><td><span class="pill cant">不能改</span></td>
+      <td>小班本底数据（600 个小班）。这是全系统验收的对照基准，<b>任何人都不改</b>；现场人员只能填最后 4 列（验收人/验收日期/验收结果/验收备注）。</td>
+    </tr>
+    <tr>
+      <td><code>参数</code></td><td><span class="pill can">管理层可改</span></td>
+      <td>全局配置：照片水印、文件名、下拉选项、哪些列可编辑、照片压缩等。<b>按第 3 节的说明改</b>，只改 value（B 列），不动 key（A 列）。</td>
+    </tr>
+    <tr>
+      <td><code>验收流程</code></td><td><span class="pill can">管理层可改</span></td>
+      <td>流程登记表：决定「哪个流程、对哪些小班、对哪些文件生效」。<b>加一行 = 启用一个流程</b>，是管理层最常用的页签。</td>
+    </tr>
+    <tr>
+      <td><code>流程-XXX</code></td><td><span class="pill can">管理层可改</span></td>
+      <td>流程定义表（页签名必须以 <code>流程-</code> 开头）：一个流程里有哪几个验收环节、查什么、要不要拍照/上传。按第 4 节的说明改。</td>
+    </tr>
+    <tr>
+      <td><code>使用说明</code></td><td>—</td>
+      <td>简版说明，打开文件第一眼就能看到；本页是详细版。</td>
+    </tr>
+  </table>
+  <div class="callout blue"><b>总原则：改 Excel 就是改系统。</b>加流程、改环节、调下拉选项，都在 Excel 里完成，手机端自动跟着变，<b>不需要找技术人员改程序</b>。</div>
+</section>
+
+<section>
+  <h2><span class="no">2</span>最常用的三件事，照着做</h2>
+
+  <h3>① 新增一个验收流程（例如"经济林补植流程"）</h3>
+  <ol class="steps">
+    <li><b>复制一个现成的流程页签</b>（右键页签 → 移动或复制 → 建立副本），把副本改名为 <code>流程-经济林补植</code>（必须以 <code>流程-</code> 开头，名字不能和已有的重复）；</li>
+    <li>在副本里<b>逐行修改验收环节</b>：改环节名、核验因子、附件要求等（各列含义见第 4 节）；</li>
+    <li>回到 <code>验收流程</code> 登记表<b>加一行</b>：流程sheet名填 <code>流程-经济林补植</code>、启用填 <code>是</code>、条件字段/条件值按第 4 节语法填、优先级填一个没用过的数字；</li>
+    <li>保存，完成。手机端重新打开即生效。</li>
+  </ol>
+
+  <h3>② 临时停用 / 恢复一个流程</h3>
+  <ol class="steps">
+    <li>打开 <code>验收流程</code> 登记表，找到那一行；</li>
+    <li>把「启用」列改成 <code>否</code> 即停用；改回 <code>是</code> 即恢复；<b>不要删行</b>——删了历史配置就找不回来了。</li>
+  </ol>
+
+  <h3>③ 只让某个文件用某个流程</h3>
+  <ol class="steps">
+    <li>在 <code>验收流程</code> 登记表那一行的「适用范围」列：填 <code>全部</code> = 所有文件都用；填具体文件名（如 <code>造林项目-验收模板.xlsx</code>）= 只有这个文件用。</li>
+  </ol>
+</section>
+
+<section>
+  <h2><span class="no">3</span>参数页说明：每个 key 是什么、怎么改、改错会怎样</h2>
+  <p>参数页只有 <b>6 列</b>：<code>key | value | 类型 | 默认值 | 说明 | 示例</code>。<b>只改 value（B 列），A 列的 key 名一个字都不要动</b>；E 列说明、F 列示例可以随手参考。</p>
+  <table>
+    <tr><th style="width:14%">key</th><th style="width:26%">管什么</th><th style="width:34%">怎么改（管理层操作）</th><th>改错的后果</th></tr>
+    <tr><td><code>相片备注</code></td><td>照片上烙的水印文字</td><td>增删文字和 <code>{{列名}}</code> 占位符，如改成 <code>{{标段}}-{{小班号}} {{验收人}}</code></td><td>占位符拼错（如 <code>{{小班号}}</code> 少打括号）→ 水印显示原文不替换</td></tr>
+    <tr><td><code>相片文件名</code></td><td>照片保存的文件名</td><td>可用的占位符：<code>{{标段}} {{小班号}} {{时间}}</code> 等；<code>{{时间}}</code> 会变成 20260911_153000 这样的时间</td><td>文件名重名 → 照片可能互相覆盖，<b>建议保留 {{时间}}</b></td></tr>
+    <tr><td><code>目录</code></td><td>照片在云端的存放文件夹</td><td>用 <code>/</code> 分层，如 <code>{{sheet名称}}/{{小班号}}</code></td><td>开头多写一个 <code>/</code> 会出现 <code>//</code> 双斜杠目录（程序已做兼容，但仍建议别多打）</td></tr>
+    <tr><td><code>验收结果选项</code></td><td>「验收结果」列的下拉选项</td><td>多个选项用<b>半角分号</b>隔开，如 <code>合格;不合格;整改后合格</code></td><td>用了中文分号 <code>；</code> → 会被当成一个选项</td></tr>
+    <tr><td><code>可编辑列</code></td><td>现场人员允许填写哪些列</td><td>列名清单用半角分号隔开，<b>必须与 data 页表头一字不差</b>（含空格）</td><td>列名写错 → 现场人员改不了那一列</td></tr>
+    <tr><td><code>不显示列</code></td><td>手机端隐藏哪些列</td><td>列名清单用半角分号隔开；<b>留空 = 全部显示</b></td><td>列名写错 → 该列照常显示（不会报错）</td></tr>
+    <tr><td><code>功能</code></td><td>App 功能开关</td><td>可选值：<code>拍照</code>、<code>视频</code>、<code>轨迹</code>、<code>打卡</code>，半角分号分隔</td><td>拼错字 → 该功能不开</td></tr>
+    <tr><td><code>搜索选项</code></td><td>列表页的搜索/筛选控件</td><td>格式 <code>字段名\|select</code>（下拉）或 <code>字段名\|search</code>（输入搜索）</td><td>字段名与 data 表头不一致 → 该筛选不出现</td></tr>
+    <tr><td><code>压缩最长边</code></td><td>照片压缩后的最长边（像素）</td><td>填数字，常用 1440 或 1920</td><td>填太大 → 上传慢；填太小 → 照片模糊</td></tr>
+    <tr><td><code>压缩质量</code></td><td>照片压缩质量</td><td>0.1 ~ 1 之间的小数，常用 0.8</td><td>填错格式 → 压缩异常</td></tr>
+    <tr><td><code>unique-key</code></td><td>小班的唯一编号列</td><td><span class="pill cant">不要改</span> 固定为 <code>小班号</code></td><td>改了 → 照片/数据对不上小班</td></tr>
+    <tr><td><code>导出筛选</code></td><td>导出资料时的筛选控件</td><td>格式同搜索选项：<code>字段名\|select</code> 或 <code>字段名\|date</code></td><td>字段名写错 → 该筛选不出现</td></tr>
+  </table>
+  <div class="callout amber"><b>通用注意：</b>① 分隔符一律用<b>半角分号 <code>;</code></b>，不是中文分号；② <code>{{列名}}</code> 里的列名必须与 data 页表头完全一致——特别注意 data 表头「<code>总株数</code>」末尾带着 2 个空格，引用它时原样保留；③ 改参数前先复制一份 Excel 备份，改完让技术员或现场人员试一下再正式用。</div>
+</section>
+
+<section>
+  <h2><span class="no">4</span>流程 sheet 说明：11 列各填什么</h2>
+  <table>
+    <tr><th style="width:13%">列</th><th>管理层怎么填</th></tr>
+    <tr><td><code>序号</code></td><td>1、2、3…连续编号，代表验收先后顺序。加环节后续着编，别跳号。</td></tr>
+    <tr><td><code>验收环节</code></td><td>工序名称，如 整地、回塘及底肥放置、栽植、撑杆覆膜、成活率核验。</td></tr>
+    <tr><td><code>验收类型</code></td><td>固定几种：<code>前置确认</code>（开工前的边界确认）/ <code>转序验收</code>（各工序）/ <code>完工验收</code>（成活率）/ <code>竣工验收</code>（保存率）/ <code>年度验收</code> / <code>抚育验收</code>。</td></tr>
+    <tr><td><code>核验因子</code></td><td>这个环节必须查的内容清单。凡写了的、且「填报要求=必填」的，现场人员不填完<b>提交按钮就是灰色</b>，这是防漏填防造假的核心开关。</td></tr>
+    <tr><td><code>标准值来源</code></td><td>两种写法：① 写 data 页的列名（如 <code>整地规格</code>）→ 手机端自动把本底标准值带出来对照；② 写 <code>项目作业设计</code> → 无对应列，现场按方案人工判断。</td></tr>
+    <tr><td><code>填报要求</code></td><td><code>必填</code> 或 <code>选填</code>。也可带条件，如「该列有值的小班必填」。</td></tr>
+    <tr><td><code>校验方式</code></td><td>怎么算合格：实测对照标准值 / 现场核验 / 抽查实测 等，写给现场人员看的口径。</td></tr>
+    <tr><td><code>附件要求</code></td><td><b>控制手机端出什么按钮</b>（详见配套《附件按钮解说》）：<br>· <code>拍照:整地现场照片</code> → 只出拍照按钮（App 内实时拍摄、禁相册、自动上传）<br>· <code>上传:三证一签</code> → 只出上传文件按钮（可选照片或 PDF，适合证件）<br>· <code>拍照:回塘照片;上传:底肥单据</code> → 两种都出（半角分号隔开）<br>· <code>拍照:现场照片@2</code> → 至少拍 2 张才能提交<br>· <b>留空 → 该环节没有按钮</b></td></tr>
+    <tr><td><code>通过标准</code></td><td>合格线，如「实测规格 ≥ 设计规格」「成活率达到设计要求」。</td></tr>
+    <tr><td><code>转序规则</code></td><td>这个环节什么时候才能做：如「上一环节合格方可填报」「全部转序验收合格后方可进行」。</td></tr>
+    <tr><td><code>备注</code></td><td>写给现场人员的补充口径（分批填报、证件份数、确认人取登录账号等），随便写，不影响程序。</td></tr>
+  </table>
+
+  <h3>「验收流程」登记表的条件怎么填（决定流程对谁生效）</h3>
+  <table>
+    <tr><th style="width:36%">想要的效果</th><th>填法</th></tr>
+    <tr><td>所有小班都执行</td><td>条件字段填 <code>1</code>（或留空），条件值留空</td></tr>
+    <tr><td>只对"退化林修复"的小班执行</td><td>条件字段填 <code>项目类型</code>，条件值填 <code>退化林修复</code></td></tr>
+    <tr><td>"退化林修复"或"四旁植树"都执行</td><td>条件值填 <code>退化林修复;四旁植树</code>（半角分号 = 满足其一）</td></tr>
+    <tr><td>既要退化林修复、又要 2026 年的</td><td>条件字段 <code>项目类型;实施年度</code>，条件值 <code>退化林修复;2026年</code>（一一对应，全部满足）</td></tr>
+    <tr><td>一个小班命中两条流程怎么办</td><td>按「优先级」列数字小的执行，<b>优先级别填重复的数字</b></td></tr>
+  </table>
+</section>
+
+<section>
+  <h2><span class="no">5</span>红线清单：改之前先看这一条</h2>
+  <div class="callout red">
+    <ul class="tips" style="margin-left:2px">
+      <li><span class="no">✗</span> 不改 <code>data</code> 页的任何数据、任何表头（表头是程序认列的依据）。</li>
+      <li><span class="no">✗</span> 不改 <code>参数</code> 页 A 列的 key 名，不删 key 行。</li>
+      <li><span class="no">✗</span> 不改流程页签的 <code>流程-</code> 前缀（改了 App 就不认它是流程表）。</li>
+      <li><span class="no">✗</span> 不合并单元格、不删第 1 行表头、不在表头行上方插行。</li>
+      <li><span class="no">✗</span> 不用中文分号 <code>；</code> 做分隔符，一律半角 <code>; </code>。</li>
+      <li><span class="ok">✓</span> 停用流程用「启用=否」，不删行。</li>
+      <li><span class="ok">✓</span> 改之前复制一份 Excel 备份；改完先让一个现场人员试，再全面铺开。</li>
+    </ul>
+  </div>
+
+  <h3>改完自查 30 秒（对不上就先别发）</h3>
+  <table>
+    <tr><th style="width:50%">检查项</th><th>合格标准</th></tr>
+    <tr><td>新流程页签名</td><td>以 <code>流程-</code> 开头，与已有页签不重名</td></tr>
+    <tr><td>登记表里加的那一行</td><td>「启用」只有 是/否 两种值；「优先级」没和别的行重复</td></tr>
+    <tr><td>条件字段/条件值</td><td>字段名与 data 表头一字不差；条件值与 data 里实际填的值一致（如「补植修复+采伐修复」是一个整体值）</td></tr>
+    <tr><td>「可编辑列」改过的</td><td>每个列名都能在 data 表头里原样找到</td></tr>
+    <tr><td>附件要求列</td><td>冒号、分号、@ 都是半角；不需要按钮的环节留空</td></tr>
+  </table>
+  <div class="callout green"><b>拿不准就问。</b>Excel 改坏了不影响手机上已上传的照片和已提交的数据（那些在服务器上）；真正危险的是把 data 本底数据改了——所以这一条永远不要碰。</div>
+</section>
+
+<footer>管理层修改说明 · 2026-10-10 · 配套：造林项目-验收模板-含验收流程.xlsx（已内含「使用说明」页签）/ 验收流程设计说明.md / 验收流程设计-附件按钮解说.html</footer>
+</div>
+</body>
+</html>

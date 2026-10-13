@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>验收流程设计解说 · 拍照/上传按钮怎么加在流程列里</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1f2937; --muted:#6b7280;
+    --line:#e5e7eb; --blue:#2563eb; --blue-bg:#eff6ff; --green:#059669;
+    --green-bg:#ecfdf5; --amber:#b45309; --amber-bg:#fffbeb; --red:#dc2626; --red-bg:#fef2f2;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.7;padding:32px 16px}
+  .wrap{max-width:980px;margin:0 auto}
+  header{margin-bottom:28px}
+  h1{font-size:26px;margin-bottom:8px}
+  .sub{color:var(--muted);font-size:14px}
+  .tag{display:inline-block;font-size:12px;padding:2px 10px;border-radius:999px;background:var(--amber-bg);color:var(--amber);border:1px solid #fde68a;margin-left:8px;vertical-align:middle}
+  section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px 24px;margin-bottom:20px}
+  h2{font-size:18px;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+  h2 .no{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;background:var(--blue);color:#fff;font-size:13px;flex:none}
+  p{margin-bottom:10px;font-size:14.5px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:10px 0}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:#f3f4f6;font-weight:600;white-space:nowrap}
+  code{background:#f3f4f6;border:1px solid var(--line);border-radius:4px;padding:1px 6px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#111827}
+  .code{background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;white-space:pre;overflow-x:auto;margin:10px 0}
+  .callout{border-radius:10px;padding:14px 16px;font-size:14px;margin:12px 0}
+  .callout.blue{background:var(--blue-bg);border:1px solid #bfdbfe}
+  .callout.green{background:var(--green-bg);border:1px solid #a7f3d0}
+  .callout.red{background:var(--red-bg);border:1px solid #fecaca}
+  .callout b{font-weight:700}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:14px 0}
+  .flow .step{flex:1;min-width:150px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:12px;position:relative}
+  .flow .step .t{font-weight:700;font-size:13.5px;margin-bottom:4px}
+  .flow .step .d{font-size:12.5px;color:var(--muted)}
+  .flow .arrow{align-self:center;color:var(--muted);font-size:18px}
+  /* 手机界面 mock */
+  .mockrow{display:flex;gap:20px;flex-wrap:wrap;justify-content:center;margin-top:8px}
+  .phone{width:320px;border:2px solid #d1d5db;border-radius:24px;overflow:hidden;background:#fafafa;flex:none}
+  .phone .bar{background:#2563eb;color:#fff;font-size:13px;padding:10px 14px;font-weight:600}
+  .phone .body{padding:12px}
+  .stepcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}
+  .stepcard .name{font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center}
+  .badge{font-size:11px;padding:2px 8px;border-radius:999px}
+  .badge.req{background:var(--red-bg);color:var(--red)}
+  .badge.opt{background:#f3f4f6;color:var(--muted)}
+  .std{font-size:12px;color:var(--muted);margin:6px 0}
+  .std b{color:#111827}
+  .btnrow{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+  .btn{font-size:12.5px;padding:7px 12px;border-radius:8px;border:none;color:#fff;display:inline-flex;align-items:center;gap:5px}
+  .btn.cam{background:var(--green)}
+  .btn.up{background:var(--blue)}
+  .btn.dis{background:#d1d5db;color:#9ca3af}
+  .thumbs{display:flex;gap:6px;margin-top:8px}
+  .thumb{width:44px;height:44px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px}
+  .thumb.p{background:#d1fae5}.thumb.f{background:#dbeafe}.thumb.add{border:1.5px dashed #9ca3af;color:#9ca3af;font-size:20px}
+  .sync{font-size:11.5px;color:var(--green);margin-top:6px;display:flex;align-items:center;gap:4px}
+  .legend{display:flex;gap:16px;font-size:12.5px;color:var(--muted);margin-top:10px;flex-wrap:wrap;justify-content:center}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:12px;height:12px;border-radius:3px;display:inline-block}
+  footer{text-align:center;color:var(--muted);font-size:12.5px;padding:10px 0 30px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>验收流程设计解说<span class="tag">设计稿 · 不在开发流程内</span></h1>
+  <div class="sub">配套文件：data/验收流程设计/造林项目-验收模板-含验收流程.xlsx　|　核心问题：拍照按钮 / 上传文件按钮，加在流程定义表的哪一列、怎么驱动？</div>
+</header>
+
+<section>
+  <h2><span class="no">1</span>结论：加在「附件要求」列，按钮类型由写法决定，程序只写一次通用解析</h2>
+  <div class="callout green">
+    <b>要加，而且不用改程序结构。</b>流程定义表（<code>流程-XXX</code>）已经有一列 <b>「附件要求」</b>——它就是按钮的开关和说明书。App 通用逻辑：读每个环节的「附件要求」列 → 按下面语法渲染按钮 → 上传动作全部走同一套通道（水印、压缩、目录、自动重传都复用现有 <code>参数</code> sheet 配置）。
+  </div>
+  <p>也就是说：<b>加一个新的验收流程 sheet，附件按钮自动跟着出现</b>；某环节不写「附件要求」，该环节就没有任何按钮。</p>
+</section>
+
+<section>
+  <h2><span class="no">2</span>「附件要求」列写法规范（流程 sheet 的按钮语法）</h2>
+  <table>
+    <tr><th style="width:32%">写法（示例）</th><th>App 渲染结果</th><th style="width:14%">适用场景</th></tr>
+    <tr><td><code>拍照:整地现场照片</code></td><td>只出现 <b>绿色「拍照」按钮</b>：调起 App 内相机，实时拍摄，禁止相册选图，拍完<b>自动上传</b></td><td>工序留证</td></tr>
+    <tr><td><code>上传:三证一签</code></td><td>只出现 <b>蓝色「上传文件」按钮</b>：可选照片或 PDF 等文件，人工确认后上传</td><td>证件、文档</td></tr>
+    <tr><td><code>拍照:回塘照片;上传:底肥单据</code></td><td><b>两种按钮都出现</b>（半角分号分隔，各自独立）</td><td>混合要求</td></tr>
+    <tr><td><code>拍照:现场照片@2</code></td><td>拍照按钮带 <b>最少张数校验</b>：不足 2 张时提交按钮置灰（与必填因子同一套校验）</td><td>多角度留证</td></tr>
+    <tr><td>（留空）</td><td>该环节<b>无任何按钮</b>，只填数据</td><td>纯填报环节</td></tr>
+  </table>
+  <div class="callout blue"><b>为什么证件类用「上传」而不是「拍照」？</b>三证一签/四证一签常常是纸质证件，现场翻拍角度难控制，也可能拿到的是电子 PDF。上传按钮允许选文件，但<b>操作人、时间、定位仍由 App 记录留痕</b>；而工序照片必须「拍照」（App 内实时拍摄 + 水印 + 定位），这正是纪要里"禁止相册选图防造假"的落地。</div>
+</section>
+
+<section>
+  <h2><span class="no">3</span>渲染效果示意（以「流程-人工造林」的整地 / 栽植环节为例）</h2>
+  <div class="mockrow">
+    <!-- 环节A：只有拍照 -->
+    <div class="phone">
+      <div class="bar">验收 · 整地（林地清理/打塘）<span style="float:right">7标段 YJ-1436</span></div>
+      <div class="body">
+        <div class="stepcard">
+          <div class="name">整地规格 <span class="badge req">必填</span></div>
+          <div class="std">标准值：<b>60×60×50</b>（取自 data「整地规格」列）</div>
+          <div class="std">实际值：<u>61×60×52</u>　✅ 对照通过</div>
+          <div class="btnrow"><button class="btn cam">📷 拍照 · 整地现场照片</button></div>
+          <div class="thumbs"><div class="thumb p">🏞</div><div class="thumb p">🏞</div><div class="thumb add">＋</div></div>
+          <div class="sync">✓ 已自动上传 2 张（水印：项目+标段+小班号+时间+定位）</div>
+        </div>
+        <div class="stepcard">
+          <div class="name">提交本环节 <span class="badge opt">转序验收</span></div>
+          <div class="btnrow"><button class="btn dis">提交（必填项未完不可点）</button></div>
+        </div>
+      </div>
+    </div>
+    <!-- 环节B：拍照+上传 -->
+    <div class="phone">
+      <div class="bar">验收 · 栽植（苗木验收）<span style="float:right">7标段 YJ-1436</span></div>
+      <div class="body">
+        <div class="stepcard">
+          <div class="name">苗木证件 <span class="badge req">必填</span></div>
+          <div class="std">要求：<b>三证一签</b>（需良种证的树种传四证一签）</div>
+          <div class="btnrow">
+            <button class="btn up">📎 上传文件 · 三证一签</button>
+            <button class="btn cam">📷 拍照 · 剪苗作业</button>
+          </div>
+          <div class="thumbs"><div class="thumb f">📄</div><div class="thumb p">🌱</div><div class="thumb add">＋</div></div>
+          <div class="sync">✓ 1 份文件 + 1 张照片已上传 · 操作人/定位已留痕</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="legend">
+    <span><span class="dot" style="background:var(--green)"></span>拍照按钮（App 内拍摄·自动上传·防造假）</span>
+    <span><span class="dot" style="background:var(--blue)"></span>上传文件按钮（照片/PDF·确认后上传）</span>
+    <span><span class="dot" style="background:#d1d5db"></span>置灰提交（必填项未完成）</span>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">4</span>上传链路：两种按钮走同一条通道</h2>
+  <div class="flow">
+    <div class="step"><div class="t">① 产生文件</div><div class="d">拍照 = App 内相机（禁相册）；上传 = 选照片/PDF</div></div>
+    <div class="arrow">→</div>
+    <div class="step"><div class="t">② 处理</div><div class="d">照片：烙水印文字（坐标+项目+小班）+ 压缩（最长边/质量读 参数 sheet）</div></div>
+    <div class="arrow">→</div>
+    <div class="step"><div class="t">③ 生成路径</div><div class="d">按 参数 sheet「目录」「相片文件名」模板：<code>{{sheet名称}}/{{小班号}}</code></div></div>
+    <div class="arrow">→</div>
+    <div class="step"><div class="t">④ 上传</div><div class="d">在线：直传云；<b>无网：本地缓存，恢复信号自动补传</b></div></div>
+    <div class="arrow">→</div>
+    <div class="step"><div class="t">⑤ 留痕</div><div class="d">操作时间、人员（登录账号）、定位自动记录，后台可查</div></div>
+  </div>
+  <p>链路里所有可配置项（水印模板、文件名、目录、压缩参数）<b>全部复用现有 <code>参数</code> sheet 的 key</b>，不需要为附件按钮新增配置。</p>
+</section>
+
+<section>
+  <h2><span class="no">5</span>落地示例：「流程-人工造林」各环节的附件要求列建议值</h2>
+  <table>
+    <tr><th>环节</th><th>附件要求（建议写入流程 sheet）</th><th>按钮</th></tr>
+    <tr><td>小班边界确认</td><td><code>拍照:小班边界照片;上传:边界确认表</code></td><td>📷 + 📎</td></tr>
+    <tr><td>整地</td><td><code>拍照:整地现场照片@1</code></td><td>📷</td></tr>
+    <tr><td>回塘及底肥放置</td><td><code>拍照:回塘覆土照片;上传:底肥单据</code></td><td>📷 + 📎</td></tr>
+    <tr><td>栽植（苗木验收）</td><td><code>上传:三证一签@1;拍照:种苗规格照片;拍照:剪苗作业照片</code></td><td>📎 + 📷×2</td></tr>
+    <tr><td>撑杆覆膜</td><td><code>拍照:撑杆覆膜照片</code></td><td>📷</td></tr>
+    <tr><td>成活率 / 保存率</td><td><code>拍照:抽查照片</code></td><td>📷</td></tr>
+    <tr><td>上一年度日常巡护</td><td><code>拍照:巡护照片;上传:巡护记录</code></td><td>📷 + 📎</td></tr>
+  </table>
+  <p style="color:var(--muted);font-size:13px">把这张表的第三列值填进 xlsx 里各流程 sheet 的「附件要求」列，按钮即按此出现——需要的话我可以直接帮你回写到 Excel。</p>
+</section>
+
+<section>
+  <h2><span class="no">6</span>程序侧需要做的（一次性，之后加流程零改动）</h2>
+  <table>
+    <tr><th style="width:26%">事项</th><th>说明</th></tr>
+    <tr><td>附件要求解析器</td><td>识别 <code>拍照:xx</code> / <code>上传:xx</code> / <code>@n</code> / 分号组合，<b>只写一次，所有流程 sheet 通用</b></td></tr>
+    <tr><td>按钮渲染</td><td>按解析结果在每个环节卡片内渲染拍照/上传按钮与已传缩略图</td></tr>
+    <tr><td>校验联动</td><td>张数不足 <code>@n</code> 或必填因子未填 → 提交按钮置灰（与必填校验同一闸门）</td></tr>
+    <tr><td>注意</td><td>data 表头「总株数」尾随 2 个空格，按列名匹配一律 trim；表头「总株数」等列名匹配建议统一 trim 后比较</td></tr>
+  </table>
+  <div class="callout red"><b>防造假红线（纪要原话落地）：</b>拍照按钮必须 App 内实时拍摄、禁相册选图；上传按钮不限来源但记录人员/时间/定位；两者均进入操作留痕，后台可按时间段提取核查。</div>
+</section>
+
+<footer>验收流程设计解说 · 2026-10-10 · 配套：造林项目-验收模板-含验收流程.xlsx / 验收流程设计说明.md</footer>
+</div>
+</body>
+</html>

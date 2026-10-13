@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>发管理层 · 简化分步方案与话术</title>
+<style>
+  :root{--bg:#f6f7f9;--card:#fff;--ink:#1f2937;--muted:#6b7280;--line:#e5e7eb;--blue:#2563eb;--blue-bg:#eff6ff;--green:#059669;--green-bg:#ecfdf5;--amber-bg:#fffbeb;--amber:#b45309;--red:#dc2626;--red-bg:#fef2f2;--gray:#f3f4f6}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.75;padding:32px 16px}
+  .wrap{max-width:860px;margin:0 auto}
+  h1{font-size:24px;margin-bottom:6px}
+  .sub{color:var(--muted);font-size:14px;margin-bottom:24px}
+  section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin-bottom:18px}
+  h2{font-size:17px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  h2 .no{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:var(--blue);color:#fff;font-size:12px;flex:none}
+  h3{font-size:14.5px;margin:14px 0 6px}
+  p{font-size:14.5px;margin-bottom:8px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:8px 0}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--gray);font-weight:600;white-space:nowrap}
+  .phase{border-left:4px solid var(--blue);background:#fafbfc;border-radius:0 10px 10px 0;padding:12px 16px;margin-bottom:12px}
+  .phase b.t{font-size:14.5px}
+  .phase .who{float:right;font-size:12px;padding:1px 10px;border-radius:999px;background:var(--green-bg);color:var(--green);border:1px solid #a7f3d0}
+  .copy{position:relative;background:var(--gray);border:1px solid var(--line);border-radius:10px;padding:14px 16px;font-size:14px;white-space:pre-wrap;margin:8px 0}
+  .copy .hint{position:absolute;top:8px;right:12px;font-size:11px;color:var(--muted)}
+  .callout{border-radius:10px;padding:12px 14px;font-size:14px;margin:10px 0}
+  .callout.green{background:var(--green-bg);border:1px solid #a7f3d0}
+  .callout.amber{background:var(--amber-bg);border:1px solid #fde68a}
+  footer{text-align:center;color:var(--muted);font-size:12.5px;padding:8px 0 26px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>发管理层 · 简化分步方案与话术</h1>
+<div class="sub">2026-10-10 · 配套文件均在 data/验收流程设计/ 文件夹</div>
+
+<section>
+  <h2><span class="no">1</span>简化后的分步走（管理层每一步只做一件事）</h2>
+
+  <div class="phase"><span class="who">管理层：挑错</span><b class="t">第一步 · 只改内容，不改格式（本周）</b>
+    <p>技术侧已按 10 月 9 日会议定好的工序，把 3 个流程（人工造林 / 退化林修复 / 四旁植树）写成草稿。管理层<b>不用学任何格式</b>，直接在表上批注：环节少了哪个、名字不对、必填项不对、照片要求不对——<b>用批注、红字、或在「备注」列写都行</b>。改完发回，技术侧统一落表。</p>
+  </div>
+
+  <div class="phase"><span class="who">管理层：照抄一次</span><b class="t">第二步 · 独立加一个新流程（下周）</b>
+    <p>照「使用说明」页签的 4 步，<b>复制一个现成流程页签 → 改内容 → 登记表加一行 → 启用=否先试</b>。先小范围试一个标段，没问题再改"是"正式启用。这一步走通，管理层就完全上手了。</p>
+  </div>
+
+  <div class="phase"><span class="who">管理层：自助</span><b class="t">第三步 · 以后常态化（逐步实现）</b>
+    <p>新工序、新验收要求、<b>新监理项目</b>，都是"复制 Excel 模板 → 换 data 里的项目数据、改流程页签"，手机端自动跟表走，<b>始终不用改程序</b>。不同监理、不同标段只是 data 数据和登记表里多几行的事。</p>
+  </div>
+
+  <div class="callout green"><b>为什么能不改程序：</b>程序只认"表"不认"项目"——它读登记表决定给谁执行哪个流程，读流程表决定显示哪些环节、哪些必填、哪些按钮。所以新增监理项目 = 新的一份填好的表，不是新的一段代码。</div>
+  <div class="callout amber"><b>给管理层只强调一条红线：</b>data 页（小班本底数据）谁都不能动，其余页签尽管改——改坏了也不影响手机上已传的照片和已交的数据，恢复一份备份就行。</div>
+</section>
+
+<section>
+  <h2><span class="no">2</span>话术 A · 微信群版（口语化，直接复制发群里）</h2>
+  <div class="copy"><span class="hint">点击全选 → 复制</span>各位领导，跟大家一起把验收流程这件事简化落地，分三步走，每步大家只需要做一件事：
+
+第一步（本周）：我们按 10 月 9 日会议定的工序，把人工造林、退化林修复、四旁植树三个验收流程做成了 Excel 草稿，发在群里。请大家不用管格式，直接在表上批注修改意见——哪个环节要加、哪个名字不对、哪些必须填、现场要拍什么照，红字、批注、备注列里写都行，改完发回给我们统一落表。
+
+第二步（下周）：大家照表格第一页"使用说明"的 4 步，自己试着加一个流程。加完先不启用，我们小范围试一个标段，没问题再正式用。
+
+第三步（以后）：验收流程就固定在 Excel 里维护了——以后不管加新工序、新要求，还是新增别的监理项目，都是复制模板改表格，手机端自动跟着变，不用再等我们改程序。
+
+就一条红线请大家记住：data 那一页是小班本底数据，谁都不改；其他页尽管改，改坏了有备份，不影响手机上已交的数据。
+
+表格和说明文档稍后发群，有问题随时找我。</div>
+</section>
+
+<section>
+  <h2><span class="no">3</span>话术 B · 正式通知版（邮件/OA 用）</h2>
+  <div class="copy"><span class="hint">点击全选 → 复制</span>关于验收流程 Excel 化管理的通知
+
+一、自本周起，营造林工程验收流程改由 Excel 配置表统一维护（附件：造林项目-验收模板-含验收流程.xlsx）。流程的新增、调整、停用均通过修改表格完成，无需软件改动。
+
+二、实施分三个阶段：
+1. 意见征集（本周）：请各标段负责人在附件的三个流程表（人工造林/退化林修复/四旁植树）上批注修改意见，重点核对：验收环节是否齐全、核验因子是否准确、必填项与拍照/上传要求是否符合现场实际。意见回传后统一修订。
+2. 试运行（下周）：请按表内"使用说明"页签指引，各自试建一个流程（先置为"停用"），由技术侧核对后选择一个标段小范围试用，再全面启用。
+3. 常态运行：此后新增验收工序、调整验收要求、新增监理项目，均按模板复制建表完成，软件功能保持不变。
+
+三、注意事项：data 页为小班本底数据，请勿修改；其余页签修改前请先备份文件。填写规范详见随附《管理层修改说明-参数页与流程sheet.html》。
+
+特此通知。</div>
+</section>
+
+<section>
+  <h2><span class="no">4</span>管理层可能问的三个问题 · 一句话回答</h2>
+  <table>
+    <tr><th style="width:44%">问题</th><th>回答</th></tr>
+    <tr><td>"我不懂电脑/表格，能改吗？"</td><td>第一步连格式都不用管，在表上像批文件一样写意见就行；第二步照第一页"使用说明"抄一遍就会了。</td></tr>
+    <tr><td>"改错了会不会把系统搞坏？"</td><td>不会。已交的照片和数据在服务器上，改坏表格发回来，我们恢复一份备份就好；唯一不能碰的是 data 本底页。</td></tr>
+    <tr><td>"以后新中标一个监理项目怎么办？"</td><td>复制这套 Excel，把 data 页换成新项目的底表、流程页签按需改，手机端就能用——还是不改程序。</td></tr>
+  </table>
+</section>
+
+<footer>发管理层 · 简化分步方案与话术 · 2026-10-10</footer>
+</div>
+</body>
+</html>
