@@ -38,7 +38,7 @@
 - **写测试**：多身份必须各用独立 `test_client`（session 会互相覆盖，表现为"管理员被判 403"）；不写死模板文件名与期望；每套用例配自家表头的基底。
 - **`validate.py`/`check_invariants.py`/`compare.py`/`make_baseline.sh` 仍是空骨架**（模板遗留，`REQUIRED=["关键列1"]`、`main.py --out` 不存在），本项目用 `tests/run_all.sh`。
 - 回归：`bash tests/run_all.sh`（**229 项**：unit 108 + e2e 101 + exif 20），全绿才提交。模板体检 `python tools/check_template.py data/*.xlsx`。
-- 未决：用户报"视频保存后华为弹出应用信息"。JS 侧已修（引导幂等化，改网页即生效）；原生 `openAutostartSettings()` 已加"已满足就不跳"，**需重新出包**；仍需弹窗原文/截图才能彻底定位。
+- 未决：用户报"视频保存后华为弹出应用信息"。JS 侧已修（引导幂等化）；原生 `openAutostartSettings()` 已加"已满足就不跳"（69da392 / v0.28.1）；**v0.9.0（2026-10-14）已带该修复出包，此条已了结**；若用户再报，需弹窗原文/截图。
 
 ## 验收流程设计（2026-10-14，doc/019）
 - **v0.31 已上线**：wb=6 就地更新为含流程版本（**id 仍为 6、600 行不变、已自动备份可 rollback**），`#/wb/6` 现在显示 8 环节验收界面。
@@ -56,4 +56,13 @@
 - **7 个数据坑**：①`总株数  ` 表头**尾随 2 空格**（key 长度 5），列名匹配必须 trim ②注册表第 2/6 行同名同优先级，第 6 行是演示行 ③**第 2 行条件字段=1（无条件）→ 600 行全部小班都跑人工造林**（配置问题，需管理层改）④`验收结果选项` 参数页缺 `整改后合格` ⑤`混交比例` number_format 误设 `h:mm`（已修）⑥`功能` 参数缺「打卡」，📍按钮暂不受功能开关约束 ⑦data 脏数据（项目类型尾随空格 / 澧江街与澧江街道 / 南昏与南昏村）。
 - 附件三类按钮：`photo`（App 内实时拍摄禁相册）+ `upload`（照片/PDF 仍留痕，**PDF 上传通道尚未实现**）+ `punch`（定位打卡）。**成活率/保存率自动算不可手填**；提交闸门**逐项列出缺什么**。
 - 回归：`bash tests/run_all.sh`（**229 项**：unit 108 + e2e 101 + exif 20），全绿才提交。
-- 未决：用户报"视频保存后华为弹出应用信息"。JS 侧已修；原生 `openAutostartSettings()` 已改，**需重新出包**。
+- 未决：用户报"视频保存后华为弹出应用信息"。JS 侧已修；原生 `openAutostartSettings()` 已改；**v0.9.0 已带修复出包，已了结**。
+
+## 安卓发版（GitHub Actions，2026-10-14 起）
+- 仓库 `git@github.com:sux789/hqz-supervision.git`（**公开**）；`gh` 已登录 sux789。
+- **发版流程**：改 `android/app/build.gradle` 的 versionCode（必须递增，覆盖升级）+ versionName → commit → `git push origin main` → `git tag -a v0.x.y` → `git push origin v0.x.y` → `release.yml` 自动构建**正式签名** APK 并发布到 GitHub Releases（约 2 分钟）。
+- 签名 Secret 早已配好（KEYSTORE_BASE64/KEY_ALIAS/KEYSTORE_PASSWORD/KEY_PASSWORD，与 v0.8.0 同一 keystore）；重建用 `set_gh_secrets.sh`。缺 Secret 时 release.yml 自动退回 debug 签名。
+- 产物名固定 `app-release.apk`；直链 `https://github.com/sux789/hqz-supervision/releases/download/<tag>/app-release.apk`（公开可下，无需登录）。
+- main 推送且 paths 命中 `android/**`、`www/**`、`package.json`、`capacitor.config.json` 时，额外触发 `android-build.yml` 出 **debug** 包（Actions 工件，要登录才能下）——只要正式版即可，别把工件链接当交付物。
+- **有意未入库**（公开仓库）：`doc/合同-*.png`（签署合同）、`doc/*监理规划/实施细则.docx`、`data/验收流程设计/…副本.xlsx`（本地工作副本，且干扰测试选文件）。要入库需用户显式确认。
+- `.DS_Store` 已于 v0.9.0 提交取消跟踪（v0.9.0 = 3868809）。
