@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>验收流程界面原型 · 流程-人工造林</title>
+<style>
+:root{
+  --bg:#f7f7f5; --card:#fff; --line:rgba(0,0,0,.12); --line2:rgba(0,0,0,.28);
+  --tx:#1c1c1a; --tx2:#5f5e5a; --tx3:#8a8984;
+  --ok:#0f6e56; --okbg:#e1f5ee;
+  --info:#185fa5; --infobg:#e6f1fb;
+  --warn:#854f0b; --warnbg:#faeeda;
+  --bad:#a32d2d; --badbg:#fcebeb;
+  --r:12px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:0 14px 60px}
+h1{font-size:16px;font-weight:500;margin:0}
+h2{font-size:14px;font-weight:500;margin:0}
+h3{font-size:13px;font-weight:500;margin:0}
+.mut{color:var(--tx2)}.mut3{color:var(--tx3)}
+.tiny{font-size:11px}.sm{font-size:12px}
+hr{border:0;border-top:.5px solid var(--line);margin:14px 0}
+
+/* 顶栏 */
+.top{position:sticky;top:0;background:var(--bg);padding:12px 0 8px;z-index:20;border-bottom:.5px solid var(--line)}
+.toprow{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+
+/* 小班选择 */
+.pick{background:var(--card);border:.5px solid var(--line);border-radius:var(--r);padding:10px 12px;margin:12px 0}
+.pick select{width:100%;padding:8px;font:inherit;font-size:13px;border:.5px solid var(--line2);border-radius:8px;background:#fff}
+.rowmeta{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:6px 12px;margin-top:10px}
+.rowmeta div{font-size:12px}
+.rowmeta span{color:var(--tx3)}
+
+/* 步骤条 */
+.steps{display:flex;gap:6px;overflow-x:auto;padding:14px 0 4px;scrollbar-width:thin}
+.step{flex:0 0 auto;width:66px;text-align:center;cursor:pointer;background:none;border:0;padding:0;font:inherit;color:inherit}
+.step .dot{width:26px;height:26px;margin:0 auto 5px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;background:#eeede8;color:var(--tx3);border:.5px solid transparent}
+.step .nm{font-size:11px;color:var(--tx3);line-height:1.3}
+.step.done .dot{background:var(--okbg);color:var(--ok)}
+.step.done .nm{color:var(--tx2)}
+.step.cur .dot{background:var(--infobg);color:var(--info);border-color:var(--info);font-weight:500}
+.step.cur .nm{color:var(--info);font-weight:500}
+.step.lock{opacity:.5}
+.step.lock .nm::after{content:" 🔒";font-size:9px}
+
+/* 环节卡 */
+.card{background:var(--card);border:.5px solid var(--line);border-radius:var(--r);padding:14px 16px;margin-top:12px}
+.card.locked{background:#fbfbf9}
+.badge{font-size:11px;padding:1px 7px;border-radius:4px;background:var(--infobg);color:var(--info)}
+.badge.w{background:var(--warnbg);color:var(--warn)}
+.badge.g{background:var(--okbg);color:var(--ok)}
+
+/* 因子行 */
+.factor{border-top:.5px solid var(--line);padding:12px 0 0;margin-top:12px}
+.factor:first-of-type{border-top:0;padding-top:0;margin-top:10px}
+.fhead{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;margin-bottom:2px}
+.fname{font-size:13px;font-weight:500}
+.req{color:var(--bad);font-size:12px}
+.std{font-size:11px;color:var(--tx3);margin-bottom:8px}
+.std b{color:var(--tx2);font-weight:500}
+.ctl{display:grid;gap:8px}
+.ctl input,.ctl select,.ctl textarea{width:100%;padding:8px 10px;font:inherit;font-size:13px;border:.5px solid var(--line2);border-radius:8px;background:#fff}
+.ctl input:disabled{background:#f4f4f1;color:var(--tx2)}
+.ctl textarea{min-height:66px;resize:vertical}
+.ctl.n3{grid-template-columns:repeat(3,1fr)}
+.chk{display:flex;align-items:center;gap:8px;padding:7px 0;font-size:13px}
+.chk input{width:16px;height:16px}
+.verdict{font-size:11px;margin-top:5px}
+.verdict.ok{color:var(--ok)}.verdict.bad{color:var(--bad)}.verdict.hint{color:var(--tx3)}
+.multi{display:flex;gap:12px;flex-wrap:wrap;padding-top:2px}
+
+/* 附件 */
+.att{margin-top:14px;padding-top:12px;border-top:.5px solid var(--line)}
+.attbtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+button{font:inherit;font-size:13px;padding:7px 12px;border:.5px solid var(--line2);border-radius:8px;background:#fff;cursor:pointer}
+button:active{background:#f0efec}
+button.pri{background:var(--ok);color:#fff;border-color:var(--ok)}
+button.pri:active{background:#0d5c48}
+button:disabled{opacity:.42;cursor:not-allowed}
+button.sm{padding:4px 9px;font-size:12px}
+.thumbs{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.th{width:42px;height:42px;border-radius:6px;background:#f0efec;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--tx2);position:relative}
+.th.add{background:#fff;border:.5px dashed var(--line2);color:var(--tx3);font-size:17px}
+.th .n{position:absolute;right:2px;bottom:1px;font-size:9px;color:var(--tx3)}
+.th.done{background:var(--okbg);color:var(--ok)}
+
+/* 提交栏 */
+.submit{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#f0efec;border-radius:var(--r);padding:11px 14px;margin-top:12px}
+.submit .prog{font-size:12px;color:var(--tx2)}
+.submit .why{margin-left:auto;font-size:12px;color:var(--warn)}
+.submit button.pri{margin-left:auto}
+
+/* 解析器演示 */
+pre{background:#fff;border:.5px solid var(--line);border-radius:8px;padding:10px;font:11px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-x:auto;margin:6px 0 0;white-space:pre-wrap;word-break:break-all}
+details{border:.5px solid var(--line);border-radius:8px;padding:8px 11px;background:var(--card);margin-top:10px}
+summary{cursor:pointer;font-size:12px;color:var(--tx2)}
+.tagx{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;margin:3px 4px 0 0}
+.tagx.p{background:var(--okbg);color:var(--ok)}
+.tagx.u{background:var(--infobg);color:var(--info)}
+.tagx.warn{background:var(--warnbg);color:var(--warn)}
+.warnbox{background:var(--warnbg);border:.5px solid #e0b872;border-radius:8px;padding:9px 12px;margin-top:10px;font-size:12px;color:#6b4008}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="top">
+  <div class="toprow">
+    <h1>验收 · <span id="flowName">人工造林</span></h1>
+    <span class="mut sm" id="sub">—</span>
+    <span class="mut3 sm" id="prog" style="margin-left:auto">0 / 8</span>
+  </div>
+  <div class="steps" id="steps"></div>
+</div>
+
+<div class="pick">
+  <div class="sm mut" style="margin-bottom:6px">选择小班（模拟 data 表行 · 流程按「验收流程」注册表条件自动匹配）</div>
+  <select id="wbPick"></select>
+  <div class="rowmeta" id="rowMeta"></div>
+  <div id="flowHit"></div>
+</div>
+
+<div id="panel"></div>
+
+<div class="submit" id="submitBar"></div>
+
+<details>
+  <summary>附件要求解析器 · 自然语言 → 按钮配置</summary>
+  <div id="parseDemo"></div>
+</details>
+
+<details>
+  <summary>填报控件列解析器 · 「填报控件」列 → 控件实例</summary>
+  <div id="ctlDemo"></div>
+</details>
+
+<div class="warnbox" id="pitfall"></div>
+
+</div>
+
+<script>
+/* ============================================================
+   数据层：模拟 Excel 解析结果（真接入时由 param_parser 产出）
+   ============================================================ */
+
+/* data 表行 —— 故意保留「总株数  」的 2 个尾随空格（Excel 原文） */
+var DATA_ROWS = [
+  {ridx:81, 项目名称:'元江县国土绿化示范', 项目类型:'人工造乔木林', 标段:'7标段', 实施年度:'2027年',
+   乡镇:'洼垤乡', 村:'业白村', 小班号:'YJ-1436', 小班面积:46.24, 模型:'XZL-21',
+   造林树种:'余甘子+清香木', 混交比例:0.29375, 密度:64, 树种1株数:2072, 树种2株数:888,
+   '总株数  ':2960, 整地规格:'60×60×50', 株行距:'3×3.5', 整地方式:'穴状'},
+
+  {ridx:82, 项目名称:'元江县国土绿化示范', 项目类型:'人工造乔木林', 标段:'6标段', 实施年度:'2027年',
+   乡镇:'洼垤乡', 村:'业白村', 小班号:'YJ-1240', 小班面积:94.38, 模型:'XZL-21',
+   造林树种:'余甘子+清香木', 混交比例:0.29375, 密度:64, 树种1株数:4228, 树种2株数:1812,
+   '总株数  ':6040, 整地规格:'60×60×50', 株行距:'3×3.5', 整地方式:'穴状'},
+
+  {ridx:90, 项目名称:'元江县国土绿化示范', 项目类型:'退化林修复', 标段:'8标段', 实施年度:'2027年',
+   乡镇:'澧江街', 村:'南洒村', 小班号:'TJ-0088', 小班面积:23.15, 模型:'THL-11',
+   造林树种:'清香木', 混交比例:0.29375, 密度:52, 树种1株数:1204, 树种2株数:0,
+   '总株数  ':1204, 整地规格:'60×60×50', 株行距:'3×3.5', 整地方式:'穴状',
+   修复方式:'补植修复', 采伐方式:'采伐', 株数强度:0.2, 蓄积强度:0.05},
+
+  {ridx:150, 项目名称:'元江县国土绿化示范', 项目类型:'四旁植树', 标段:'9标段', 实施年度:'2026年',
+   乡镇:'羊街乡', 村:'业白村', 小班号:'SP-0233', 小班面积:8.4, 模型:'XZL-05',
+   造林树种:'冬樱花', 混交比例:0.29375, 密度:30, 树种1株数:252, 树种2株数:0, 树种3株数:0,
+   '总株数  ':252, 整地规格:'80×80×70', 株行距:'3', 整地方式:'穴状'}
+];
+
+/* 「验收流程」注册表（原文 5 行；第 2 行与第 6 行同名同优先级，第 6 行标注为演示行） */
+var REGISTRY = [
+  {sheet:'流程-人工造林',   enabled:true,  condField:'1',                  condVal:'',                        scope:'全部',                  prio:10, demo:false},
+  {sheet:'流程-退化林修复', enabled:true,  condField:'项目类型',            condVal:'退化林修复',              scope:'全部',                  prio:20, demo:false},
+  {sheet:'流程-四旁植树',   enabled:true,  condField:'项目类型',            condVal:'四旁植树',                scope:'全部',                  prio:30, demo:false},
+  {sheet:'流程-退化林修复-2026', enabled:false, condField:'项目类型;实施年度', condVal:'退化林修复;2026年',       scope:'全部',                  prio:40, demo:true}
+];
+
+/* 「流程-人工造林」定义表 12 列 —— 逐字取自 Excel 第 2~9 行 */
+var FLOW_RENLIN = [
+  {no:1, step:'小班边界确认', type:'前置确认',
+   factors:'小班边界、面积、造林类型、标段、实施年度、乡镇、村、小班号、总株数、树种、混交比例、密度',
+   stdFrom:'本底数据（data sheet，全用户不可修改）', req:'逐项确认勾选', check:'与本底数据对照确认',
+   att:'定位打卡 + 小班边界照片', pass:'全部确认项勾选通过',
+   seq:'首个工序验收前必须完成，未确认不得进入整地验收',
+   memo:'本底数据任何人不可修改，只做确认；确认人自动取当前登录账号，不可手选他人',
+   ctl:'确认项=勾选(逐项); 验收人=自动(登录账号); 验收日期=日期(默认当天)'},
+
+  {no:2, step:'整地（林地清理/打塘）', type:'转序验收',
+   factors:'整地规格、整地方式', stdFrom:'data 列「整地规格」「整地方式」（如 60×60×50）',
+   req:'必填', check:'实测值对照标准值', att:'整地现场照片', pass:'实测规格 ≥ 设计规格',
+   seq:'上一环节合格方可填报；本环节必填项全部填写后提交按钮才可用',
+   memo:'允许分批填报：当日完成多少填多少（如当日整完 8000 塘先报 8000），剩余部分后续补填',
+   ctl:'整地规格=数值×3(长/宽/深,cm,≥标准自动判); 整地方式=下拉(data「整地方式」枚举)'},
+
+  {no:3, step:'回塘及底肥放置', type:'转序验收',
+   factors:'底肥放置、回塘覆土', stdFrom:'项目作业设计（data 无对应标准列，按项目作业设计方案）',
+   req:'必填', check:'现场核验', att:'回塘、放肥、覆土各 1 张照片', pass:'符合作业设计',
+   seq:'上一环节合格方可填报', memo:'底肥用量、品牌等信息记在验收备注',
+   ctl:'底肥用量=数值(kg/袋,>0); 底肥品牌=单行文本(≤20字)'},
+
+  {no:4, step:'栽植（苗木验收）', type:'转序验收',
+   factors:'苗木规格（苗龄、地径、苗高）、造林树种、混交比例、种植数量',
+   stdFrom:'data 列「造林树种」「混交比例」「密度」「总株数」', req:'必填', check:'实测对照设计标准',
+   att:'三证一签（需良种证的树种传四证一签）、种苗规格照片、剪苗作业照片',
+   pass:'苗木规格达标、证件齐全、数量与总株数一致', seq:'上一环节合格方可填报',
+   memo:'需良种证的树种上传四证一签，不需要的传三证一签；苗木进场必须当场拍证件，禁止相册选图',
+   ctl:'苗龄=数值(年,≥设计); 地径=数值(cm,≥设计); 苗高=数值(cm,≥设计); 种植数量=数值(株,分批累计); 混交比例实核=数值(%)'},
+
+  {no:5, step:'撑杆覆膜', type:'转序验收',
+   factors:'撑杆布设、覆膜质量', stdFrom:'项目作业设计', req:'必填', check:'现场核验',
+   att:'撑杆、覆膜照片', pass:'符合作业设计', seq:'上一环节合格方可填报', memo:'—',
+   ctl:'完成情况=下拉(符合设计;部分完成;未完成)'},
+
+  {no:6, step:'成活率核验', type:'完工验收',
+   factors:'成活率', stdFrom:'验收办法/合同约定', req:'必填', check:'样地或样行抽查实测',
+   att:'成活率抽查照片', pass:'成活率达到设计要求', seq:'全部转序验收环节合格后方可进行',
+   memo:'核对象是苗木成活率，与保存率分开验收',
+   ctl:'抽查株数=数值(株); 死亡株数=数值(株); 成活率=数值(%,系统自动算)'},
+
+  {no:7, step:'保存率核验', type:'竣工验收',
+   factors:'保存率', stdFrom:'验收办法/合同约定', req:'必填', check:'抽查实测',
+   att:'竣工现场照片', pass:'保存率达到设计要求', seq:'成活率验收合格后进行',
+   memo:'最终竣工验收节点',
+   ctl:'抽查株数=数值(株); 存活株数=数值(株); 保存率=数值(%,系统自动算)'},
+
+  {no:8, step:'上一年度日常巡护', type:'年度验收',
+   factors:'浇水、培土、补植、病虫害防治等管护情况', stdFrom:'项目管护方案', req:'必填',
+   check:'现场核查', att:'巡护照片、巡护记录', pass:'无严重损害', seq:'—',
+   memo:'对应纪要中的二级科目"上一年度日常巡护"',
+   ctl:'管护作业情况=多选(浇水;培土;补植;病虫害防治); 补植株数=数值(株,选填); 病虫害情况=下拉(无;轻微;严重); 问题描述=多行纯文本(病虫害=严重时必填)'}
+];
+
+var FLOWS = { '流程-人工造林': FLOW_RENLIN };
+
+/* ============================================================
+   解析器 1：流程匹配（条件字段/条件值 成对全满足；优先级小者先）
+   ============================================================ */
+function matchFlow(row, fileScope){
+  var hit = null;
+  REGISTRY.forEach(function(r){
+    if(!r.enabled || r.demo) return;                       // 演示行不参与
+    if(r.scope!=='全部' && r.scope!==fileScope) return;
+    if(r.condField==='1' || !r.condField){
+      if(!hit || r.prio<hit.prio) hit=r; return;
+    }
+    var fs=r.condField.split(';'), vs=(r.condVal||'').split(';');
+    var ok = fs.every(function(f,i){
+      var a=String(row[f]==null?'':row[f]).trim();
+      var b=String(vs[i]==null?'':vs[i]).trim();
+      return a===b;
+    });
+    if(ok && (!hit || r.prio<hit.prio)) hit=r;
+  });
+  return hit;
+}
+
+/* ============================================================
+   解析器 2：「附件要求」自然语言 → 按钮配置
+   正式语法：拍照:xx@2 ; 上传:xx ; 分号组合。这里额外做自然语言兜底。
+   ============================================================ */
+/* 顺序敏感：越靠前越具体，命中即停。
+   fixed=true 表示该标签用规则里的规范名（避免片段文本被剥得太碎）。*/
+var ATT_RULES = [
+  {re:/定位打卡|打卡/, kind:'punch', label:'定位打卡', min:1, fixed:true},
+  {re:/巡护记录/, kind:'upload', label:'巡护记录', min:1, fixed:true},
+  {re:/三证一签|四证一签|证件/, kind:'upload', label:'苗木证件', min:1, fixed:true},
+  {re:/种苗|苗木规格/, kind:'photo', label:'种苗规格', min:0, fixed:true},
+  {re:/剪苗/, kind:'photo', label:'剪苗作业', min:0, fixed:true},
+  {re:/回塘|放肥|底肥|覆土/, kind:'photo', label:'', min:0},
+  {re:/撑杆|覆膜/, kind:'photo', label:'', min:0},
+  {re:/巡护/, kind:'photo', label:'巡护照片', min:0, fixed:true},
+  {re:/整地/, kind:'photo', label:'整地现场', min:0, fixed:true},
+  {re:/成活率/, kind:'photo', label:'成活率抽查', min:0, fixed:true},
+  {re:/保存率|竣工/, kind:'photo', label:'竣工现场', min:0, fixed:true},
+  {re:/边界/, kind:'photo', label:'小班边界', min:0, fixed:true},
+  {re:/照片|现场/, kind:'photo', label:'现场照片', min:0, fixed:true}
+];
+
+/* 括号感知分割：分号只在括号外才算分隔符。
+   控件列里 下拉(符合设计;部分完成;未完成) 的分号在括号内，不能切。 */
+function splitTop(text, sep){
+  var out=[], buf='', depth=0;
+  for(var i=0;i<text.length;i++){
+    var ch=text[i];
+    if(ch==='('||ch==='（') depth++;
+    else if(ch===')'||ch==='）') depth--;
+    if(ch===sep && depth<=0){ out.push(buf); buf=''; continue; }
+    buf+=ch;
+  }
+  out.push(buf);
+  return out;
+}
+
+function parseAtt(text){
+  var t=String(text||'').trim(); if(!t) return [];
+  if(/^(拍照|上传|打卡):/.test(t)){
+    return splitTop(t,';').map(function(s){
+      s=s.trim(); if(!s) return null;
+      var m=/^(拍照|上传|打卡):(.+?)(?:@(\d+))?$/.exec(s);
+      if(!m) return null;
+      return {kind:m[1]==='拍照'?'photo':(m[1]==='上传'?'upload':'punch'),
+              label:m[2], min:m[3]?+m[3]:0, raw:s};
+    }).filter(Boolean);
+  }
+  /* 自然语言兜底：按顿号/逗号/加号切片段，一片 = 一个按钮（现场语义最贴近原文）。
+     片段若无任何关键词，则并入上一片（处理「撑杆、覆膜照片」这种省略写法）。*/
+  var parts=t.split(/[、，,＋+]/).map(function(x){return x.trim();}).filter(Boolean);
+  var merged=[];
+  parts.forEach(function(p){
+    if(!ATT_RULES.some(function(r){return r.re.test(p);}) && merged.length) merged[merged.length-1]+='、'+p;
+    else merged.push(p);
+  });
+  var out=[], seen={};
+  merged.forEach(function(p){
+    /* 按 ATT_RULES 顺序取第一条命中的规则（越靠前越具体），
+       避免「照片|现场」兜底规则重复追加一个"现场照片"按钮 */
+    var rule=null;
+    for(var i=0;i<ATT_RULES.length;i++){ if(ATT_RULES[i].re.test(p)){ rule=ATT_RULES[i]; break; } }
+    var kind='photo', min=0;
+    if(rule){ kind=rule.kind; min=rule.min; }
+    /* "各 1 张" → 该片段按钮要求至少 N 张 */
+    var per=/各\s*(\d+)\s*张/.exec(p);
+    var label = rule ? (rule.fixed ? rule.label : tidyLabel(p)) : tidyLabel(p);
+    var warn = (per && min && min !== +per[1]) ? '“各'+per[1]+'张”与该按钮下限冲突，取 '+per[1] : '';
+    if(per && !min) min=+per[1];
+    var key=kind+'/'+label;
+    if(seen[key]) return;
+    seen[key]=1;
+    out.push({kind:kind, label:label, min:min, raw:p, warn:warn});
+  });
+  if(!out.length) out.push({kind:'photo', label:t, min:0, raw:t});
+  return out;
+
+  /* 标签取片段自身，剥掉「照片」「各N张」这类尾巴，读起来就是现场话术 */
+  function tidyLabel(p){
+    return p.replace(/各\s*\d+\s*张/g,'').replace(/照片?$/,'').replace(/的$/,'').trim() || p;
+  }
+}
+
+/* ============================================================
+   解析器 3：「填报控件」列 → 控件实例
+   语法：字段名=类型(参数;参数)
+   ============================================================ */
+var OPTION_POOL = {
+  '整地方式':['穴状','撩壕整地'],
+  '完成情况':['符合设计','部分完成','未完成'],
+  '病虫害情况':['无','轻微','严重'],
+  '验收结果':['合格','不合格','整改后合格'],
+  '管护作业情况':['浇水','培土','补植','病虫害防治']
+};
+function parseCtl(text){
+  var out=[];
+  splitTop(String(text||''),';').forEach(function(s){
+    s=s.trim(); if(!s) return;
+    var i=s.indexOf('='); if(i<0) return;
+    var name=s.slice(0,i).trim();
+    var rest=s.slice(i+1).trim();
+    var type, arg='';
+    var m=/^([^(（]+)\((.*)\)$/.exec(rest);
+    if(m){ type=m[1].trim(); arg=m[2]; }
+    else { type=rest.trim(); }
+    out.push({name:name, type:type, arg:arg});
+  });
+  return out;
+}
+
+/* ============================================================
+   状态
+   ============================================================ */
+var S = {
+  row: null, flow: null, steps: null, cur: 0,
+  data: {}, atts: {}, result: {}, submitted: {}
+};
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+/* 环节解锁判定：转序规则 */
+function unlocked(i){
+  if(i===0) return true;
+  var p=S.steps[i-1];
+  if(S.submitted[i-1]) return true;
+  return false;
+}
+function doneCount(){ var n=0; for(var k in S.submitted) if(S.submitted[k]) n++; return n; }
+
+/* 标准值取自 data（trim 匹配，兼容「总株数  」尾随空格） */
+function stdOf(name, row){
+  var keys=Object.keys(row);
+  for(var i=0;i<keys.length;i++){
+    if(keys[i].trim()===name) return row[keys[i]];
+  }
+  return undefined;
+}
+
+/* ---------- 顶部小班选择 ---------- */
+function renderPick(){
+  var sel=document.getElementById('wbPick');
+  sel.innerHTML = DATA_ROWS.map(function(r,i){
+    return '<option value="'+i+'">'+esc(r.小班号)+' · '+esc(r.项目类型)+' · '+esc(r.标段)+' · '+esc(r.乡镇)+esc(r.村)+'</option>';
+  }).join('');
+  sel.value = S.row ? String(DATA_ROWS.indexOf(S.row)) : '0';
+  sel.onchange=function(){ pickRow(+sel.value); };
+
+  var r=S.row, m=document.getElementById('rowMeta');
+  var items=[['小班号',r.小班号],['项目类型',r.项目类型],['标段',r.标段],['实施年度',r.实施年度],
+    ['乡镇',r.乡镇],['村',r.村],['小班面积',r.小班面积+' 亩'],['造林树种',r.造林树种],
+    ['整地规格',r.整地规格],['整地方式',r.整地方式],['密度',r.密度],['总株数',stdOf('总株数',r)]];
+  m.innerHTML = items.map(function(it){
+    return '<div><span>'+esc(it[0])+'</span> '+esc(it[1])+'</div>';
+  }).join('');
+
+  var fh=document.getElementById('flowHit');
+  if(S.flow){
+    fh.innerHTML='<div class="sm mut" style="margin-top:8px">命中流程 <b style="color:var(--info)">'+esc(S.flow.sheet)+
+      '</b> · 优先级 '+S.flow.prio+' · 条件「'+(S.flow.condField==='1'?'无条件':esc(S.flow.condField)+'='+esc(S.flow.condVal))+
+      '」</div>';
+  }else{
+    fh.innerHTML='<div class="sm mut" style="margin-top:8px;color:var(--bad)">未命中任何流程（本版本仅实现「流程-人工造林」，其余流程待接入）</div>';
+  }
+  document.getElementById('sub').textContent =
+    r.标段+' · '+r.小班号+' · '+r.小班面积+'亩 · '+r.整地方式;
+}
+
+function pickRow(i){
+  S.row=DATA_ROWS[i];
+  var hit=matchFlow(S.row,'造林项目-验收模板.xlsx');
+  S.flow = hit && FLOWS[hit.sheet] ? hit : null;
+  S.steps = S.flow ? S.flow.map(function(x){return {def:x};}) : [];
+  S.cur=0; S.data={}; S.atts={}; S.result={}; S.submitted={};
+  renderAll();
+}
+
+/* ---------- 步骤条 ---------- */
+function renderSteps(){
+  var el=document.getElementById('steps');
+  el.innerHTML = S.steps.map(function(s,i){
+    var cls = S.submitted[i] ? 'done' : (i===S.cur ? 'cur' : (unlocked(i)?'':'lock'));
+    return '<button class="step '+cls+'" data-i="'+i+'">'+
+      '<div class="dot">'+(S.submitted[i]?'✓':(i+1))+'</div>'+
+      '<div class="nm">'+esc(s.def.step.replace(/（.*/,''))+'</div></button>';
+  }).join('');
+  Array.prototype.forEach.call(el.querySelectorAll('.step'),function(b){
+    b.onclick=function(){
+      var i=+b.dataset.i;
+      if(unlocked(i)){ S.cur=i; renderAll(); }
+    };
+  });
+  document.getElementById('prog').textContent = doneCount()+' / '+(S.steps.length||8);
+}
+
+/* ---------- 附件区 ---------- */
+function attHtml(i, def){
+  var reqs=parseAtt(def.att);
+  if(!reqs.length) return '';
+  var box=document.getElementById('att-'+i);
+  var html='<div class="att"><div class="sm mut">附件要求 · Excel 原文「'+esc(def.att)+'」</div><div class="attbtns">';
+  reqs.forEach(function(a,ai){
+    var got=(S.atts[i]&&S.atts[i][ai])||0;
+    html+='<button data-a="'+ai+'" class="'+(a.kind==='upload'?'':'')+'">'+
+      (a.kind==='photo'?'📷 拍照':(a.kind==='upload'?'📎 上传':'📍 打卡'))+' · '+esc(a.label)+
+      (a.min?' <span class="mut3 tiny">至少'+a.min+'张</span>':'')+'</button>';
+  });
+  html+='</div>';
+  html+='<div class="thumbs">';
+  reqs.forEach(function(a,ai){
+    var got=(S.atts[i]&&S.atts[i][ai])||0;
+    var need=a.min;
+    for(var k=0;k<got;k++) html+='<div class="th done">'+(a.kind==='upload'?'PDF':'照')+'<span class="n">'+(k+1)+'</span></div>';
+    if(got < (need||1)+1) html+='<div class="th add" data-add="'+ai+'">+</div>';
+  });
+  html+='</div>';
+  html+='<div class="tiny mut3" style="margin-top:6px">拍照 = App 内实时拍摄 · 禁相册选图 · 自动叠水印与定位；上传 = 可选照片或 PDF，操作人/时间/定位仍留痕</div>';
+  html+='</div>';
+  box.innerHTML=html;
+  Array.prototype.forEach.call(box.querySelectorAll('[data-a]'),function(b){
+    b.onclick=function(){
+      var ai=+b.dataset.a;
+      S.atts[i]=S.atts[i]||{}; S.atts[i][ai]=((S.atts[i][ai]||0)+1);
+      renderAll();
+    };
+  });
+  Array.prototype.forEach.call(box.querySelectorAll('[data-add]'),function(b){
+    b.onclick=function(){
+      var ai=+b.dataset.add;
+      S.atts[i]=S.atts[i]||{}; S.atts[i][ai]=((S.atts[i][ai]||0)+1);
+      renderAll();
+    };
+  });
+}
+function attSatisfied(i, def){
+  var reqs=parseAtt(def.att);
+  return reqs.every(function(a,ai){
+    return ((S.atts[i]&&S.atts[i][ai])||0) >= a.min;
+  });
+}
+
+/* ---------- 各环节控件 ---------- */
+function ctlHtml(i, def){
+  var r=S.row, d=S.data[i]||(S.data[i]={});
+  var ctls=parseCtl(def.ctl);
+  var h='';
+
+  ctls.forEach(function(c){
+    var n=c.name;
+    if(n==='验收人'){
+      h+='<div class="factor"><div class="fhead"><span class="fname">'+esc(n)+'</span>'+
+         '<span class="mut3 tiny">自动取登录账号，不可手选</span></div>'+
+         '<div class="ctl"><input disabled value="雷华雄"></div></div>';
+      return;
+    }
+    if(n==='验收日期'){
+      h+='<div class="factor"><div class="fhead"><span class="fname">'+esc(n)+'</span><span class="req">*</span></div>'+
+         '<div class="ctl"><input type="date" data-k="'+esc(n)+'" value="'+(d[n]||'2026-10-14')+'"></div></div>';
+      return;
+    }
+    if(n==='验收结果'){
+      h+='<div class="factor"><div class="fhead"><span class="fname">'+esc(n)+'</span><span class="req">*</span></div>'+
+         '<div class="ctl"><select data-k="'+esc(n)+'">'+
+         OPTION_POOL['验收结果'].map(function(o){
+           return '<option'+(S.result[i]===o?' selected':'')+'>'+o+'</option>';
+         }).join('')+'</select></div>'+
+         '<div class="verdict hint">选项来自「参数」页 验收结果选项；选「整改后合格」时下方出现「整改期限」</div></div>';
+      return;
+    }
+    if(n==='整改期限'){
+      if(S.result[i]!=='整改后合格') return;
+      h+='<div class="factor"><div class="fhead"><span class="fname">'+esc(n)+'</span><span class="req">*</span></div>'+
+         '<div class="ctl"><input type="date" data-k="整改期限" value="'+(d['整改期限']||'')+'"></div>'+
+         '<div class="verdict hint">验收结果 = 整改后合格 时必填，且 ≥ 当天</div></div>';
+      return;
+    }
+    if(n==='确认项'){
+      var items=def.factors.split('、');
+      var checked=d['确认项']||{};
+      h+='<div class="factor"><div class="fhead"><span class="fname">逐项确认</span><span class="req">*</span></div>'+
+         '<div class="std">本底数据来自 data 表，任何人不可修改，仅作对照基准</div>';
+      items.forEach(function(it){
+        var val=stdOf(it,r);
+        h+='<label class="chk"><input type="checkbox" data-conf="'+esc(it)+'"'+(checked[it]?' checked':'')+'>'+
+           '<span>'+esc(it)+'</span><span class="mut sm" style="margin-left:auto">'+esc(val===undefined?'—':val)+'</span></label>';
+      });
+      var c=items.filter(function(x){return checked[x];}).length;
+      h+='<div class="verdict '+(c===items.length?'ok':'hint')+'">已确认 '+c+' / '+items.length+' 项'+
+         (c===items.length?'':'，全部勾选后方可提交')+'</div></div>';
+      return;
+    }
+
+    /* —— 按控件类型分支 —— */
+    var stdLine='';
+    if(n.indexOf('整地规格')===0){
+      var sp=String(stdOf('整地规格',r)||'').split(/[×xX*]/);
+      stdLine='<div class="std">标准值 <b>'+esc(stdOf('整地规格',r))+'</b>（取自 data「整地规格」列，拆为长/宽/深 3 项）</div>';
+      h+='<div class="factor"><div class="fhead"><span class="fname">整地规格</span><span class="req">*</span>'+
+         '<span class="mut3 tiny">长 × 宽 × 深，cm</span></div>'+stdLine+
+         '<div class="ctl n3">'+
+         '<input type="number" data-k="整地长" placeholder="'+sp[0]+'" value="'+(d['整地长']||'')+'">'+
+         '<input type="number" data-k="整地宽" placeholder="'+sp[1]+'" value="'+(d['整地宽']||'')+'">'+
+         '<input type="number" data-k="整地深" placeholder="'+sp[2]+'" value="'+(d['整地深']||'')+'">'+
+         '</div><div class="verdict" data-v="整地"></div></div>';
+      return;
+    }
+    if(n==='整地方式'){
+      stdLine='<div class="std">标准值 <b>'+esc(stdOf('整地方式',r))+'</b> · 选项由 data 该列去重得出</div>';
+      h+='<div class="factor"><div class="fhead"><span class="fname">'+esc(n)+'</span><span class="req">*</span></div>'+stdLine+
+         '<div class="ctl"><select data-k="整地方式">'+
+         OPTION_POOL['整地方式'].map(function(o){return '<option'+(d[n]===o?' selected':'')+'>'+o+'</option>';}).join('')+
+         '</select></div></div>';
+      return;
+    }
+    if(['苗龄','地径','苗高'].indexOf(n)>=0){
+      stdLine='<div class="std">标准值来源：<b>项目作业设计</b>（data 无对应列）· 判定规则 '+esc(c.arg)+'</div>';
+      h+='<div class="factor"><div class="fhead"><span class="fname">'+esc(n)+'</span><span class="req">*</span>'+
+         '<span class="mut3 tiny">'+esc(c.arg)+'</span></div>'+stdLine+
+         '<div class="ctl"><input type="number" data-k="'+esc(n)+'" value="'+(d[n]||'')+'"></div></div>';
+      return;
+    }
+    if(n==='种植数量'){
+      stdLine='<div class="std">设计株数 <b>'+esc(stdOf('总株数',r))+'</b> 株（取自 data 列「总株数  」，表头含 2 个尾随空格，匹配时须 trim）· 支持分批累计</div>';
+      h+='<div class="factor"><div class="fhead"><span class="fname">'+esc(n)+'</span><span class="req">*</span>'+
+         '<span class="mut3 tiny">分批累计</span></div>'+stdLine+
+         '<div class="ctl"><input type="number" data-k="种植数量" value="'+(d[n]||'')+'"></div>'+
+         '<div class="verdict" data-v="株数"></div></div>';
+      return;
+    }
+    if(n==='混交比例实核'){
+      stdLine='<div class="std">设计比例 <b>'+esc(stdOf('混交比例',r))+'</b> · ⚠️ 该列 number_format 被误设为 h:mm，界面须按原始数值取用</div>';
+      h+='<div class="factor"><div class="fhead"><span class="fname">混交比例实核</span><span class="req">*</span>'+
+         '<span class="mut3 tiny">%</span></div>'+stdLine+
+         '<div class="ctl"><input type="number" data-k="混交比例实核" value="'+(d[n]||'')+'"></div>'+
+         '<div class="verdict" data-v="混交"></div></div>';
+      return;
+    }
+    if(n.indexOf('数值')===0 || c.type.indexOf('数值')===0){
+      var unit=(c.arg||'').split(',')[0]||'';
+      h+='<div class="factor"><div class="fhead"><span class="fname">'+esc(n)+'</span>'+
+         (c.arg.indexOf('选填')>=0?'':'<span class="req">*</span>')+
+         (unit?'<span class="mut3 tiny">'+esc(unit)+'</span>':'')+'</div>'+
+         '<div class="ctl"><input type="number" data-k="'+esc(n)+'" value="'+(d[n]||'')+'"></div>'+
+         '<div class="verdict" data-v="'+esc(n)+'"></div></div>';
+      return;
+    }
+    if(c.type.indexOf('下拉')===0){
+      h+='<div class="factor"><div class="fhead"><span class="fname">'+esc(n)+'</span><span class="req">*</span></div>'+
+         '<div class="ctl"><select data-k="'+esc(n)+'">'+
+         (OPTION_POOL[n]||[]).map(function(o){return '<option'+(d[n]===o?' selected':'')+'>'+o+'</option>';}).join('')+
+         '</select></div></div>';
+      return;
+    }
+    if(c.type.indexOf('单行文本')===0){
+      h+='<div class="factor"><div class="fhead"><span class="fname">'+esc(n)+'</span>'+
+         '<span class="mut3 tiny">选填 · '+esc(c.arg)+'</span></div>'+
+         '<div class="ctl"><input type="text" data-k="'+esc(n)+'" maxlength="20" value="'+(d[n]||'')+'"></div></div>';
+      return;
+    }
+    if(c.type.indexOf('多行纯文本')===0){
+      var need = (d['病虫害情况']==='严重');
+      h+='<div class="factor"><div class="fhead"><span class="fname">'+esc(n)+'</span>'+
+         (need?'<span class="req">*</span>':'<span class="mut3 tiny">选填</span>')+'</div>'+
+         '<div class="ctl"><textarea data-k="'+esc(n)+'" maxlength="500" placeholder="纯文本，不带格式">'+esc(d[n]||'')+'</textarea></div>'+
+         '<div class="verdict hint">纯文本 ≤500 字；病虫害情况 = 严重 时必填</div></div>';
+      return;
+    }
+    if(c.type.indexOf('多选')===0){
+      var opts=c.arg.split(';').map(function(x){return x.trim();}).filter(Boolean);
+      var sel=d[n]||[];
+      h+='<div class="factor"><div class="fhead"><span class="fname">'+esc(n)+'</span><span class="req">*</span>'+
+         '<span class="mut3 tiny">多选勾选框，至少 1 项</span></div><div class="multi">';
+      opts.forEach(function(o){
+        h+='<label class="chk"><input type="checkbox" data-multi="'+esc(o)+'"'+
+           (sel.indexOf(o)>=0?' checked':'')+'>'+esc(o)+'</label>';
+      });
+      h+='</div><div class="verdict '+(sel.length?'ok':'hint')+'">已选 '+sel.length+' 项</div></div>';
+      return;
+    }
+    if(c.type.indexOf('日期')===0){
+      h+='<div class="factor"><div class="fhead"><span class="fname">'+esc(n)+'</span><span class="req">*</span></div>'+
+         '<div class="ctl"><input type="date" data-k="'+esc(n)+'" value="'+(d[n]||'')+'"></div></div>';
+      return;
+    }
+  });
+
+  /* 环节 6/7 的自动计算成活率 / 保存率 */
+  if(def.no===6 || def.no===7){
+    var s=d['抽查株数'], dd=d[def.no===6?'死亡株数':'存活株数'];
+    var rate=(s>0 && dd!=null && dd!=='') ? (100*(s-dd)/s) : null;
+    h+='<div class="factor" style="background:#f0efec;border-radius:8px;padding:10px 12px;border-top:0">'+
+       '<div class="fhead"><span class="fname">'+(def.no===6?'成活率':'保存率')+'</span>'+
+       '<span class="mut3 tiny">系统自动算，不可手填</span></div>'+
+       '<div style="font-size:20px;font-weight:500;margin-top:2px">'+
+       (rate==null?'—':rate.toFixed(1)+'%')+'</div>'+
+       '<div class="tiny mut3">'+(def.no===6?'成活率 =(抽查株数 − 死亡株数) ÷ 抽查株数 × 100%'
+                                    :'保存率 =(抽查株数 − 存活株数) ÷ 抽查株数 × 100%，与成活率同口径')+'</div></div>';
+  }
+  return h;
+}
+
+/* ---------- 提交闸门 ---------- */
+function gateOf(i, def){
+  var d=S.data[i]||{}, miss=[];
+  var ctls=parseCtl(def.ctl);
+  ctls.forEach(function(c){
+    var n=c.name;
+    if(['验收人','验收日期','整改期限'].indexOf(n)>=0) return;
+    if(n==='确认项'){
+      var items=def.factors.split('、'), ck=d['确认项']||{};
+      if(items.some(function(x){return !ck[x];})) miss.push('确认项 '+items.filter(function(x){return !ck[x];}).length+' 项未勾');
+      return;
+    }
+    if(c.type.indexOf('多选')===0){
+      if(!(d[n]&&d[n].length)) miss.push(n);
+      return;
+    }
+    if(c.type.indexOf('多行纯文本')===0){
+      if(d['病虫害情况']==='严重' && !(d[n]||'').trim()) miss.push(n+'（病虫害=严重必填）');
+      return;
+    }
+    var optional = c.arg.indexOf('选填')>=0 || c.type.indexOf('单行文本')===0;
+    if(optional) return;
+    if(def.no===6||def.no===7){
+      if(['抽查株数', def.no===6?'死亡株数':'存活株数'].indexOf(n)<0) return;
+    }
+    if(n.indexOf('整地规格')===0){
+      if(!(d['整地长']&&d['整地宽']&&d['整地深'])) miss.push('整地规格 3 项');
+      return;
+    }
+    var v=d[n];
+    if(v==null || v==='') miss.push(n);
+  });
+  if(!(S.result[i])) miss.push('验收结果');
+  if(!attSatisfied(i,def)) miss.push('附件');
+  if(S.result[i]==='整改后合格' && !d['整改期限']) miss.push('整改期限');
+  return miss;
+}
+
+/* ---------- 主渲染 ---------- */
+function renderPanel(){
+  var p=document.getElementById('panel');
+  if(!S.flow){ p.innerHTML='<div class="card mut sm">本版本仅实现「流程-人工造林」。请选择一个「人工造乔木林」小班。</div>'; return; }
+  var i=S.cur, def=S.steps[i].def;
+  var locked=!unlocked(i);
+  var h='<div class="card'+(locked?' locked':'')+'">';
+  h+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
+     '<h2>'+esc(def.step)+'</h2><span class="badge">'+esc(def.type)+'</span>'+
+     '<span class="mut3 sm" style="margin-left:auto">第 '+def.no+' / '+S.steps.length+' 环节</span></div>';
+  h+='<div class="tiny mut3" style="margin-top:4px">'+esc(def.memo)+'</div>';
+  h+='<div class="tiny mut3" style="margin-top:2px">填报要求：'+esc(def.req)+' · 校验方式：'+esc(def.check)+' · 通过标准：'+esc(def.pass)+'</div>';
+  if(locked) h+='<div class="warnbox">前一环节尚未提交，按「转序规则」本环节不可填报：'+esc(S.steps[i-1].def.seq)+'</div>';
+  else h+='<div id="ctls" style="margin-top:12px">'+ctlHtml(i,def)+'</div>';
+  h+='<div id="att-'+i+'"></div>';
+  h+='</div>';
+  p.innerHTML=h;
+
+  if(!locked) attHtml(i,def);
+  bind(i,def);
+  verdict(i,def);
+}
+
+function verdict(i,def){
+  var d=S.data[i]||{}, r=S.row;
+  function set(k,txt,cls){
+    var e=document.querySelector('[data-v="'+k+'"]'); if(e){ e.textContent=txt; e.className='verdict '+cls; }
+  }
+  if(def.no===2){
+    var sp=String(stdOf('整地规格',r)||'').split(/[×xX*]/).map(Number);
+    var v=['整地长','整地宽','整地深'].map(function(k){return d[k]});
+    if(v.every(function(x){return x!==undefined&&x!==''&&x!=null;})){
+      var pass=v.every(function(x,i){return x>=sp[i];});
+      set('整地', v.join('×')+' × '+sp.join('×')+(pass?' · 对照通过':' · 低于标准，不合格'), pass?'ok':'bad');
+    } else set('整地','三项填齐后自动对照标准值','hint');
+  }
+  if(def.no===4){
+    var tot=Number(stdOf('总株数',r));
+    if(d['种植数量']){
+      var n=+d['种植数量'];
+      set('株数','累计 '+n+' / 设计 '+tot+' 株'+(n>tot?' · 超出设计株数':(n===tot?' · 已达设计株数':' · 还差 '+(tot-n)+' 株')), n>tot?'bad':'ok');
+    } else set('株数','支持分批累计，填第几批就填几批','hint');
+    if(d['混交比例实核']){
+      var dev=Math.abs((+d['混交比例实核']/100)-Number(stdOf('混交比例',r)));
+      set('混交','设计 '+stdOf('混交比例',r)+'，实核 '+d['混交比例实核']+'%，偏差 '+(dev*100).toFixed(1)+' 个百分点', dev<=0.05?'ok':'bad');
+    }
+  }
+  ['底肥用量'].forEach(function(n){
+    if(d[n]!=null&&d[n]!==''){
+      set(n, (+d[n]>0? '已填 · 大于 0 通过' : '必须大于 0'), (+d[n]>0?'ok':'bad'));
+    }
+  });
+}
+
+function bind(i,def){
+  var d=S.data[i]||(S.data[i]={});
+  var card=document.getElementById('ctls'); if(!card) return;
+
+  Array.prototype.forEach.call(card.querySelectorAll('[data-k]'),function(el){
+    var k=el.dataset.k;
+    var ev = (el.tagName==='SELECT')?'change':'input';
+    el.addEventListener(ev,function(){
+      d[k]=el.value;
+      if(k==='验收结果') S.result[i]=el.value;
+      if(k==='病虫害情况') renderPanel();
+      verdict(i,def);
+      renderSubmit(i,def);
+    });
+  });
+  Array.prototype.forEach.call(card.querySelectorAll('[data-conf]'),function(el){
+    el.addEventListener('change',function(){
+      d['确认项']=d['确认项']||{};
+      d['确认项'][el.dataset.conf]=el.checked;
+      renderPanel(); renderSubmit(i,def);
+    });
+  });
+  Array.prototype.forEach.call(card.querySelectorAll('[data-multi]'),function(el){
+    el.addEventListener('change',function(){
+      var n=el.dataset.multi, f=el.closest('.factor').querySelector('.fname').textContent;
+      d[f]=d[f]||[];
+      var ix=d[f].indexOf(n);
+      if(el.checked && ix<0) d[f].push(n); else if(!el.checked && ix>=0) d[f].splice(ix,1);
+      renderPanel(); renderSubmit(i,def);
+    });
+  });
+}
+
+function renderSubmit(i,def){
+  var miss=gateOf(i,def), bar=document.getElementById('submitBar');
+  var reqs=parseAtt(def.att);
+  var attNeed=reqs.filter(function(a){return a.min>0;}).length;
+  var ok=miss.length===0;
+  bar.innerHTML='<span class="prog">必填未完成 '+miss.length+' 项'+(miss.length?'：'+esc(miss.join('、')):'，可以提交')+'</span>'+
+    (ok?'<span class="tiny" style="color:var(--ok)">附件已满足</span>':'')+
+    (ok?'':'<span class="why">未完成，提交置灰</span>')+
+    '<button class="pri" '+(ok?'':'disabled')+'>提交本环节</button>';
+  var b=bar.querySelector('button');
+  b.onclick=function(){
+    S.submitted[i]=true;
+    S.data[i].验收人='雷华雄';
+    S.data[i].验收日期=S.data[i].验收日期||'2026-10-14';
+    if(i+1<S.steps.length){ S.cur=i+1; }
+    renderAll();
+    toastOk('已提交「'+def.step+'」');
+  };
+}
+
+function toastOk(msg){
+  var t=document.createElement('div');
+  t.textContent='✓ '+msg;
+  t.style.cssText='position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#0f6e56;color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:99';
+  document.body.appendChild(t);
+  setTimeout(function(){t.remove();},1600);
+}
+
+function renderAll(){
+  renderSteps(); renderPanel();
+  if(S.flow) renderSubmit(S.cur, S.steps[S.cur].def);
+  renderPick();
+  renderDemos();
+}
+
+/* ---------- 解析器演示 ---------- */
+function renderDemos(){
+  var pd=document.getElementById('parseDemo');
+  var rows=[1,2,3,4,5,8].map(function(no){
+    var def=FLOW_RENLIN[no-1];
+    var ps=parseAtt(def.att);
+    return '<div style="margin-top:10px"><div class="sm"><b>'+no+'. '+esc(def.step)+'</b></div>'+
+      '<pre>'+esc(def.att)+'</pre><div>'+
+      ps.map(function(a){
+        var cls=a.kind==='photo'?'p':(a.kind==='upload'?'u':'warn');
+        var ico=a.kind==='photo'?'📷':(a.kind==='upload'?'📎':'📍');
+        return '<span class="tagx '+cls+'">'+ico+' '+esc(a.kind)+' · '+esc(a.label)+(a.min?' @'+a.min:'')+'</span>'+
+               (a.warn?'<span class="tagx warn">⚠ '+esc(a.warn)+'</span>':'');
+      }).join('')+
+      '</div></div>';
+  }).join('');
+  pd.innerHTML='<div class="tiny mut3" style="margin-top:8px">正式语法 <code>拍照:xx@2</code> / <code>上传:xx</code>，半角分号分隔，可组合。当前 Excel 里写的是自然语言，界面按规则表兜底解析，解析结果直接决定渲染哪些按钮。</div>'+rows;
+
+  var cd=document.getElementById('ctlDemo');
+  cd.innerHTML=[1,2,3,4,6,8].map(function(no){
+    var def=FLOW_RENLIN[no-1];
+    var cs=parseCtl(def.ctl);
+    return '<div style="margin-top:10px"><div class="sm"><b>'+no+'. '+esc(def.step)+'</b></div><pre>'+esc(def.ctl)+'</pre>'+
+      '<div>'+cs.map(function(c){
+        return '<span class="tagx '+(c.type.indexOf('数值')>=0?'p':(c.type.indexOf('下拉')>=0||c.type.indexOf('日期')>=0?'u':'warn'))+'">'+
+          esc(c.name)+' → '+esc(c.type)+(c.arg?'('+esc(c.arg)+')':'')+'</span>';
+      }).join('')+'</div></div>';
+  }).join('');
+}
+
+/* ---------- 已知坑提示 ---------- */
+document.getElementById('pitfall').innerHTML =
+ '<b>实现时必须处理的 4 个数据坑</b><br>'+
+ '1. data 表头 <code>总株数&nbsp;&nbsp;</code> 末尾带 2 个空格 —— 所有列名匹配（占位符、可编辑列、标准值取值）统一 trim，否则取不到设计株数。<br>'+
+ '2. 注册表第 2 行与第 6 行同名「流程-人工造林」且优先级都是 10，第 6 行自称演示行 —— 须二选一，否则人工造林被注册两次。<br>'+
+ '3. 第 2 行条件字段填 <code>1</code>（无条件）—— 现配置下 600 行全部小班都跑人工造林，含 188 行退化林修复/四旁植树/低效林改造。<br>'+
+ '4. 「验收结果选项」参数页只写了 合格;不合格，而「因子控件对照」定义了 整改后合格 并配了「整改期限」必填 —— 两者需对齐。';
+
+/* ---------- 启动 ---------- */
+pickRow(0);
+</script>
+</body>
+</html>

@@ -22,3 +22,6 @@
 | B15 | 按唯一键合并更新（C15） | `param_parser.py::merge_rows` | 旧/新 headers+rows + 唯一键 + 保护列 | `(merged_rows, stats)` | — |
 | B16 | 更新与回滚接口（C15） | `main.py::api_update / api_rollback` + `workbook_backups` 表 | xlsx 字节流 + confirm 名称 | 就地更新的工作簿 / 还原 | B4、B15 |
 | B17 | 照片 EXIF 读取/回写（doc/017） | `static/photo_exif.js` + `static/vendor/piexif.js` + `app.js::exifOf/preserveExif` | 原片 JPEG（Blob/dataUrl） | 带原片 EXIF 的压缩图（Orientation 归一、无 MakerNote） | 拍照流程 |
+| B18 | 验收流程表解析（doc/019） | `flow_parser.py::parse_flows/parse_registry/parse_flow_sheet` | 流程 sheet + 注册表 | `{registry, flows:{sheet:[环节]}}`，环节含 controls/attachments | B1 |
+| B19 | 流程匹配与体检（B19） | `flow_parser.py::match_flow/flow_warnings/std_lookup` | 注册表 + 流程定义 + data 行 | 命中的流程（含标准值）/ 配置坑清单 | B18 |
+| B20 | 流程填报界面与闸门 | `static/flow.js` + `templates/index.html#flowPanel` + `main.py::api_flow/api_flow_save` | 环节定义 + data 行 | 控件实例 + 提交落库 `flow_records` | B18、B19、B12（离场冲刷） |

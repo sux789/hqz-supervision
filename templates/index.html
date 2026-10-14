@@ -55,6 +55,9 @@
       <div id="formEl"></div>
       <div id="photoHint" class="muted photo-hint"></div>
       <div id="rowPhotos" class="shot-wrap"></div>
+      <!-- v0.31：验收流程界面（doc/019）。有流程配置时显示，无配置时保持 hidden，
+           老工作簿行为完全不变（不配置 = 退回原网格填表）。 -->
+      <div id="flowPanel" class="flow-panel hidden"></div>
     </section>
   </div>
 
@@ -118,6 +121,7 @@
   <script src="{{ url_for('static', filename='vendor/piexif.js') }}"></script>
   <script src="{{ url_for('static', filename='photo_exif.js') }}"></script>
   <!-- ?v= 版本号熔断：静态 JS 更新后 WebView/浏览器强制拉新（曾致 APK 端验收联动代码不生效） -->
-  <script src="{{ url_for('static', filename='app.js') }}?v=0.30"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=0.31"></script>
+  <script src="{{ url_for('static', filename='flow.js') }}?v=0.31.2"></script>
 </body>
 </html>

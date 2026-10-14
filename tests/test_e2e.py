@@ -13,6 +13,7 @@
 """
 import datetime
 import io
+import json
 import shutil
 import sys
 import tempfile
@@ -24,6 +25,8 @@ sys.path.insert(0, str(BASE))
 
 import openpyxl  # noqa: E402
 import openpyxl.utils  # noqa: E402
+import sqlite3 as _sq  # noqa: E402
+import main as _M  # noqa: E402
 
 from main import UPLOAD_DIR, ParamError, create_app, parse_workbook_storage  # noqa: E402
 
@@ -61,8 +64,9 @@ def sheets_of(path):
 def parse(path):
     """→ 结果 dict，或 ('ERR', 错误消息)。"""
     try:
-        sn, h, rows, cfg, pr, kc = parse_workbook_storage(open(path, 'rb'))
-        return {'sheet': sn, 'cols': len(h), 'rows': len(rows), 'key': kc, 'cfg': cfg}
+        sn, h, rows, cfg, pr, kc, flows = parse_workbook_storage(open(path, 'rb'))
+        return {'sheet': sn, 'cols': len(h), 'rows': len(rows), 'key': kc, 'cfg': cfg,
+                'flows': flows}
     except ParamError as e:
         return ('ERR', str(e))
 
@@ -524,7 +528,7 @@ else:
             buf = io.BytesIO()
             dl().save(buf)
             buf.seek(0)
-            sn_, h_, rows_, cfg_, pr_, kc_ = parse_workbook_storage(buf)
+            sn_, h_, rows_, cfg_, pr_, kc_, fl_ = parse_workbook_storage(buf)
             ci_ = h_.index('验收日期')
             ok('E12 导出文件重新上传 → 日期还原为 YYYY-MM-DD 文本',
                [rows_[k][ci_] for k in range(3)] == ['2026-09-10', '2026-09-11', '2026-09-12'],
@@ -705,9 +709,6 @@ else:
 # 后端校验时若拿空串覆盖真实密钥，就会"配置齐全却开不了开关"（用户实测就是这个报错）。
 # 全程在**数据库副本**上跑，不动本地库。
 print('\n=== G. 云同步：留空 secret 开启开关 ===')
-import sqlite3 as _sq  # noqa: E402
-import main as _M  # noqa: E402
-
 _orig_db = _M.DB_PATH
 _tmpdb = Path(tempfile.mkdtemp()) / 'sync.sqlite3'
 shutil.copy2(_orig_db, _tmpdb)
@@ -750,6 +751,148 @@ try:
            f"{(r.get_json() or {}).get('error')}")
 finally:
     _M.DB_PATH = _orig_db               # 还原，别影响其余用例
+
+# ── H. 验收流程接口（v0.31，doc/019）──────────────────────────────
+# 目的：证明"上传一份带流程 sheet 的 Excel → 该行能查到 8 环节 → 能按转序提交 → 落库"。
+# 这里的 Excel 用现成的 data/验收流程设计/ 那份（含 8 个 sheet），不另外造。
+print('\n=== H. 验收流程：上传 → 匹配 → 转序 → 提交 → 落库 ===')
+_FLOW_XLSX = None
+# 只看 data/ 下的**模板目录**，排除 data/workbooks/<id>/source.xlsx（历史留存副本）
+# 与 .~ 临时文件；同时要求「填报控件」列存在 —— 设计稿阶段的「副本」只有 11 列，
+# 用它跑会因为 controls 全空而让必填校验用例失真（真因：2026-10-14 首次跑 H 组时误选副本）。
+for _cand in sorted(BASE.glob('data/**/*.xlsx')):
+    if 'workbooks' in _cand.parts or _cand.name.startswith('.~'):
+        continue
+    try:
+        _wb = openpyxl.load_workbook(_cand, read_only=True)
+        _ns = _wb.sheetnames
+        _has = any(n.startswith('流程-') for n in _ns) and '验收流程' in _ns
+        if _has:
+            _fh = next(_wb[n] for n in _ns if n.startswith('流程-'))
+            _hdr = [str(h).strip() if h else '' for h in
+                    next(_fh.iter_rows(max_row=1, max_col=16, values_only=True))]
+            _has = '填报控件' in _hdr
+        _wb.close()
+    except Exception:
+        _has = False
+    if _has:
+        _FLOW_XLSX = _cand
+        break
+
+if _FLOW_XLSX is None:
+    print('  ⏭ 跳过：仓库里找不到含「验收流程」+「流程-」sheet 的 Excel')
+else:
+    print(f'  用 {_FLOW_XLSX.name}')
+    _blob = _FLOW_XLSX.read_bytes()
+    _r = cu.post('/api/workbooks', data={'file': (io.BytesIO(_blob), _FLOW_XLSX.name)},
+                 headers=HA, content_type='multipart/form-data')
+    _j = _r.get_json()
+    ok('H1 含 8 个 sheet 的流程 Excel 能正常上传（不被"多 sheet"拦住）',
+       _r.status_code == 200 and _j.get('id'), str(_j)[:120])
+    _fwid = _j.get('id')
+    CREATED.append(_fwid)
+
+    _g = cu.get(f'/api/workbooks/{_fwid}', headers=HA).get_json()
+    _fl = _g.get('flows') or {}
+    ok('H2 api_get 回传流程配置（注册表 + 流程定义表）',
+       len(_fl.get('registry') or []) > 0 and len(_fl.get('flows') or {}) > 0,
+       f"registry={len(_fl.get('registry') or [])} flows={list((_fl.get('flows') or {}).keys())}")
+
+    _hdrs, _rows = _g['headers'], _g['rows']
+    _ridx = next((i for i, r0 in enumerate(_rows)
+                  if str(dict(zip(_hdrs, r0)).get('项目类型', '')).strip() == '人工造乔木林'), 0)
+
+    _f = cu.get(f'/api/workbooks/{_fwid}/flow?row={_ridx}', headers=HA).get_json()
+    ok('H3 该行命中流程并返回环节列表', _f.get('ok') and _f.get('flow_sheet', '').startswith('流程-'),
+       f"{_f.get('flow_sheet')} {len(_f.get('steps') or [])} 环节")
+    _steps = _f.get('steps') or []
+    ok('H4 人工造林是 8 个环节', len(_steps) == 8, str(len(_steps)))
+    ok('H5 环节带附件按钮（解析自「附件要求」列）',
+       any(len(s.get('attachments') or []) > 0 for s in _steps),
+       str([len(s.get('attachments') or []) for s in _steps]))
+    ok('H6 标准值随环节带出且「总株数  」尾随空格已处理',
+       _f.get('std', {}).get('总株数') is not None,
+       f"总株数={_f.get('std', {}).get('总株数')}")
+
+    _items = [x.strip() for x in (_steps[0].get('factors') or '').split('、') if x.strip()]
+    _full = {k: True for k in _items}
+
+    # 转序闸门：第 1 环节没交就想交第 2 环节 → 409
+    _r2 = cu.post(f'/api/workbooks/{_fwid}/flow', headers=HA,
+                  json={'row': _ridx, 'step_no': 2, 'result': '合格',
+                        'values': {'整地方式': '穴状'}})
+    ok('H7 转序闸门：前序环节未提交 → 409', _r2.status_code == 409,
+       str((_r2.get_json() or {}).get('error'))[:80])
+
+    # 必填：确认项没全勾 → 400
+    _r3 = cu.post(f'/api/workbooks/{_fwid}/flow', headers=HA,
+                  json={'row': _ridx, 'step_no': 1, 'result': '合格',
+                        'values': {'确认项': json.dumps({'小班边界': True}, ensure_ascii=False)},
+                        'att': [{'kind': 'punch', 'label': '定位打卡', 'count': 1}]})
+    ok('H8 必填校验：确认项未全勾 → 400 且逐项列出缺什么',
+       _r3.status_code == 400 and '未勾' in str((_r3.get_json() or {}).get('error', '')),
+       f'HTTP {_r3.status_code} {str((_r3.get_json() or {}).get("error"))[:90]}'
+       f' | factors={(_steps[0].get("factors") or "")[:30]}'
+       f' | ctl={[(c.get("name"), c.get("type")) for c in (_steps[0].get("controls") or [])]}')
+
+    # 附件下限：全勾但没打卡 → 400
+    _r4 = cu.post(f'/api/workbooks/{_fwid}/flow', headers=HA,
+                  json={'row': _ridx, 'step_no': 1, 'result': '合格',
+                        'values': {'确认项': json.dumps(_full, ensure_ascii=False)}, 'att': []})
+    ok('H9 附件下限：定位打卡 0 份 → 400', _r4.status_code == 400 and '定位打卡' in str(
+        (_r4.get_json() or {}).get('error')), str((_r4.get_json() or {}).get('error'))[:80])
+
+    # 齐了 → 200
+    _r5 = cu.post(f'/api/workbooks/{_fwid}/flow', headers=HA,
+                  json={'row': _ridx, 'step_no': 1, 'result': '合格',
+                        'values': {'确认项': json.dumps(_full, ensure_ascii=False),
+                                   '验收日期': '2026-10-14'},
+                        'att': [{'kind': 'punch', 'label': '定位打卡', 'count': 1,
+                                 'names': ['打卡 24.1,101.6'], 'operator': '测试'}]})
+    ok('H10 全部满足 → 提交成功', _r5.status_code == 200, str(_r5.get_json())[:100])
+
+    # 落库回读
+    _f2 = cu.get(f'/api/workbooks/{_fwid}/flow?row={_ridx}', headers=HA).get_json()
+    _rec1 = (_f2.get('records') or {}).get('1') or {}
+    ok('H11 提交后能读回该环节的记录', bool(_rec1), str(list(_rec1.keys())))
+    ok('H12 确认项已勾数正确落库',
+       len(json.loads((_rec1.get('确认项') or {}).get('value') or '{}')) == len(_items),
+       f"{len(_items)} 项")
+
+    # 第 2 环节：数值×3 必填
+    _r6 = cu.post(f'/api/workbooks/{_fwid}/flow', headers=HA,
+                  json={'row': _ridx, 'step_no': 2, 'result': '合格',
+                        'values': {'整地方式': '穴状'},
+                        'att': [{'kind': 'photo', 'label': '整地现场', 'count': 1}]})
+    ok('H13 数值×3 三项缺一 → 400', _r6.status_code == 400,
+       f'HTTP {_r6.status_code} {str((_r6.get_json() or {}).get("error"))[:90]}')
+
+    # 幂等：重复提交同一环节不堆行
+    _before = len(cu.get(f'/api/workbooks/{_fwid}/flow?row={_ridx}', headers=HA).get_json()
+                  .get('records', {}).get('1', {}))
+    cu.post(f'/api/workbooks/{_fwid}/flow', headers=HA,
+            json={'row': _ridx, 'step_no': 1, 'result': '合格',
+                  'values': {'确认项': json.dumps(_full, ensure_ascii=False)},
+                  'att': [{'kind': 'punch', 'label': '定位打卡', 'count': 1}]})
+    _after = len(cu.get(f'/api/workbooks/{_fwid}/flow?row={_ridx}', headers=HA).get_json()
+                 .get('records', {}).get('1', {}))
+    ok('H14 重复提交同一环节不产生重复行', _before == _after, f'{_before} → {_after}')
+
+    # 未登录 → 401（必须独立 client：Flask test_client 共享 cookie jar）
+    _anon = app.test_client()
+    ok('H15 未登录读流程 → 401',
+       _anon.get(f'/api/workbooks/{_fwid}/flow?row=0').status_code == 401)
+
+    # 老工作簿兼容：清空 flows（等价于 v0.31 之前上传的）→ ok=false，不是报错。
+    # 本条是最后一条，改坏无所谓（该工作簿随后被 purge）。
+    _dbp = Path(_M.DB_PATH)
+    _sq2 = _sq.connect(_dbp)
+    _sq2.execute('UPDATE workbooks SET flows=? WHERE id=?', ('', _fwid))
+    _sq2.commit(); _sq2.close()
+    _r7 = cu.get(f'/api/workbooks/{_fwid}/flow?row={_ridx}', headers=HA)
+    ok('H16 老工作簿（flows 为空）→ ok=false 且不报错',
+       _r7.status_code == 200 and _r7.get_json().get('ok') is False,
+       str(_r7.get_json())[:80])
 
 # ── 清理本次测试新建的工作簿（彻底删除，含源模板目录）──────
 print('\n=== 清理测试数据 ===')

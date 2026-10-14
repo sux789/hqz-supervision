@@ -16,7 +16,7 @@ from param_parser import (  # noqa: E402
     ParamError, check_unique_column, export_filters_of, filter_options,
     filter_rows, log_fields_of, merge_rows, parse_params, percent_cols_of,
     row_key_column, unique_key_of)
-from main import _pick_data_sheet  # noqa: E402
+from main import _norm_cell, _pick_data_sheet  # noqa: E402
 
 HDR = ['key', 'value', '类型', '默认值', '说明', '示例']
 HEADERS = ['项目类型', '小班号', '标段', '验收人', '验收日期', '验收结果', '验收备注',
@@ -337,6 +337,167 @@ raises('I3 未知占位符仍然报错（保留字没有放宽校验）',
            ['可编辑列', '小班号'], ['功能', '轨迹'],
            ['相片备注', '{{小班号}}'], ['相片文件名', '{{小班号}}'],
            ['目录', '{{工作簿编号}}/{{小班号}}']), HDRS), '不是数据 sheet 表头')
+
+# ── J. 验收流程解析（v0.31，doc/019）──────────────────────────────
+# 重点覆盖两条实测踩过的坑：
+#   J 组：括号感知分割（括号内的分号不能切）
+#   K 组：自然语言附件解析（规则表顺序敏感、命中即停）
+print('\n=== J. 流程解析：括号感知分割 + 控件结构 ===')
+import flow_parser as fp  # noqa: E402
+
+passes('J1 括号内分号不被切断：下拉三选项',
+       lambda: fp.parse_ctl('完成情况=下拉(符合设计;部分完成;未完成)')[0],
+       lambda r: r['name'] == '完成情况' and r['type'] == '下拉'
+       and fp.ctl_options(r) == ['符合设计', '部分完成', '未完成'])
+passes('J2 多选四选项完整（裸切会只剩第一个）',
+       lambda: fp.ctl_options(fp.parse_ctl(
+           '管护作业情况=多选(浇水;培土;补植;病虫害防治)')[0]),
+       lambda r: r == ['浇水', '培土', '补植', '病虫害防治'])
+passes('J3 括号外分号仍正常切分',
+       lambda: [c['name'] for c in fp.parse_ctl(
+           '底肥用量=数值(kg/袋,>0); 底肥品牌=单行文本(≤20字)')],
+       lambda r: r == ['底肥用量', '底肥品牌'])
+passes('J4 数值×3 产出三个子字段名（前后端共用，不各自拼字符串）',
+       lambda: fp.parse_ctl('整地规格=数值×3(长/宽/深,cm,≥标准自动判)')[0]['sub'],
+       lambda r: len(r) == 3 and all(x.startswith('整地规格') for x in r))
+passes('J5 split_top 遇中文括号也不切',
+       lambda: len(fp.split_top('下拉（甲;乙）; 数值(丙)', ';')),
+       lambda r: r == 2)
+passes('J6 「系统自动算」的字段带标记（后端据此免填）',
+       lambda: '系统自动算' in fp.parse_ctl('成活率=数值(%,系统自动算)')[0]['arg'])
+import openpyxl as _oxl  # noqa: E402
+
+
+def _flow_sheet(file_name, sheet='流程-人工造林'):
+    """按文件名找一份流程 Excel 并返回其 sheet 对象（read_only=True）。"""
+    import pathlib
+    for p in sorted(pathlib.Path(BASE).glob('data/**/*.xlsx')):
+        if 'workbooks' in p.parts or p.name.startswith('.~'):
+            continue
+        try:
+            wb = _oxl.load_workbook(p, read_only=True)
+        except Exception:
+            continue
+        if sheet in wb.sheetnames and p.name == file_name:
+            return wb, wb[sheet]
+        wb.close()
+    return None, None
+
+
+_WB, _WS = _flow_sheet('造林项目-验收模板-含验收流程.xlsx')
+if _WS is not None:
+    # read_only 工作簿流**只能顺序读一次** —— 所以这里在同一次调用里把表头和数据一起拿，
+    # 不能为了"再看一眼表头"再 iter_rows 一次（那会拿到空值 → 误报缺列，2026-10-14 踩过）
+    passes('J8 read_only 下表头与数据一次读全（表头含「填报控件」）',
+           lambda: '填报控件' in fp.parse_flow_sheet(_WS)[0]['controls_raw'] or
+                   len(fp.parse_flow_sheet(_WS)[0]['controls']) > 0,
+           lambda r: bool(r))
+    _wb2 = _oxl.load_workbook(
+        BASE / 'data/验收流程设计/造林项目-验收模板-含验收流程 副本.xlsx',
+        read_only=True)
+    if '流程-人工造林' in _wb2.sheetnames:
+        passes('J9 真的缺「填报控件」列 → 每个环节带 warn',
+               lambda: all(s.get('warn') for s in fp.parse_flow_sheet(_wb2['流程-人工造林'])),
+               lambda r: bool(r))
+    _wb2.close()
+
+print('\n=== K. 流程解析：附件要求两层语法 ===')
+passes('K1 正式语法 拍照:xx@2 → 下限 2 张',
+       lambda: fp.parse_att('拍照:整地现场照片@2')[0],
+       lambda r: r['kind'] == 'photo' and r['label'] == '整地现场照片' and r['min'] == 2)
+passes('K2 正式语法 半角分号组合出两个按钮',
+       lambda: [x['kind'] for x in fp.parse_att('上传:三证一签;拍照:剪苗作业')],
+       lambda r: r == ['upload', 'photo'])
+passes('K3 自然语言「各 1 张」拆成 3 个按钮且只有最后一个带下限',
+       lambda: fp.parse_att('回塘、放肥、覆土各 1 张照片'),
+       lambda r: [x['label'] for x in r] == ['回塘', '放肥', '覆土']
+       and [x['min'] for x in r] == [0, 0, 1])
+passes('K4 兜底规则不产生冗余按钮（每环节只一个"现场"）',
+       lambda: [x['label'] for x in fp.parse_att('成活率抽查照片')],
+       lambda r: r == ['成活率抽查'])
+passes('K5 定位打卡 → punch 类型（不是 photo）',
+       lambda: fp.parse_att('定位打卡 + 小班边界照片'),
+       lambda r: r[0]['kind'] == 'punch' and r[0]['min'] == 1 and r[1]['kind'] == 'photo')
+passes('K6 证件类 → upload（下拉/上传按钮类型正确）',
+       lambda: [x['kind'] for x in
+                fp.parse_att('三证一签（需良种证的树种传四证一签）、种苗规格照片、剪苗作业照片')],
+       lambda r: r == ['upload', 'photo', 'photo'])
+passes('K7 省略写法并入上一片（撑杆、覆膜照片 → 2 个按钮）',
+       lambda: [x['label'] for x in fp.parse_att('撑杆、覆膜照片')],
+       lambda r: r == ['撑杆', '覆膜'])
+passes('K8 空附件要求 → 无按钮',
+       lambda: fp.parse_att(''), lambda r: r == [])
+
+print('\n=== L. 流程解析：标准值 trim 取值 + 流程匹配 ===')
+passes('L1 「总株数  」尾随 2 空格，trim 后仍能取到（铁律 3）',
+       lambda: fp.std_lookup({'总株数  ': 2960, '小班号': 'YJ-1'}).get('总株数'),
+       lambda r: r == 2960)
+passes('L2 std_lookup 同时保留原名与 trim 名',
+       lambda: sorted(fp.std_lookup({'总株数  ': 1}).keys()),
+       lambda r: r == ['总株数', '总株数  '])
+
+REG = [{'sheet': '流程-人工造林', 'enabled': True, 'cond_field': '项目类型',
+        'cond_val': '人工造乔木林', 'scope': '全部', 'prio': 10, 'line': 2},
+       {'sheet': '流程-退化林修复', 'enabled': True, 'cond_field': '项目类型',
+        'cond_val': '退化林修复', 'scope': '全部', 'prio': 20, 'line': 3},
+       {'sheet': '流程-2026', 'enabled': False, 'cond_field': '项目类型',
+        'cond_val': '人工造乔木林', 'scope': '全部', 'prio': 5, 'line': 5}]
+FLOWS = {k: [{'no': 1, 'step': k, 'controls': [], 'attachments': []}]
+         for k in ('流程-人工造林', '流程-退化林修复', '流程-2026')}
+passes('L3 条件匹配：项目类型=人工造乔木林 → 命中人工造林',
+       lambda: fp.match_flow(REG, FLOWS, {'项目类型': '人工造乔木林'})['sheet'],
+       lambda r: r == '流程-人工造林')
+passes('L4 值先 trim 再比（data 有尾随空格脏数据）',
+       lambda: fp.match_flow(REG, FLOWS, {'项目类型': '人工造乔木林   '})['sheet'],
+       lambda r: r == '流程-人工造林')
+passes('L5 停用的流程不参与匹配（启用=否）',
+       lambda: fp.match_flow(REG, FLOWS, {'项目类型': '人工造乔木林'})['sheet'],
+       lambda r: r != '流程-2026')
+passes('L6 条件值不命中 → None（前端退回网格填表）',
+       lambda: fp.match_flow(REG, FLOWS, {'项目类型': '低效林改造'}),
+       lambda r: r is None)
+passes('L7 适用范围限定到具体文件时不生效',
+       lambda: fp.match_flow(
+           [{'sheet': '流程-人工造林', 'enabled': True, 'cond_field': '1',
+             'cond_val': '', 'scope': '别的文件.xlsx', 'prio': 10, 'line': 2}],
+           FLOWS, {'项目类型': 'x'}, '造林项目-验收模板.xlsx'),
+       lambda r: r is None)
+passes('L8 多条件全部满足才命中',
+       lambda: fp.match_flow(
+           [{'sheet': '流程-人工造林', 'enabled': True, 'cond_field': '项目类型;实施年度',
+             'cond_val': '人工造乔木林;2026年', 'scope': '全部', 'prio': 10, 'line': 2}],
+           FLOWS, {'项目类型': '人工造乔木林', '实施年度': '2027年'}),
+       lambda r: r is None)
+passes('L9 多条件都满足则命中',
+       lambda: fp.match_flow(
+           [{'sheet': '流程-人工造林', 'enabled': True, 'cond_field': '项目类型;实施年度',
+             'cond_val': '人工造乔木林;2026年', 'scope': '全部', 'prio': 10, 'line': 2}],
+           FLOWS, {'项目类型': '人工造乔木林', '实施年度': '2026年'})['sheet'],
+       lambda r: r == '流程-人工造林')
+
+print('\n=== M. 流程解析：多 sheet 数据表定位（v0.31）===')
+passes('M1 8 个 sheet（含流程/说明）也能定位 data',
+       lambda: _pick_data_sheet(['使用说明', 'data', '参数', '验收流程',
+                                 '流程-人工造林', '流程-退化林修复',
+                                 '流程-四旁植树', '因子控件对照']),
+       lambda r: r == 'data')
+raises('M2 只有流程 sheet 没有 data → 明确报错（不静默取流程表当数据）',
+       lambda: _pick_data_sheet(['参数', '验收流程', '流程-人工造林']),
+       '没有数据 sheet')
+passes('M3 说明 sheet 不算数据表（只剩 data 一个）',
+       lambda: _pick_data_sheet(['使用说明', 'data', '参数', '因子控件对照']),
+       lambda r: r == 'data')
+# 「混交比例」列 number_format 被误设 h:mm → openpyxl 读成 datetime.time，
+# 不处理就会落库成 '07:03:00'，界面上"混交比例 07:03:00"（2026-10-14 浏览器实测发现）
+passes('M4 被误设 h:mm 的数值列还原成小数（不是时间字符串）',
+       lambda: _norm_cell(__import__('datetime').time(7, 3, 0)),
+       lambda r: isinstance(r, float) and 0.29 < r < 0.30)
+passes('M5 真日期仍走 date 分支（不被 time 分支抢走）',
+       lambda: _norm_cell(__import__('datetime').date(2026, 10, 14)),
+       lambda r: r == '2026-10-14')
+passes('M6 datetime 带时分仍完整输出',
+       lambda: _norm_cell(__import__('datetime').datetime(2026, 10, 14, 9, 30, 15)),
+       lambda r: r == '2026-10-14 09:30:15')
 
 print('\n' + '=' * 62)
 print(f'通过 {_pass} / 失败 {_fail}')

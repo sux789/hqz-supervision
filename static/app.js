@@ -58,6 +58,10 @@ function nav(hash) { if (location.hash !== hash) location.hash = hash; }
 async function route() {
   if (!loggedIn) { show('login'); return; }
   await flushRowSave();     // 任何路由切换前先落库（含手势返回/前进后退/切行）
+  // v0.31：离开详情页前把流程草稿落盘，并隐藏流程面板（C14 离场纪律 / C14 离场冲刷）
+  if (window.supFlow) window.supFlow.saveDraft();
+  const fp = $('#flowPanel');
+  if (fp) { fp.innerHTML = ''; fp.classList.add('hidden'); }
   let m = location.hash.match(/^#\/wb\/(\d+)\/r\/(\d+)$/);
   if (m) {
     if (!await ensureWb(+m[1])) return;
@@ -371,6 +375,32 @@ function openDetail(idx) {
   $('#btnVideo').classList.toggle('hidden', !feats.includes('视频'));
   $('#btnTrack').classList.toggle('hidden', !feats.includes('轨迹'));
   $('#btnTrack').classList.toggle('recording', trackWatch !== null);
+  openFlowView(cur.id, idx);   // v0.31：无流程配置时 flow.js 自己把面板藏起来
+}
+
+/* ── 验收流程界面挂载（v0.31，doc/019）──────────────────────────────
+   flow.js 是独立模块（app.js 已 1700+ 行，不再往里塞）。这里只做三件事：
+     ① 注入它需要的上下文（当前用户 / data 行 / 验收结果选项）
+     ② 调它 open（内部自己判断有无流程）
+     ③ 没有流程时把面板保持隐藏 → 老工作簿界面与 v0.30 完全一致
+   注意：flow.js 若因任何原因没加载成功，这里必须**静默降级**而不是让整页失效（C16）。 */
+function openFlowView(wid, idx) {
+  const panel = $('#flowPanel');
+  if (panel) panel.innerHTML = '';
+  if (!window.supFlow) return;
+  try {
+    window.__supUser = $('#whoami').dataset.user || '';
+    window.__supRows = (cur.rows || []).map((r) => {
+      const o = {};
+      cur.headers.forEach((h, i) => { o[h] = r[i]; o[String(h).trim()] = r[i]; });
+      return o;
+    });
+    window.__supAcceptOpts = cfgList('验收结果选项');
+    window.supFlow.open(wid, idx);
+  } catch (e) {
+    console.warn('验收流程面板加载失败，已退回网格填表', e);
+    if (panel) panel.classList.add('hidden');
+  }
 }
 
 function setSaveStatus(text, cls) {
@@ -1041,10 +1071,23 @@ function blobToBase64(blob) {
   });
 }
 
-$('#photoInput').addEventListener('change', async (e) => {
+$('#photoInput').addEventListener('change', (e) => {
   const file = e.target.files[0];
   e.target.value = '';
-  if (!file || curIdx < 0) return;
+  if (!file) return;
+  // v0.31：验收流程界面（flow.js）也复用这条拍照通道（水印/压缩/目录/云同步全一致）。
+  //        由 flow.js 设置 pendingPhotoDone 来接管结果，处理完自己清空 —— 避免重写一套拍照逻辑。
+  if (typeof window.pendingPhotoDone === 'function') {
+    handlePhoto(file, window.pendingPhotoDone);
+    window.pendingPhotoDone = null;
+    return;
+  }
+  handlePhoto(file);
+});
+
+/* 拍照主流程。onDone(路径, 同步提示) 为可选回调（流程界面用来记账附件张数）。 */
+async function handlePhoto(file, onDone) {
+  if (curIdx < 0 || !allRows[curIdx]) { toast('请先选择小班', true); return; }
   const row = allRows[curIdx];
   toast('正在处理水印…');
   try {
@@ -1126,8 +1169,17 @@ $('#photoInput').addEventListener('change', async (e) => {
 
     toast(savedWhere + syncMsg);
     renderShotList();
-  } catch (err) { toast('拍照处理失败：' + err.message, true); }
-});
+    if (typeof onDone === 'function') {
+      try { onDone({ ok: true, path: dispPath, sync: syncMsg, saved: savedWhere }); }
+      catch (err) { /* 回调失败不影响照片已保存 */ }
+    }
+  } catch (err) {
+    toast('拍照处理失败：' + err.message, true);
+    if (typeof onDone === 'function') {
+      try { onDone({ ok: false, error: err.message }); } catch (e2) {}
+    }
+  }
+}
 
 /* ── 修改密码（v0.21）：点右上角用户名打开；仅能改自己（管理员改他人走后台） ── */
 function openPwdDialog() {
