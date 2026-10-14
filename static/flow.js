@@ -137,8 +137,11 @@
         if (!Array.isArray(F.val[nm]) || !F.val[nm].length) miss.push(nm);
         return;
       }
-      if ('选填' in (c.arg || '') || c.type === '单行文本') return;
-      if ('系统自动算' in (c.arg || '')) return;
+      /* 注意：arg 是**字符串**（如 '长/宽/深,cm,≥标准自动判'）。JS 的 `in` 只能用于对象，
+         `'选填' in 字符串` 会直接 TypeError → gate() 崩 → render() 崩 → 整个验收界面空白
+         （2026-10-14 线上实测，靠 v0.32.1 的 jslog 第一时间抓到）。查字符串用 indexOf。 */
+      if (String(c.arg || '').indexOf('选填') >= 0 || c.type === '单行文本') return;
+      if (String(c.arg || '').indexOf('系统自动算') >= 0) return;
       if (c.type === '数值×3') {
         const subs = c.sub || [];
         if (!subs.every((k) => String(F.val[k] || '').trim())) miss.push(`${nm}（${subs.join('/')}三项）`);
@@ -327,8 +330,8 @@
           <input type="date" data-f="${nm}" value="${esc(F.val[c.name] || '')}"></div>`;
         return;
       }
-      // 数值（含「系统自动算」的只读展示）
-      const auto = '系统自动算' in (c.arg || '');
+      // 数值（含「系统自动算」的只读展示）—— arg 是字符串，查子串用 indexOf（C22，勿用 in）
+      const auto = String(c.arg || '').indexOf('系统自动算') >= 0;
       if (auto) {
         const rate = autoRate(s);
         h += `<div class="fs-item auto"><div class="fs-label">${nm}
