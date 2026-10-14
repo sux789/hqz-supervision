@@ -105,7 +105,7 @@ function show(view) {
   $('#pageName').textContent =
     view === 'detail' ? (cur ? `${keyVal() || '详情'} · ${cur.name}` : '') : '工作簿';
   $('#btnBack').onclick = async () => {
-    if (trackWatch !== null) autoStopTrackIfRecording('返回列表');   // 互斥（F2）
+    flushTrackIfAny('返回列表');   // 互斥（F2）：结算上一段并续采
     await flushRowSave();            // 离场前先落库，否则节流窗口内的编辑会丢
     nav('#/');
   };
@@ -351,7 +351,7 @@ function updateSelMeta() {
 
 function jumpRow(idx) {
   if (!allRows[idx]) return;
-  if (trackWatch !== null) autoStopTrackIfRecording('切换小班');   // 互斥（F2）
+  flushTrackIfAny('切换小班');   // 互斥（F2）
   curIdx = idx;
   syncSelectorToRow(idx);
   renderForm();
@@ -374,7 +374,7 @@ function openDetail(idx) {
   $('#btnAlbum').classList.toggle('hidden', !(feats.includes('拍照') || feats.includes('视频')));
   $('#btnVideo').classList.toggle('hidden', !feats.includes('视频'));
   $('#btnTrack').classList.toggle('hidden', !feats.includes('轨迹'));
-  $('#btnTrack').classList.toggle('recording', trackWatch !== null);
+  refreshTrackBtn();
   openFlowView(cur.id, idx);   // v0.31：无流程配置时 flow.js 自己把面板藏起来
 }
 
@@ -1306,7 +1306,7 @@ $('#btnVideo').addEventListener('click', async () => {
 
 /* 系统相机录制（保证 MP4/H.264）：录完按同一命名规则另存到手机 */
 async function useSystemCamera(why) {
-  if (trackWatch !== null) await autoStopTrackIfRecording('开始录像');   // 互斥：先停轨迹并保存
+  await flushTrackIfAny('开始录像');   // 互斥：先结算上一段（采集不停）
   toast(why ? `${why} → 用系统相机录制（MP4，保证可播放）` : '用系统相机录制（MP4，保证可播放）');
   markReturnContext();                 // 记下当前工作簿/行：相机返回即使页面重载也能回到详情页
   const plugin = nativePlugin();
@@ -1544,13 +1544,21 @@ async function saveVideoLocal(blob, fname, subdir) {
   return `已下载：${fname}（${(blob.size / 1048576).toFixed(1)} MB）`;
 }
 
-/* ── 轨迹（v0.19）：**原生后台定位优先**（BgLocation 插件，仅 GPS_PROVIDER，location 型前台服务 →
-   息屏/切后台继续记录），浏览器或插件缺失时回退 WebView watchPosition（仅前台）。
-   轨迹点实时存 localStorage：页面被系统重载/进程被杀也不丢已采点位。 ── */
-let trackWatch = null;        // 'bg' = 原生插件模式；number = web watchPosition id
+/* ── 轨迹（v0.32）：**授权即持续采集**（原生 BgLocation 插件，仅 GPS_PROVIDER）─────────────
+   只要 App 拿到定位权限，原生侧就持续采集（冷启动/回前台/授权回调三处自启，幂等），
+   息屏/切后台/页面重载都不停；**完全弃用网络定位**——v0.19 起原生只注册 GPS_PROVIDER，
+   v0.32 删掉 WebView watchPosition 回退（fused 源会混入基站/WiFi 点，GCJ-02 且精度 50~1000m）。
+   点先落原生 files/track_buffer.csv（进程死了也不丢），网页只是观察者 + 上传者：
+     · attachTrack()：drain() 回填未消费点 + startWatcher() 接实时流（按 GPS 时间戳去重）
+     · flushTrack()：结算上传当前段 GPX；成功后 clearBuffer() 并重置会话（迟到点留给下一段）
+     · 水位线 hqz_sup_track_upto（localStorage 单数字）：已上传到的最大时间戳，防跨段/跨重载重复
+   打卡/水印坐标仍走 Web getCurrentPosition（一次性，非轨迹链路） ── */
 let trackBgPlugin = null;
-let trackPts = [];
-const TRACK_LS_KEY = 'hqz_sup_track_pts';
+let trackAttached = false;     // 网页是否接上了实时回调（= 插件可用且权限已给）
+let trackPts = [];             // 当前段（未上传）
+let trackSeenT = new Set();    // 已在会话里的 GPS 时间戳（毫秒，去重）
+let trackGpsBound = false;     // gpsState 监听只绑一次
+const TRACK_UPTO_KEY = 'hqz_sup_track_upto';
 
 function bgLocationPlugin() {
   try {
@@ -1558,125 +1566,120 @@ function bgLocationPlugin() {
       ? window.Capacitor.Plugins.BgLocation : null;
   } catch (e) { return null; }
 }
-function saveTrackPts() {
-  try { localStorage.setItem(TRACK_LS_KEY, JSON.stringify(trackPts.slice(-5000))); } catch (e) {}
+function trackWatermark() {
+  try { return parseInt(localStorage.getItem(TRACK_UPTO_KEY) || '0', 10) || 0; } catch (e) { return 0; }
 }
-function loadSavedTrackPts() {
-  try { return JSON.parse(localStorage.getItem(TRACK_LS_KEY) || '[]'); } catch (e) { return []; }
+function bumpTrackWatermark(t) {
+  try { if (t > trackWatermark()) localStorage.setItem(TRACK_UPTO_KEY, String(t)); } catch (e) {}
 }
-function clearSavedTrackPts() { try { localStorage.removeItem(TRACK_LS_KEY); } catch (e) {} }
 
-/* 采集一个点（原生/wweb 两种来源共用；t 为毫秒时间戳） */
+/* 按钮状态：附着=持续采集在跑（有段内点时红 pulse）；未附着=不可用（无插件/无权限/浏览器） */
+function refreshTrackBtn() {
+  const b = $('#btnTrack'); if (!b) return;
+  if (trackAttached) {
+    b.classList.toggle('recording', trackPts.length > 0);
+    b.textContent = `● 记录中 ${trackPts.length} 点`;
+    b.title = '持续采集进行中（仅 GPS）；点击结算并上传当前段轨迹';
+  } else {
+    b.classList.remove('recording');
+    b.textContent = '◎ 轨迹';
+    b.title = '点击上传当前段轨迹';
+  }
+}
+
+/* 采一个点（原生实时流 / drain 回填共用；t 为毫秒时间戳；按 t 去重 + 水位线挡旧点） */
 function trackPush(lat, lng, ele, t) {
+  if (t == null) t = Date.now();
+  if (trackSeenT.has(t) || t <= trackWatermark()) return;
+  trackSeenT.add(t);
   trackPts.push({
     lat,
     lng,
     ele: (ele == null ? null : ele),
-    t: new Date(t || Date.now()).toISOString().replace(/\.\d+Z$/, 'Z'),
+    t: new Date(t).toISOString().replace(/\.\d+Z$/, 'Z'),
   });
-  $('#btnTrack').textContent = `● 记录中 ${trackPts.length} 点`;
-  saveTrackPts();       // 边录边落盘（页面重载/被杀不丢点）
+  refreshTrackBtn();
 }
 
-$('#btnTrack').addEventListener('click', () => (trackWatch === null ? startTrack() : stopTrack()));
-
-function startTrack() {
-  trackPts = [];
+/* 附着：boot / 回前台各调一次（幂等）。网页只观察 + 上传，采集生死由原生管 */
+async function attachTrack() {
+  try { localStorage.removeItem('hqz_sup_track_pts'); } catch (e) {}   // v0.31 旧键，一次性清理
   const plugin = bgLocationPlugin();
-  if (plugin && typeof plugin.startWatcher === 'function') {
-    trackBgPlugin = plugin;
-    trackWatch = 'bg';
-    try {
-      // 回调式：插件每次定位 resolve 一次
-      plugin.startWatcher({
-        title: '轨迹记录中',
-        message: '正在后台记录验收轨迹（仅 GPS，息屏继续）',
-      }, (loc, err) => {
-        if (trackWatch !== 'bg') return;              // 已停止 → 丢弃
-        if (err) { toast('定位失败：' + (err.message || err), true); return; }
-        if (!loc) return;
-        trackPush(loc.latitude, loc.longitude, null, loc.time);
-      });
-      $('#btnTrack').classList.add('recording');
-      $('#btnTrack').textContent = '● 记录中 0 点';
-      toast('已启用原生后台定位（只收 GPS 卫星定位，息屏/切后台继续记录）');
-      return;
-    } catch (e) {
-      trackBgPlugin = null;
-      trackWatch = null;                              // 落回 watchPosition
-    }
+  if (!plugin) { trackAttached = false; refreshTrackBtn(); return; }
+  trackBgPlugin = plugin;
+  let st = null;
+  try { st = await plugin.status(); } catch (e) { st = null; }   // 旧版 APK 无此方法 → 不可用
+  if (!st || st.permission !== 'granted') {
+    trackAttached = false; refreshTrackBtn(); return;           // 不弹窗：申请归 ensurePermissionsUpfront（C18）
   }
-  if (!navigator.geolocation) { toast('当前环境不支持定位', true); return; }
-  trackWatch = navigator.geolocation.watchPosition(
-    (p) => trackPush(p.coords.latitude, p.coords.longitude, p.coords.altitude, p.timestamp),
-    (err) => toast('定位失败：' + err.message, true),
-    { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 });
-  $('#btnTrack').classList.add('recording');
-  $('#btnTrack').textContent = '● 记录中 0 点';
-  toast('轨迹记录已开始（WebView 模式，仅前台有效）');
+  if (st.gpsEnabled === false) toast('GPS 已关闭，轨迹暂不更新，请先在系统设置打开定位', true);
+  try {
+    const d = await plugin.drain();                              // ① 回填：原生缓冲里还没进过会话的点
+    (d && d.points || []).forEach((p) => trackPush(p.latitude, p.longitude, p.altitude, p.time));
+  } catch (e) {}
+  if (!trackAttached) {
+    try {
+      plugin.startWatcher({}, (loc, err) => {                    // ② 实时流（附着幂等）
+        if (err || !loc || loc.latitude == null) return;         // 控制帧/未授权：静默，等 resume 自愈
+        trackPush(loc.latitude, loc.longitude, loc.altitude, loc.time);
+      }).catch(() => {});
+    } catch (e) {}
+    trackAttached = true;
+  }
+  if (!trackGpsBound) {
+    trackGpsBound = true;
+    try {
+      plugin.addListener('gpsState', ({ enabled }) => {
+        toast(enabled ? 'GPS 已打开，轨迹持续采集中' : 'GPS 已关闭，轨迹暂不更新', !enabled);
+      });
+    } catch (e) {}
+  }
+  refreshTrackBtn();
 }
 
-/* 停止并上传（返回 Promise，便于互斥逻辑 await；口径同 hqz-survey F2） */
-async function stopTrack(silent) {
-  if (trackWatch === 'bg') {
-    try { trackBgPlugin && trackBgPlugin.stopWatcher().catch(() => {}); } catch (e) {}
-    trackBgPlugin = null;
-  } else if (trackWatch !== null) {
-    navigator.geolocation.clearWatch(trackWatch);
+$('#btnTrack').addEventListener('click', () => {
+  if (trackAttached) { flushTrack('', false); return; }
+  if (isNativeApp()) toast('定位权限未授权，轨迹未开始：请在系统设置里给「监理验收」定位权限', true);
+  else toast('轨迹持续采集仅支持监理验收 App（仅 GPS，授权即采）', true);
+});
+
+/* 结算上传当前段（**不停止采集**——采集是后台持续的，这里只切段；口径延续 hqz-survey F2）。
+   顺序讲究：上传成功才 clearBuffer；上传期间到的点留给下一段（仍在本机会话里，不丢）。 */
+async function flushTrack(reason, silent) {
+  if (!trackAttached) {
+    if (!silent) toast('轨迹持续采集需要新版 App（仅 GPS，授权即采）', true);
+    return false;
   }
-  trackWatch = null;
-  $('#btnTrack').classList.remove('recording');
-  $('#btnTrack').textContent = '◎ 轨迹';
-  // 关键：先把本轮点集"取走并清空"，再异步上传 —— 否则用户马上开始新一轮记录时，
-  // 上一轮的收尾会把新一轮的点清掉（竞态）
-  const pts = trackPts;
-  trackPts = [];
-  clearSavedTrackPts();
-  const n = pts.length;
-  if (n < 2) {
-    if (!silent) toast('有效定位点不足 2 个，未上传', true);
-    return;
+  const snap = trackPts.slice();          // 先取快照：上传期间继续到的点是下一段的
+  if (snap.length < 2) {
+    if (!silent) toast('有效定位点不足 2 个，暂不上传', true);
+    return false;
   }
-  const gpx = buildGpx(pts);
+  const gpx = buildGpx(snap);
   const cls = keyVal() || '无小班';
   const name = `轨迹_${sanitizeSeg(cls)}_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '')}.gpx`;
   const fd = new FormData();
   fd.append('file', new Blob([gpx], { type: 'application/gpx+xml' }), name);
   try {
-    const r = await api('/api/track', { method: 'POST', body: fd });
-    toast(`轨迹已上传：${r.file}（${n} 点）`);
+    await api('/api/track', { method: 'POST', body: fd });
   } catch (err) {
-    toast('轨迹上传失败：' + err.message, true);
+    if (!silent) toast(`轨迹上传失败：${err.message || err}（已保留在本机，稍后重试）`, true);
+    return false;   // 不清缓冲不清会话：林区没信号是常态，必须能重传
   }
-}
-
-/* 功能互斥（v0.20，口径同 hqz-survey F2）：同一时刻只做一个"长时间记录类"动作。
-   开始录像 / 切换小班 / 返回列表 时若轨迹仍在记录 → 先自动停止并保存上一段。 */
-async function autoStopTrackIfRecording(reason) {
-  if (trackWatch === null) return false;
-  const n = trackPts.length;
-  toast(`${reason}：已自动停止并保存上一段轨迹（${n} 点）`);
-  await stopTrack(true);
+  trackPts = trackPts.slice(snap.length);                                   // 迟到点属于下一段
+  trackSeenT = new Set(trackPts.map((p) => new Date(p.t).getTime()));
+  bumpTrackWatermark(Math.max(...snap.map((p) => new Date(p.t).getTime())));
+  try { await trackBgPlugin.clearBuffer(); } catch (e) {}
+  refreshTrackBtn();
+  if (!silent) toast(`轨迹已上传：${name}（${snap.length} 点）${reason ? ' · ' + reason : ''}`);
   return true;
 }
 
-/* 页面被系统重载后：若本机还存着未上传的轨迹点 → 接着录（原生模式则重启 watcher） */
-async function restoreTrackIfAny() {
-  const saved = loadSavedTrackPts();
-  if (!saved || saved.length < 1) return;
-  trackPts = saved;
-  const plugin = bgLocationPlugin();
-  if (plugin && typeof plugin.startWatcher === 'function') {
-    try { await plugin.stopWatcher(); } catch (e) {}     // 清掉旧页面残留的 watcher
-    trackWatch = null;
-    startTrack();
-    trackPts = saved;                                   // startTrack 会清空，恢复已采点
-    saveTrackPts();
-    $('#btnTrack').textContent = `● 记录中 ${trackPts.length} 点`;
-    toast(`已恢复未上传的轨迹记录（${saved.length} 点），继续采集中`);
-  } else {
-    toast(`本机有未上传的轨迹记录（${saved.length} 点），点「◎ 轨迹」可上传`, true);
-  }
+/* 互斥钩子（v0.20 口径的延续）：切小班 / 返回列表 / 开始录像 → 结算上一段并**续采**（不再停止采集）。
+   页面的生死与采集无关：原生侧只要权限在就一直在录，这里只负责把段切干净。 */
+async function flushTrackIfAny(reason) {
+  if (!trackAttached || trackPts.length < 2) return false;
+  return await flushTrack(reason, false);
 }
 
 function buildGpx(pts) {
@@ -1707,7 +1710,7 @@ async function boot() {
     ensurePermissionsUpfront();           // 登录后一次性申请权限（见函数注释）
     await submitDraftIfAny();             // v0.28：补交上次没送出去的草稿（进程被杀/切后台丢包）
     await recoverPendingVideo();          // 相机返回导致页面重载时，补记录像结果
-    await restoreTrackIfAny();            // 轨迹：页面被重载后接着录（原生在跑则续采）
+    await attachTrack();                 // 轨迹：附着原生持续采集（drain 回填 + 实时流）
   } catch (e) {
     setToken('');
     show('login');
@@ -1752,8 +1755,11 @@ async function recoverPendingVideo() {
 
 /* App 回到前台时再补一次（页面没被重载、但回调仍可能丢的情况） */
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && getReturnContext()) {
-    setTimeout(() => recoverPendingVideo().catch(() => {}), 400);
+  if (document.visibilityState === 'visible') {
+    if (getReturnContext()) {
+      setTimeout(() => recoverPendingVideo().catch(() => {}), 400);
+    }
+    if (!trackAttached) attachTrack().catch(() => {});   // 回前台自愈：权限刚给/曾被拒/旧页面
   }
 });
 

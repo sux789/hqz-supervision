@@ -18,34 +18,22 @@ import androidx.core.app.ServiceCompat;
  * 后台定位前台服务壳：仅负责常驻通知（foregroundServiceType=location）保住
  * 进程优先级（不被系统冻结/回收），定位采集在 BgLocationPlugin（同进程）内进行。
  * 通知点击回到应用主界面。
+ *
+ * v0.32：通知构建抽成静态助手（ensureChannel/buildNotification/updateNotification），
+ * 插件在采集过程中按 10s 节流更新同 ID 通知（点数/GPS 开关状态）。
  */
 public class BgLocationService extends Service {
-    private static final String CHANNEL_ID = "bg_location";
-    private static final int NOTIFICATION_ID = 28352;
+    static final String CHANNEL_ID = "bg_location";
+    static final int NOTIFICATION_ID = 28352;
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String title = (intent != null && intent.getStringExtra("title") != null)
-                ? intent.getStringExtra("title") : "轨迹记录中";
+                ? intent.getStringExtra("title") : "轨迹持续记录中";
         String message = (intent != null && intent.getStringExtra("message") != null)
-                ? intent.getStringExtra("message") : "正在后台记录调查轨迹";
-        createChannel();
-        PendingIntent pi = null;
-        Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
-        if (launch != null) {
-            launch.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-            pi = PendingIntent.getActivity(this, 0, launch,
-                    PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        }
-        Notification n = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle(title)
-                .setContentText(message)
-                .setOngoing(true)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setWhen(System.currentTimeMillis())
-                .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-                .setContentIntent(pi)
-                .build();
+                ? intent.getStringExtra("message") : "正在后台记录调查轨迹（仅 GPS）";
+        ensureChannel(this);
+        Notification n = buildNotification(this, title, message);
         try {
             // API 29+ 用 location 型前台服务：灭屏/后台持续定位的合法通道；
             // API 34+ 需 Manifest 声明 FOREGROUND_SERVICE_LOCATION（已声明，装机自动授予）
@@ -57,14 +45,42 @@ public class BgLocationService extends Service {
         return START_NOT_STICKY;
     }
 
-    private void createChannel() {
+    static void ensureChannel(Context ctx) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm != null && nm.getNotificationChannel(CHANNEL_ID) == null) {
                 nm.createNotificationChannel(new NotificationChannel(
-                        CHANNEL_ID, "后台轨迹记录", NotificationManager.IMPORTANCE_HIGH));
+                        CHANNEL_ID, "轨迹持续记录（仅 GPS）", NotificationManager.IMPORTANCE_HIGH));
             }
         }
+    }
+
+    static Notification buildNotification(Context ctx, String title, String message) {
+        ensureChannel(ctx);
+        PendingIntent pi = null;
+        Intent launch = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
+        if (launch != null) {
+            launch.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+            pi = PendingIntent.getActivity(ctx, 0, launch,
+                    PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        }
+        return new NotificationCompat.Builder(ctx, CHANNEL_ID)
+                .setContentTitle(title)
+                .setContentText(message)
+                .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setWhen(System.currentTimeMillis())
+                .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+                .setContentIntent(pi)
+                .build();
+    }
+
+    /** 插件侧更新同 ID 通知（服务已在跑时安全；不在跑时 notify 一条常驻通知也无副作用） */
+    static void updateNotification(Context ctx, String title, String message) {
+        try {
+            NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) nm.notify(NOTIFICATION_ID, buildNotification(ctx, title, message));
+        } catch (Exception ignore) {}
     }
 
     @Override

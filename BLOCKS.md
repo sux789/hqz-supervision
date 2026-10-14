@@ -25,3 +25,4 @@
 | B18 | 验收流程表解析（doc/019） | `flow_parser.py::parse_flows/parse_registry/parse_flow_sheet` | 流程 sheet + 注册表 | `{registry, flows:{sheet:[环节]}}`，环节含 controls/attachments | B1 |
 | B19 | 流程匹配与体检（B19） | `flow_parser.py::match_flow/flow_warnings/std_lookup` | 注册表 + 流程定义 + data 行 | 命中的流程（含标准值）/ 配置坑清单 | B18 |
 | B20 | 流程填报界面与闸门 | `static/flow.js` + `templates/index.html#flowPanel` + `main.py::api_flow/api_flow_save` | 环节定义 + data 行 | 控件实例 + 提交落库 `flow_records` | B18、B19、B12（离场冲刷） |
+| B21 | 轨迹持续采集（v0.32，授权即采） | `BgLocationPlugin.java`（引擎+CSV 缓冲）+ `BgLocationService.java`（location 型前台服务壳）+ `static/app.js::attachTrack/flushTrack/flushTrackIfAny` | 定位权限 + GPS fix（仅 GPS_PROVIDER） | 原生缓冲点（`files/track_buffer.csv`）/ 实时点流 / GPX 上传 `/api/track` | — |
