@@ -254,8 +254,12 @@
       }
       if (c.name === '验收结果') {
         const opts = splitList(window.__supAcceptOpts || '合格;不合格;整改后合格');
+        /* v0.32.3：没有占位项时浏览器会显示第一个选项（"合格"），看起来选了、闸门却判空
+           —— "所见即所填"（C22 同批教训：显示状态必须与 F.val 一致） */
         h += `<div class="fs-item"><div class="fs-label">${nm} <span class="req">*</span></div>
-          <select data-f="${nm}">${opts.map((o) => `<option${F.val[c.name] === o ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>
+          <select data-f="${nm}"><option value=""${F.val[c.name] ? '' : ' selected'}>请选择</option>`
+          + opts.map((o) => `<option${F.val[c.name] === o ? ' selected' : ''}>${esc(o)}</option>`).join('')
+          + `</select>
           <div class="fs-hint">选项来自「参数」页 验收结果选项</div></div>`;
         return;
       }
@@ -288,7 +292,11 @@
           <div class="fs-hint">标准值 <b>${esc(stdRaw || '—')}</b>${stdRaw ? '（取自 data 列，拆为三项对照）' : '（data 无对应列，按方案人工判定）'}</div>
           <div class="fs-grid3">`;
         subs.forEach((k, i) => {
-          h += `<input type="number" inputmode="decimal" data-f="${esc(k)}" placeholder="${esc(dims[i] || '')}" value="${esc(F.val[k] || '')}">`;
+          /* v0.32.3：placeholder 不再用裸标准值数字（灰色 60/60/50 被当成"已带过来填好"，
+             提交却说没填）。占位文字用「实测·长/宽/深」（从子字段名去掉控件名得到），
+             标准值只在下方提示行展示 */
+          const dimName = k.replace(c.name, '') || '值';
+          h += `<input type="number" inputmode="decimal" data-f="${esc(k)}" placeholder="实测·${esc(dimName)}" value="${esc(F.val[k] || '')}">`;
         });
         h += '</div><div class="fs-verdict" data-verdict="dim"></div></div>';
         return;
@@ -296,8 +304,11 @@
       if (c.type === '下拉') {
         let opts = splitList(c.arg);
         if (/枚举|data/.test(c.arg)) opts = dataEnum(c.name, c.arg);
+        /* v0.32.3：同验收结果 —— 加「请选择」占位，未选时不得假装显示第一项 */
         h += `<div class="fs-item"><div class="fs-label">${nm} <span class="req">*</span></div>
-          <select data-f="${nm}">${opts.map((o) => `<option${F.val[c.name] === o ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>
+          <select data-f="${nm}"><option value=""${F.val[c.name] ? '' : ' selected'}>请选择</option>`
+          + opts.map((o) => `<option${F.val[c.name] === o ? ' selected' : ''}>${esc(o)}</option>`).join('')
+          + `</select>
           ${F.data.std[c.name] != null && F.data.std[c.name] !== ''
             ? `<div class="fs-hint">标准值 <b>${esc(F.data.std[c.name])}</b></div>` : ''}</div>`;
         return;
