@@ -419,19 +419,19 @@ async function loadSyncSettings() {
   $('#syncReady').textContent = data.ready
     ? '✓ 配置齐全'
     : '⚠ 还缺：' + ((data.missing_labels || data.missing || []).join('、'));
-  $('#pMaxSide').value = s.photo_max_side ?? '1440';
-  $('#pQuality').value = s.photo_quality ?? '0.8';
-  $('#vPhoneRec').value = s.video_phone_rec ?? '1';
-  $('#vRecMode').value = s.video_rec_mode ?? 'system';
-  $('#vTranscode').value = s.video_transcode ?? '1';
-  $('#vCamQ').value = s.video_cam_quality ?? '1';
-  $('#vFps').value = s.video_fps ?? '30';
-  $('#vMaxSec').value = s.video_max_seconds ?? '60';
-  $('#vMaxHeight').value = s.video_max_height ?? '720';
-  $('#vCrf').value = s.video_crf ?? '28';
-  $('#vMaxrate').value = s.video_maxrate_k ?? '2500';
-  $('#vAudio').value = s.video_audio_k ?? '96';
-  $('#vMaxMb').value = s.video_max_mb ?? '300';
+  $('#pMaxSide').value = s.photo_max_side != null ? s.photo_max_side : '1440';
+  $('#pQuality').value = s.photo_quality != null ? s.photo_quality : '0.8';
+  $('#vPhoneRec').value = s.video_phone_rec != null ? s.video_phone_rec : '1';
+  $('#vRecMode').value = s.video_rec_mode != null ? s.video_rec_mode : 'system';
+  $('#vTranscode').value = s.video_transcode != null ? s.video_transcode : '1';
+  $('#vCamQ').value = s.video_cam_quality != null ? s.video_cam_quality : '1';
+  $('#vFps').value = s.video_fps != null ? s.video_fps : '30';
+  $('#vMaxSec').value = s.video_max_seconds != null ? s.video_max_seconds : '60';
+  $('#vMaxHeight').value = s.video_max_height != null ? s.video_max_height : '720';
+  $('#vCrf').value = s.video_crf != null ? s.video_crf : '28';
+  $('#vMaxrate').value = s.video_maxrate_k != null ? s.video_maxrate_k : '2500';
+  $('#vAudio').value = s.video_audio_k != null ? s.video_audio_k : '96';
+  $('#vMaxMb').value = s.video_max_mb != null ? s.video_max_mb : '300';
   $('#vFfmpeg').value = s.video_ffmpeg || '';
   // v0.29.2：拼接后折叠重复斜杠 —— 「网盘应用目录」若填成 /apps/x/，
   // 原来的 `${app_dir}/${prefix}/…` 会显示成 /apps/x//supervision/…（用户实测反馈）
@@ -586,6 +586,16 @@ async function loadUsers() {
 
 on('#btnSyncRefresh', 'click', () => loadSyncStatus().catch((e) => toast(e.message, true)));
 
+/* ── 运行日志（v0.32.1）：app.log（服务端）+ js.log（前端错误，含语法错误）── */
+async function loadRunLogs() {
+  const d = await api('/admin/api/logs');
+  $('#preAppLog').textContent = d.app || '(空)';
+  $('#preJsLog').textContent = d.js || '(空)';
+  $('#logsMsg').textContent = '';
+}
+
+on('#btnLogsRefresh', 'click', () => loadRunLogs().catch((e) => toast(e.message, true)));
+
 $('#btnLogout').addEventListener('click', async () => {
   await api('/api/logout', { method: 'POST' }).catch(() => {});
   // 同 app.js：留在本应用内，不要跳网关首页 '/'（会掉进别的应用）
@@ -598,3 +608,4 @@ loadLogs().catch(() => {});
 if ($('#syncQiniuAk')) loadSyncSettings().catch(() => {});     // 云同步卡片被注释则跳过
 if ($('#tblUsers')) loadUsers().catch(() => {});               // 用户管理卡片被注释则跳过
 if ($('#syncCounts')) loadSyncStatus().catch(() => {});
+if ($('#preAppLog')) loadRunLogs().catch((e) => { $('#preAppLog').textContent = '加载失败：' + e.message; });

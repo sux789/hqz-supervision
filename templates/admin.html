@@ -4,6 +4,36 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>后台 · hqz-supervision</title>
+  <!-- v0.32.1 前端错误捕获上报（同 index.html，必须在所有 <script> 之前） -->
+  <script>
+  (function () {
+    var BASE = {{ request.script_root | tojson }};
+    var n = 0;
+    function send(d) {
+      if (n >= 10) return; n++;
+      try {
+        d.page = location.href;
+        d.user = window.__supUser || '';
+        fetch(BASE + '/api/jslog', { method: 'POST', keepalive: true,
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
+      } catch (e) {}
+    }
+    window.addEventListener('error', function (ev) {
+      if (ev.target && ev.target !== window) {
+        send({ msg: '资源加载失败: ' + (ev.target.tagName || '') + ' ' +
+                     (ev.target.src || ev.target.href || '') });
+        return;
+      }
+      var err = ev.error || {};
+      send({ msg: ev.message, src: ev.filename, line: ev.lineno, col: ev.colno,
+             stack: err.stack || (err.name ? err.name + ': ' + err.message : '') });
+    }, true);
+    window.addEventListener('unhandledrejection', function (ev) {
+      var r = ev.reason || {};
+      send({ msg: 'Promise拒绝: ' + (r.message || String(r)), stack: r.stack || '' });
+    });
+  })();
+  </script>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -163,6 +193,24 @@
         <tbody></tbody>
       </table>
     </section>
+
+    <!-- v0.32.1：运行日志（排查"提交红色报错 / 点了没反应"用） -->
+    <section class="card">
+      <h2>运行日志</h2>
+      <p class="muted">
+        左右两路：服务端 <span class="mono">data/logs/app.log</span>（验收提交成功/每种拒绝原因/未捕获异常栈）+
+        前端 <span class="mono">data/logs/js.log</span>（JS 运行时错误、<b>语法错误</b>、脚本/资源加载失败、Promise 拒绝）。
+        各显示最近 200 行，手机上报错的红色提示内容会同时出现在这里。
+      </p>
+      <div class="btnrow">
+        <button id="btnLogsRefresh" class="btn primary">刷新日志</button>
+        <span id="logsMsg" class="err"></span>
+      </div>
+      <h3 style="margin:12px 0 4px;">服务端日志 app.log</h3>
+      <pre id="preAppLog" class="mono" style="white-space:pre-wrap;max-height:260px;overflow:auto;background:#f6f6f6;padding:8px;font-size:12px;">(加载中…)</pre>
+      <h3 style="margin:12px 0 4px;">前端错误 js.log</h3>
+      <pre id="preJsLog" class="mono" style="white-space:pre-wrap;max-height:260px;overflow:auto;background:#f6f6f6;padding:8px;font-size:12px;">(加载中…)</pre>
+    </section>
   </main>
 
   <div id="toast" class="toast hidden"></div>
@@ -232,6 +280,6 @@
   </div>
 
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
-  <script src="{{ url_for('static', filename='admin.js') }}?v=0.29.3"></script>
+  <script src="{{ url_for('static', filename='admin.js') }}?v=0.32.1"></script>
 </body>
 </html>

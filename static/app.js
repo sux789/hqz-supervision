@@ -249,7 +249,7 @@ function parseSelCfg() {
 function uniqueVals(field) {
   const ci = cur.headers.indexOf(field);
   const set = new Set();
-  for (const r of allRows) { const v = String(r[ci] ?? '').trim(); if (v) set.add(v); }
+  for (const r of allRows) { const v = String(r[ci] == null ? '' : r[ci]).trim(); if (v) set.add(v); }
   return [...set].sort((a, b) => a.localeCompare(b, 'zh'));
 }
 
@@ -261,7 +261,7 @@ function candidateIdxs() {
     const v = selState[c.field];
     if (!v) continue;
     const ci = cur.headers.indexOf(c.field);
-    idxs = idxs.filter((i) => String(allRows[i][ci] ?? '').trim() === v);
+    idxs = idxs.filter((i) => String(allRows[i][ci] == null ? '' : allRows[i][ci]).trim() === v);
   }
   return idxs;
 }
@@ -269,7 +269,7 @@ function candidateIdxs() {
 function syncSelectorToRow(idx) {
   for (const c of selCfg) {
     const ci = cur.headers.indexOf(c.field);
-    selState[c.field] = String(allRows[idx][ci] ?? '').trim();
+    selState[c.field] = String(allRows[idx][ci] == null ? '' : allRows[idx][ci]).trim();
   }
   renderSelectorBar();
 }
@@ -306,7 +306,7 @@ function renderSelectorBar() {
         const ci = cur.headers.indexOf(c.field);
         const hits = [];
         for (const i of pre) {
-          const v = String(allRows[i][ci] ?? '').trim();
+          const v = String(allRows[i][ci] == null ? '' : allRows[i][ci]).trim();
           if (v && (!q || v.toLowerCase().includes(q)) && !hits.some((h) => h.v === v)) hits.push({ v, i });
           if (hits.length >= 50) break;
         }
@@ -332,7 +332,7 @@ function renderSelectorBar() {
         if (e.key !== 'Enter') return;
         const q = inp.value.trim().toLowerCase();
         const ci = cur.headers.indexOf(c.field);
-        const exact = candidateIdxs().filter((i) => String(allRows[i][ci] ?? '').trim().toLowerCase() === q);
+        const exact = candidateIdxs().filter((i) => String(allRows[i][ci] == null ? '' : allRows[i][ci]).trim().toLowerCase() === q);
         if (exact.length === 1) { jumpRow(exact[0]); } else showSug();
       });
     }

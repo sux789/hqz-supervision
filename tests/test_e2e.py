@@ -894,6 +894,34 @@ else:
        _r7.status_code == 200 and _r7.get_json().get('ok') is False,
        str(_r7.get_json())[:80])
 
+# ── I. 运行日志（v0.32.1）────────────────────────────────────
+# 目的：证明 ①前端错误上报（无需登录，语法错误场景）会落 js.log；
+# ②后台能看日志且普通用户看不了；③flow 提交被拒会落 app.log。
+print('\n=== I. 运行日志（jslog 上报 / admin 查看 / flow 拒绝留痕）===')
+cx = app.test_client()      # 未登录的第三个 client（登录页也可能炸，上报必须免登录）
+_r = cx.post('/api/jslog', json={'msg': 'SyntaxError: 模拟语法错误测试', 'src': 'app.js',
+                                 'line': 1, 'col': 2, 'stack': 'E2E-STACK-TEST',
+                                 'page': 'http://t/x'})
+ok('I1 jslog 免登录 200', _r.status_code == 200 and (_r.get_json() or {}).get('ok') is True,
+   f'HTTP {_r.status_code}')
+_js_ok = _M.JS_LOG.exists() and 'E2E-STACK-TEST' in _M.JS_LOG.read_text(encoding='utf-8')
+ok('I2 js.log 落盘', _js_ok, str(_M.JS_LOG))
+_r = ca.get('/admin/api/logs', headers=HA)
+_jj = _r.get_json() or {}
+ok('I3 admin 看日志 200', _r.status_code == 200 and isinstance(_jj.get('app'), str)
+   and isinstance(_jj.get('js'), str), f'HTTP {_r.status_code}')
+ok('I4 日志含刚才上报', 'E2E-STACK-TEST' in (_jj.get('js') or ''))
+if HU:
+    _r = cu.get('/admin/api/logs', headers=HU)
+    ok('I5 非管理员看日志 → 403', _r.status_code == 403, f'HTTP {_r.status_code}')
+if globals().get('_fwid'):   # H 组建好的工作簿（flows 已被重置为空 → 必未命中流程）
+    _before = _M.APP_LOG.read_text(encoding='utf-8') if _M.APP_LOG.exists() else ''
+    _r = ca.post(f'/api/workbooks/{_fwid}/flow', headers=HA,
+                 json={'row': 0, 'step_no': 1, 'values': {}})
+    _after = _M.APP_LOG.read_text(encoding='utf-8') if _M.APP_LOG.exists() else ''
+    ok('I6 flow 拒绝落 app.log', _r.status_code == 400 and '拒绝(400 未命中流程)' in _after
+       and len(_after) > len(_before), f'HTTP {_r.status_code}')
+
 # ── 清理本次测试新建的工作簿（彻底删除，含源模板目录）──────
 print('\n=== 清理测试数据 ===')
 for _wid in sorted(set(CREATED)):

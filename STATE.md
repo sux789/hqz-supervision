@@ -2,7 +2,8 @@
 
 > 每次迭代后更新，≤25 行。跨会话恢复先读本文件，不翻 doc/ 归档。
 
-- **版本**：v0.32 ｜ **更新**：2026-10-14
+- **版本**：v0.32.1 ｜ **更新**：2026-10-14
+- **v0.32.1 变化（老内核语法兼容 + 全链路错误日志，doc/021，C22）**：排查"验收第一步提交红色报错"时，access.log 发现 SM-G9860（Android 9 / WebView Chrome 73）零 API 调用、只反复请求 favicon —— **app.js/admin.js 里 18 处 `??` 让老内核 SyntaxError 整段脚本报废**（C16 症状变体），已全部改 `x != null ? x : 默认`（项目既有惯用法）；同时落地三层日志：①前端 window error（含 **`<script>` 语法错误**）+ unhandledrejection + 资源加载失败 → `POST /api/jslog`（免登录）→ `data/logs/js.log`，钩子是 head 第一段内联 script（先于所有脚本才能抓到它们的语法错误），每页限 10 条；②服务端未捕获异常 → `@bp.errorhandler(Exception)` → `data/logs/app.log`；③验收提交每种结局（成功/403/400/409）都落 app.log `[flow]` 条目（拒绝带缺项明细）。后台新增「运行日志」卡片（admin_required，app.log/js.log 各 200 行），超限自动截尾（5MB/2MB）。e2e 新增 I 组 6 项，全量 **108+107+20=235 全绿**。网页改动无需出包，`?v=`→0.32.1
 - **v0.32 变化（授权即持续 GNSS 跟踪，doc/020，C21，B21）**：用户要"只要应用授权就 GNSS 持续跟踪，完全放弃网络定位"。**采集生死权从网页按钮移到「定位权限」**：`BgLocationPlugin` 在 `load()`/`handleOnResume()`/授权回调三处幂等自启（只注册 `GPS_PROVIDER`——v0.19 起原生就是纯 GNSS，本轮把最后一条网络定位通道 WebView `watchPosition` 回退删掉：fused 会混基站/WiFi 点，GCJ-02 且绝对精度仍 50~1000m，比空白更糟）；点进内存缓冲 + `files/track_buffer.csv`（**进程被杀也不丢**，内存 cap 5 万 ≈14h，文件 10 万行压缩回尾 5 万）；网页只是**观察者 + 上传者**：`attachTrack()`（drain 回填 + 实时流，按 GPS 时间戳去重 + localStorage 水位线 `hqz_sup_track_upto` 防跨段/跨重载重复）、轨迹按钮改为「● 记录中 N 点＝点击结算上传当前段」（**上传成功才 clearBuffer**，失败保留可重传）、三处互斥钩子（切小班/返回列表/开始录像）由「停止并保存」改「结算并续采」；权限被撤（resume 检测）即停采、缓冲保留。`versionCode 10 / versionName 0.10`
 - **v0.32 明确不做**：①开机自启（BOOT_COMPLETED）——需把引擎搬进 Service + BootReceiver，列为后续项；②打卡/水印坐标仍走 Web `getCurrentPosition`（一次性定位，室内无 GPS 也要能用；v0.30 起水印已优先取原片 EXIF）；③不提供手动停止按钮——按需求口径停止途径＝系统里撤销定位权限，电池代价由常驻通知明示
 - **v0.32 新老混用窗口**：新网页 + 旧 APK（无 status/drain）→ 按钮点击提示"需要新版 App"不崩；旧网页 + 新 APK → 旧网页的 stopWatcher 会停采，但下次回前台自启补上，行为可预期。**建议网页与 APK 同步发**

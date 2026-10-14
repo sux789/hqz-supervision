@@ -15,6 +15,7 @@ import re
 import shutil
 import sqlite3
 import threading
+import traceback
 import zipfile
 from datetime import date, datetime, time, timedelta
 from functools import wraps
@@ -24,6 +25,7 @@ import openpyxl
 from openpyxl.utils import get_column_letter
 from flask import (Blueprint, Flask, abort, jsonify, redirect, render_template,
                    request, send_file, session, url_for)
+from werkzeug.exceptions import HTTPException
 
 import flow_parser
 import sync_cloud
@@ -41,6 +43,46 @@ PENDING_DIR = DATA_DIR / 'pending'  # 云同步待推送缓冲（百度成功即
 DB_PATH = DATA_DIR / 'app.sqlite3'
 for d in (UPLOAD_DIR, TRACK_DIR, PENDING_DIR):
     d.mkdir(parents=True, exist_ok=True)
+
+# ── 运行日志（v0.32.1）──────────────────────────────
+# app.log：服务端关键动作（验收提交/未捕获异常）；js.log：前端 JS 错误（含语法错误）。
+# 纯标准库、追加写 + 超限截尾；后台「运行日志」卡片可看尾部，SSH 也可直接 tail。
+LOG_DIR = DATA_DIR / 'logs'
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+APP_LOG = LOG_DIR / 'app.log'
+JS_LOG = LOG_DIR / 'js.log'
+
+
+def _applog(kind, msg):
+    """追加一行服务端日志。任何失败静默忽略（日志绝不能反过来把业务搞挂）。"""
+    try:
+        with open(APP_LOG, 'a', encoding='utf-8') as f:
+            f.write(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} [{kind}] {msg}\n')
+        if APP_LOG.stat().st_size > 5 * 1024 * 1024:
+            lines = APP_LOG.read_text(encoding='utf-8').splitlines()
+            APP_LOG.write_text('\n'.join(lines[-2000:]) + '\n', encoding='utf-8')
+    except Exception:
+        pass
+
+
+def _jslog_write(d, ua):
+    """落一条前端错误（/api/jslog 的实现，独立出来便于测试）。字段全部截断防刷。"""
+    user, _role = auth_user()
+    rec = {
+        'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'user': user or '',
+        'page': str(d.get('page') or '')[:200],
+        'msg': str(d.get('msg') or '')[:500],
+        'src': str(d.get('src') or '')[:300],
+        'line': d.get('line'), 'col': d.get('col'),
+        'stack': str(d.get('stack') or '')[:1500],
+        'ua': str(ua or '')[:300],
+    }
+    with open(JS_LOG, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + '\n')
+    if JS_LOG.stat().st_size > 2 * 1024 * 1024:
+        lines = JS_LOG.read_text(encoding='utf-8').splitlines()
+        JS_LOG.write_text('\n'.join(lines[-1000:]) + '\n', encoding='utf-8')
 
 PORT = 8720  # 独立端口（C03：不与 hqz-survey / hqz-cam-app 冲突）
 
@@ -261,6 +303,46 @@ def admin_required(f):
             return jsonify(error='需要管理员权限'), 403
         return f(*a, **kw)
     return wrap
+
+
+@bp.errorhandler(Exception)
+def _on_uncaught(e):
+    """未捕获异常统一落日志（v0.32.1）：404/403 等 HTTPException 原样放行，
+    其余记完整栈到 data/logs/app.log（gunicorn error.log 也有，但这里带 user/路径更好查），
+    再回 500 JSON。排查"红色报错"时先看这里。"""
+    if isinstance(e, HTTPException):
+        return e
+    user, _role = auth_user()
+    _applog('EXC', f'{request.method} {request.path} user={user} :: '
+                   f'{e.__class__.__name__}: {e}\n{traceback.format_exc()}')
+    return jsonify(error='服务器内部错误（已记录日志）'), 500
+
+
+@bp.route('/api/jslog', methods=['POST'])
+def api_jslog():
+    """前端 JS 错误上报（v0.32.1，无需登录——登录页也可能炸）。
+
+    **语法错误也走这里**：<script> 解析失败（SyntaxError）同样触发 window.onerror，
+    所以"整段脚本挂掉、所有按钮没反应"（C16 症状）也能在日志里看到第一现场。
+    防刷：字段截断 + 文件超 2MB 截尾；前端每页最多上报 10 条。"""
+    try:
+        _jslog_write(request.get_json(silent=True) or {},
+                     request.headers.get('User-Agent'))
+    except Exception:
+        pass
+    return jsonify(ok=True)
+
+
+@bp.route('/admin/api/logs')
+@admin_required
+def api_admin_logs():
+    """后台「运行日志」卡片：返回 app.log / js.log 各最近 200 行。"""
+    def tail(p, n=200):
+        try:
+            return '\n'.join(p.read_text(encoding='utf-8').splitlines()[-n:])
+        except FileNotFoundError:
+            return '(暂无日志)'
+    return jsonify(app=tail(APP_LOG), js=tail(JS_LOG))
 
 
 # ────────────────────────── 页面路由 ──────────────────────────
@@ -769,6 +851,7 @@ def api_flow_save(wid):
         abort(404)
     if inactive:
         con.close()
+        _applog('flow', f'wid={wid} 拒绝(403 下架) user={auth_user()[0]}')
         return jsonify(error=INACTIVE_MSG), 403
     flows = _wb_flows(r)
     headers = json.loads(r['headers'])
@@ -778,14 +861,17 @@ def api_flow_save(wid):
         step_no = int(request.json.get('step_no', 0))
     except (TypeError, ValueError):
         con.close()
+        _applog('flow', f'wid={wid} 拒绝(400 row/step_no 非整数) body={str(request.get_data(as_text=True))[:200]}')
         return jsonify(error='row 与 step_no 必须是整数'), 400
     hit = _flow_hit(flows, headers, rows, ridx, r['name'])
     if not hit:
         con.close()
+        _applog('flow', f'wid={wid} 拒绝(400 未命中流程) row={ridx} user={auth_user()[0]}')
         return jsonify(error='该行未命中任何验收流程，无法保存'), 400
     step = next((s for s in hit['steps'] if int(s['no']) == step_no), None)
     if not step:
         con.close()
+        _applog('flow', f'wid={wid} 拒绝(400 无此环节) row={ridx} step={step_no} user={auth_user()[0]}')
         return jsonify(error=f'流程里没有第 {step_no} 环节'), 400
 
     values = request.json.get('values') or {}
@@ -817,6 +903,8 @@ def api_flow_save(wid):
         if lack:
             first = lack[0]
             con.close()
+            _applog('flow', f'wid={wid} row={ridx} 拒绝(409 转序) step={step_no} '
+                            f'缺={[int(s["no"]) for s in lack]} user={operator}')
             return jsonify(error=(
                 f'按转序规则需先完成「{first["step"]}」（第 {first["no"]} 环节）才能提交本环节。'
                 f'规则：{first["seq"] or "上一环节须先合格"}'
@@ -901,6 +989,8 @@ def api_flow_save(wid):
             missing.append(f'附件「{a["label"]}」需 {need} 份，现 {got} 份')
     if missing:
         con.close()
+        _applog('flow', f'wid={wid} row={ridx} 拒绝(400 必填) step={step_no} '
+                        f'缺={missing} user={operator}')
         return jsonify(error='还有未完成的项目：' + '、'.join(missing),
                        missing=missing), 400
     # 实测对照设计自动判出的结果写回（现场没选或选错时以自动判定为准）
@@ -942,6 +1032,9 @@ def api_flow_save(wid):
             (wid, ridx, hit['sheet'], step_no, '', now, att_json, result, operator, now, now))
     con.commit()
     con.close()
+    _applog('flow', f'wid={wid} row={ridx} 提交成功 step={step_no} sheet={hit["sheet"]} '
+                    f'环节={step["step"]} result={result} factors={len(values)} '
+                    f'att={len(att)} user={operator}')
     return jsonify(ok=True, row_idx=ridx, step_no=step_no,
                    flow_sheet=hit['sheet'], factors=len(values), operator=operator)
 
