@@ -66,3 +66,7 @@
 - main 推送且 paths 命中 `android/**`、`www/**`、`package.json`、`capacitor.config.json` 时，额外触发 `android-build.yml` 出 **debug** 包（Actions 工件，要登录才能下）——只要正式版即可，别把工件链接当交付物。
 - **有意未入库**（公开仓库）：`doc/合同-*.png`（签署合同）、`doc/*监理规划/实施细则.docx`、`data/验收流程设计/…副本.xlsx`（本地工作副本，且干扰测试选文件）。要入库需用户显式确认。
 - `.DS_Store` 已于 v0.9.0 提交取消跟踪（v0.9.0 = 3868809）。
+## v0.32.1（2026-10-14）：C22 语法兼容 + 错误日志
+- **C22**：静态 JS 只写 Chrome 73（项目最老实测 WebView，SM-G9860）支持的语法——禁 `?.`/`??`/`replaceAll`/`Array.at`，等价写 `x != null ? x : 默认`；`node --check` 不能证明老内核可用。
+- 日志现场：前端错误（含**脚本语法错误**）→ `/api/jslog` → `data/logs/js.log`；服务端异常与验收提交每种结局 → `data/logs/app.log`（`[flow]`/`[EXC]`）。后台「运行日志」卡片可看各 200 行。排查红色报错顺序：后台卡片 → js.log → app.log。
+- 当天 POST flow 两次 200 = 提交其实成功；"红色报错拿不到现场"正是加日志的动机。批量正则改代码必须逐行复核（perl 替换曾丢默认值）。

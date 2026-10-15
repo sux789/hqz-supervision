@@ -187,20 +187,20 @@ var FLOW_RENLIN = [
    att:'定位打卡 + 小班边界照片', pass:'全部确认项勾选通过',
    seq:'首个工序验收前必须完成，未确认不得进入整地验收',
    memo:'本底数据任何人不可修改，只做确认；确认人自动取当前登录账号，不可手选他人',
-   ctl:'确认项=勾选(逐项); 验收人=自动(登录账号); 验收日期=日期(默认当天)'},
+   ctl:'确认项=勾选(逐项); 验收人=自动(登录账号); 验收日期=日期(默认当天); 验收结果=下拉; 整改期限=日期'},
 
   {no:2, step:'整地（林地清理/打塘）', type:'转序验收',
    factors:'整地规格、整地方式', stdFrom:'data 列「整地规格」「整地方式」（如 60×60×50）',
    req:'必填', check:'实测值对照标准值', att:'整地现场照片', pass:'实测规格 ≥ 设计规格',
    seq:'上一环节合格方可填报；本环节必填项全部填写后提交按钮才可用',
    memo:'允许分批填报：当日完成多少填多少（如当日整完 8000 塘先报 8000），剩余部分后续补填',
-   ctl:'整地规格=数值×3(长/宽/深,cm,≥标准自动判); 整地方式=下拉(data「整地方式」枚举)'},
+   ctl:'整地规格=数值×3(长/宽/深,cm,≥标准自动判); 整地方式=下拉(data「整地方式」枚举); 验收结果=下拉; 整改期限=日期'},
 
   {no:3, step:'回塘及底肥放置', type:'转序验收',
    factors:'底肥放置、回塘覆土', stdFrom:'项目作业设计（data 无对应标准列，按项目作业设计方案）',
    req:'必填', check:'现场核验', att:'回塘、放肥、覆土各 1 张照片', pass:'符合作业设计',
    seq:'上一环节合格方可填报', memo:'底肥用量、品牌等信息记在验收备注',
-   ctl:'底肥用量=数值(kg/袋,>0); 底肥品牌=单行文本(≤20字)'},
+   ctl:'底肥用量=数值(kg/袋,>0); 底肥品牌=单行文本(≤20字); 验收结果=下拉; 整改期限=日期'},
 
   {no:4, step:'栽植（苗木验收）', type:'转序验收',
    factors:'苗木规格（苗龄、地径、苗高）、造林树种、混交比例、种植数量',
@@ -208,30 +208,30 @@ var FLOW_RENLIN = [
    att:'三证一签（需良种证的树种传四证一签）、种苗规格照片、剪苗作业照片',
    pass:'苗木规格达标、证件齐全、数量与总株数一致', seq:'上一环节合格方可填报',
    memo:'需良种证的树种上传四证一签，不需要的传三证一签；苗木进场必须当场拍证件，禁止相册选图',
-   ctl:'苗龄=数值(年,≥设计); 地径=数值(cm,≥设计); 苗高=数值(cm,≥设计); 种植数量=数值(株,分批累计); 混交比例实核=数值(%)'},
+   ctl:'苗龄=数值(年,≥设计); 地径=数值(cm,≥设计); 苗高=数值(cm,≥设计); 种植数量=数值(株,分批累计); 混交比例实核=数值(%); 验收结果=下拉; 整改期限=日期'},
 
   {no:5, step:'撑杆覆膜', type:'转序验收',
    factors:'撑杆布设、覆膜质量', stdFrom:'项目作业设计', req:'必填', check:'现场核验',
    att:'撑杆、覆膜照片', pass:'符合作业设计', seq:'上一环节合格方可填报', memo:'—',
-   ctl:'完成情况=下拉(符合设计;部分完成;未完成)'},
+   ctl:'完成情况=下拉(符合设计;部分完成;未完成); 验收结果=下拉; 整改期限=日期'},
 
   {no:6, step:'成活率核验', type:'完工验收',
    factors:'成活率', stdFrom:'验收办法/合同约定', req:'必填', check:'样地或样行抽查实测',
    att:'成活率抽查照片', pass:'成活率达到设计要求', seq:'全部转序验收环节合格后方可进行',
    memo:'核对象是苗木成活率，与保存率分开验收',
-   ctl:'抽查株数=数值(株); 死亡株数=数值(株); 成活率=数值(%,系统自动算)'},
+   ctl:'抽查株数=数值(株); 死亡株数=数值(株); 成活率=数值(%,系统自动算); 验收结果=下拉; 整改期限=日期'},
 
   {no:7, step:'保存率核验', type:'竣工验收',
    factors:'保存率', stdFrom:'验收办法/合同约定', req:'必填', check:'抽查实测',
    att:'竣工现场照片', pass:'保存率达到设计要求', seq:'成活率验收合格后进行',
    memo:'最终竣工验收节点',
-   ctl:'抽查株数=数值(株); 存活株数=数值(株); 保存率=数值(%,系统自动算)'},
+   ctl:'抽查株数=数值(株); 存活株数=数值(株); 保存率=数值(%,系统自动算); 验收结果=下拉; 整改期限=日期'},
 
   {no:8, step:'上一年度日常巡护', type:'年度验收',
    factors:'浇水、培土、补植、病虫害防治等管护情况', stdFrom:'项目管护方案', req:'必填',
    check:'现场核查', att:'巡护照片、巡护记录', pass:'无严重损害', seq:'—',
    memo:'对应纪要中的二级科目"上一年度日常巡护"',
-   ctl:'管护作业情况=多选(浇水;培土;补植;病虫害防治); 补植株数=数值(株,选填); 病虫害情况=下拉(无;轻微;严重); 问题描述=多行纯文本(病虫害=严重时必填)'}
+   ctl:'管护作业情况=多选(浇水;培土;补植;病虫害防治); 补植株数=数值(株,选填); 病虫害情况=下拉(无;轻微;严重); 问题描述=多行纯文本(病虫害=严重时必填); 验收结果=下拉; 整改期限=日期'}
 ];
 
 var FLOWS = { '流程-人工造林': FLOW_RENLIN };
@@ -389,10 +389,18 @@ function unlocked(i){
 function doneCount(){ var n=0; for(var k in S.submitted) if(S.submitted[k]) n++; return n; }
 
 /* 标准值取自 data（trim 匹配，兼容「总株数  」尾随空格） */
+/* 确认项因子 → data 列名兜底别名（因子口径词 ≠ 列名时对照） */
+var STD_ALIAS={'小班边界':'小班号','面积':'小班面积','造林类型':'项目类型','树种':'造林树种'};
 function stdOf(name, row){
   var keys=Object.keys(row);
   for(var i=0;i<keys.length;i++){
     if(keys[i].trim()===name) return row[keys[i]];
+  }
+  var a=STD_ALIAS[name];
+  if(a!=null){
+    for(var j=0;j<keys.length;j++){
+      if(keys[j].trim()===a) return row[keys[j]];
+    }
   }
   return undefined;
 }
@@ -430,7 +438,7 @@ function pickRow(i){
   S.row=DATA_ROWS[i];
   var hit=matchFlow(S.row,'造林项目-验收模板.xlsx');
   S.flow = hit && FLOWS[hit.sheet] ? hit : null;
-  S.steps = S.flow ? S.flow.map(function(x){return {def:x};}) : [];
+  S.steps = (hit && FLOWS[hit.sheet] ? FLOWS[hit.sheet] : []).map(function(x){return {def:x};});
   S.cur=0; S.data={}; S.atts={}; S.result={}; S.submitted={};
   renderAll();
 }
@@ -521,7 +529,8 @@ function ctlHtml(i, def){
     if(n==='验收结果'){
       h+='<div class="factor"><div class="fhead"><span class="fname">'+esc(n)+'</span><span class="req">*</span></div>'+
          '<div class="ctl"><select data-k="'+esc(n)+'">'+
-         OPTION_POOL['验收结果'].map(function(o){
+       '<option value=""'+(S.result[i]?'':' selected')+'>请选择</option>'+
+       OPTION_POOL['验收结果'].map(function(o){
            return '<option'+(S.result[i]===o?' selected':'')+'>'+o+'</option>';
          }).join('')+'</select></div>'+
          '<div class="verdict hint">选项来自「参数」页 验收结果选项；选「整改后合格」时下方出现「整改期限」</div></div>';
@@ -646,26 +655,30 @@ function ctlHtml(i, def){
 
   /* 环节 6/7 的自动计算成活率 / 保存率 */
   if(def.no===6 || def.no===7){
-    var s=d['抽查株数'], dd=d[def.no===6?'死亡株数':'存活株数'];
-    var rate=(s>0 && dd!=null && dd!=='') ? (100*(s-dd)/s) : null;
+    var rate=rateOf(def,d);
     h+='<div class="factor" style="background:#f0efec;border-radius:8px;padding:10px 12px;border-top:0">'+
        '<div class="fhead"><span class="fname">'+(def.no===6?'成活率':'保存率')+'</span>'+
        '<span class="mut3 tiny">系统自动算，不可手填</span></div>'+
-       '<div style="font-size:20px;font-weight:500;margin-top:2px">'+
+       '<div id="autoRate" style="font-size:20px;font-weight:500;margin-top:2px">'+
        (rate==null?'—':rate.toFixed(1)+'%')+'</div>'+
        '<div class="tiny mut3">'+(def.no===6?'成活率 =(抽查株数 − 死亡株数) ÷ 抽查株数 × 100%'
-                                    :'保存率 =(抽查株数 − 存活株数) ÷ 抽查株数 × 100%，与成活率同口径')+'</div></div>';
+                                    :'保存率 = 存活株数 ÷ 抽查株数 × 100%')+'</div></div>';
   }
   return h;
 }
 
 /* ---------- 提交闸门 ---------- */
+/* 成活率 =(抽查−死亡)/抽查；保存率 = 存活/抽查（口径不同，勿混用） */
+function rateOf(def,d){
+  var s=d['抽查株数'], dd=d[def.no===6?'死亡株数':'存活株数'];
+  return (s>0 && dd!=null && dd!=='') ? (def.no===6 ? 100*(s-dd)/s : 100*dd/s) : null;
+}
 function gateOf(i, def){
   var d=S.data[i]||{}, miss=[];
   var ctls=parseCtl(def.ctl);
   ctls.forEach(function(c){
     var n=c.name;
-    if(['验收人','验收日期','整改期限'].indexOf(n)>=0) return;
+    if(['验收人','验收日期','整改期限','验收结果'].indexOf(n)>=0) return;
     if(n==='确认项'){
       var items=def.factors.split('、'), ck=d['确认项']||{};
       if(items.some(function(x){return !ck[x];})) miss.push('确认项 '+items.filter(function(x){return !ck[x];}).length+' 项未勾');
@@ -749,6 +762,12 @@ function verdict(i,def){
       set(n, (+d[n]>0? '已填 · 大于 0 通过' : '必须大于 0'), (+d[n]>0?'ok':'bad'));
     }
   });
+  /* 环节 6/7：随录入实时刷新自动算框 */
+  if(def.no===6||def.no===7){
+    var rate=rateOf(def,d);
+    var el=document.getElementById('autoRate');
+    if(el) el.textContent = rate==null?'—':rate.toFixed(1)+'%';
+  }
 }
 
 function bind(i,def){
@@ -761,7 +780,7 @@ function bind(i,def){
     el.addEventListener(ev,function(){
       d[k]=el.value;
       if(k==='验收结果') S.result[i]=el.value;
-      if(k==='病虫害情况') renderPanel();
+      if(k==='病虫害情况'||k==='验收结果') renderPanel();
       verdict(i,def);
       renderSubmit(i,def);
     });
