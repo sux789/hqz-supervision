@@ -186,15 +186,21 @@
       h += `<div class="flow-warn"><b>配置提示</b>${esc(w.text || w)}</div>`;
     });
 
-    // 步骤条
+    // 步骤条（v0.32.4：三态配色 + 自动换行；**所有环节都可点开查看**——
+    // 未解锁的环节进入只读预览，让人先知道"这一步要填什么"，不必等解锁后才发现缺料）
     h += '<div class="flow-steps">';
     F.data.steps.forEach((s, i) => {
       const done = isDone(s.no), cur = i === F.cur, lock = !unlocked(i);
-      h += `<button class="flow-step${done ? ' done' : ''}${cur ? ' cur' : ''}${lock ? ' lock' : ''}" data-i="${i}">`
+      const st = done ? 'done' : (lock ? 'lock' : 'todo');
+      h += `<button class="flow-step ${st}${cur ? ' cur' : ''}" data-i="${i}">`
         + `<span class="dot">${done ? '✓' : i + 1}</span>`
         + `<span class="nm">${esc(String(s.step).replace(/（.*/, ''))}</span></button>`;
     });
     h += '</div>';
+    h += '<div class="flow-legend">'
+      + '<span class="lg done">已填写</span>'
+      + '<span class="lg todo">待填写</span>'
+      + '<span class="lg lock">不可填写（点击可预览）</span></div>';
 
     // 环节卡片
     const s = step();
@@ -207,30 +213,39 @@
     h += `<div class="flow-meta-sm">填报要求：${esc(s.require)} · 校验方式：${esc(s.check)} · 通过标准：${esc(s.pass)}</div>`;
     if (lock) {
       const prev = F.data.steps[F.cur - 1];
-      h += `<div class="flow-lock">前一环节尚未提交，按「转序规则」本环节不可填报：${esc(prev.seq || '上一环节须先合格')}</div>`;
-    } else {
-      h += '<div class="flow-ctrls">' + ctrlsHtml(s) + '</div>';
-      h += attHtml(s);
+      h += `<div class="flow-lock">🔒 按「转序规则」本环节暂不可填报（前面环节提交后解锁）：${esc(prev ? (prev.seq || '上一环节须先合格') : '')}。下方控件为只读预览。</div>`;
     }
+    h += '<div class="flow-ctrls">' + ctrlsHtml(s) + '</div>';
+    h += attHtml(s);
     h += '</div>';
 
-    // 提交栏
+    // 提交栏（锁定环节不显示"还差 N 项"——那是对空表单算的，全是误报）
     const miss = gate();
     h += '<div class="flow-submit"><span class="prog">'
-      + (miss.length ? '还差 ' + miss.length + ' 项：' + esc(miss.join('、')) : '本环节可提交')
+      + (lock ? '🔒 本环节未解锁'
+        : miss.length ? '还差 ' + miss.length + ' 项：' + esc(miss.join('、')) : '本环节可提交')
       + '</span>'
-      + (lock || miss.length ? '<span class="why">未完成，提交置灰</span>' : '')
+      + (lock ? '<span class="why">未解锁，提交置灰</span>'
+        : miss.length ? '<span class="why">未完成，提交置灰</span>' : '')
       + `<button id="flowSubmit" class="btn primary"${lock || miss.length || F.busy ? ' disabled' : ''}>提交本环节</button></div>`;
 
     host.innerHTML = h;
 
+    // 锁定环节 = 只读预览：把控件全部禁用（disabled 元素不派发 input/change，
+    // bind() 的监听自然失效，不会污染 F.val），拍照/上传按钮同样禁用
+    if (lock) {
+      Array.prototype.forEach.call(
+        host.querySelectorAll('.flow-card.locked input, .flow-card.locked select,'
+          + ' .flow-card.locked textarea, .flow-card.locked button'),
+        (el) => { el.disabled = true; });
+    }
+
     Array.prototype.forEach.call(host.querySelectorAll('.flow-step'), (b) => {
       b.onclick = () => {
         const i = +b.dataset.i;
-        if (!unlocked(i)) { toast('请先完成前面的环节', true); return; }
         if (i === F.cur) return;
         saveDraft();
-        F.cur = i; loadStepRecords(step().no); render();
+        F.cur = i; loadStepRecords(step().no); render();   // 未解锁环节 = 只读预览（render 处理）
       };
     });
     bind(s);
@@ -513,9 +528,9 @@
     const bar = host.querySelector('.flow-submit');
     if (!bar) return;
     const lock = !unlocked(F.cur);
-    bar.querySelector('.prog').textContent = miss.length
-      ? '还差 ' + miss.length + ' 项：' + miss.join('、')
-      : '本环节可提交';
+    bar.querySelector('.prog').textContent = lock
+      ? '🔒 本环节未解锁'
+      : miss.length ? '还差 ' + miss.length + ' 项：' + miss.join('、') : '本环节可提交';
     const why = bar.querySelector('.why');
     const btn = bar.querySelector('#flowSubmit');
     if (btn) btn.disabled = lock || miss.length > 0 || F.busy;

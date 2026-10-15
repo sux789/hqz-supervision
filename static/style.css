@@ -246,9 +246,10 @@ textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size
              color: #7a5c12; line-height: 1.6; }
 .flow-warn b { display: block; margin-bottom: 2px; font-weight: 600; }
 
-/* 步骤条 */
-.flow-steps { display: flex; gap: 6px; overflow-x: auto; padding: 14px 0 6px; }
-.flow-step { flex: 0 0 auto; width: 66px; background: none; border: 0; padding: 0;
+/* 步骤条（v0.32.4：flex-wrap 自动换行适配窄窗口；三态配色——
+   绿=已填写 / 橙=待填写 / 灰=不可填写；环节全部可点击，未解锁=只读预览） */
+.flow-steps { display: flex; flex-wrap: wrap; gap: 10px 6px; padding: 14px 0 4px; }
+.flow-step { flex: 0 0 auto; min-width: 66px; background: none; border: 0; padding: 0;
              cursor: pointer; font: inherit; color: inherit; }
 .flow-step .dot { width: 26px; height: 26px; margin: 0 auto 5px; border-radius: 50%;
                   display: flex; align-items: center; justify-content: center;
@@ -256,15 +257,27 @@ textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size
 .flow-step .nm { font-size: 11px; color: #8a939e; line-height: 1.3; }
 .flow-step.done .dot { background: #e2f2e8; color: #2f5d3a; }
 .flow-step.done .nm { color: #5b6570; }
-.flow-step.cur .dot { background: #e6f0fa; color: #2f5d3a; box-shadow: inset 0 0 0 1px #2f5d3a; }
-.flow-step.cur .nm { color: #2f5d3a; font-weight: 600; }
-.flow-step.lock { opacity: .5; }
+.flow-step.todo .dot { background: #fdf1e2; color: #a05a00; }
+.flow-step.todo .nm { color: #8a6a1f; }
+.flow-step.lock .dot { background: #ececec; color: #98a1ab; }
+.flow-step.lock .nm { color: #98a1ab; }
 .flow-step.lock .nm::after { content: " 🔒"; font-size: 9px; }
+.flow-step.cur .dot { box-shadow: inset 0 0 0 2px #2f5d3a; }
+.flow-step.cur .nm { color: #2f5d3a; font-weight: 600; }
+.flow-legend { display: flex; flex-wrap: wrap; gap: 4px 14px;
+               font-size: 11px; color: #8a939e; padding: 2px 0 8px; }
+.flow-legend .lg::before { content: ""; display: inline-block; width: 10px; height: 10px;
+               border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+.flow-legend .lg.done::before { background: #e2f2e8; box-shadow: inset 0 0 0 1px #2f5d3a; }
+.flow-legend .lg.todo::before { background: #fdf1e2; box-shadow: inset 0 0 0 1px #d98c1f; }
+.flow-legend .lg.lock::before { background: #ececec; box-shadow: inset 0 0 0 1px #98a1ab; }
 
 /* 环节卡 */
 .flow-card { background: #fff; border: 1px solid #e3e7eb; border-radius: 10px;
              padding: 14px 16px; margin-top: 10px; }
 .flow-card.locked { background: #fafbfc; }
+/* v0.32.4：未解锁环节 = 只读预览（控件已 disabled，这里再整体降饱和示意） */
+.flow-card.locked .flow-ctrls, .flow-card.locked .fs-att { opacity: .6; }
 .flow-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .flow-card-title { font-size: 14px; font-weight: 600; }
 .flow-badge { font-size: 11px; padding: 1px 7px; border-radius: 4px;
