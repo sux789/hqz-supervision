@@ -12,6 +12,6 @@
 
 ## 改动完成后，全绿才提交
 
-- `python check_invariants.py 输出目录/` — 业务勾稽断言（证明输出对）
-- `python compare.py baseline/latest/ 输出目录/` — 双跑对比（证明没改坏；基线由 `bash make_baseline.sh` 生成）
-- 写 `doc/NNN-版本_主题.md`（模板见 doc/001），同步更新 `STATE.md` 与 `CONSTRAINTS.md`
+- `bash tests/run_all.sh` — 全量回归（单元 + e2e + EXIF，当前 237 项；数量随版本增长，见 STATE.md「回归」行）
+- 写 `doc/NNN-版本_主题.md`（模板见 doc/001-迭代文档模板.md，七段式：需求/验证/设计/代码/测试/反转/部署），同步更新 `STATE.md` 与 `CONSTRAINTS.md`
+- 注：`compare.py` / `check_invariants.py` / `make_baseline.sh` 是数据管线类项目的「双跑对比 + 勾稽断言」模板，本项目未启用（CHECKS 为空、生成命令与 Flask 入口不匹配）；未来若有"生成输出目录"类需求再接线
