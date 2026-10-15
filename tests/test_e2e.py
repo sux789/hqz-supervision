@@ -848,7 +848,9 @@ else:
                         'values': {'确认项': json.dumps(_full, ensure_ascii=False),
                                    '验收日期': '2026-10-14'},
                         'att': [{'kind': 'punch', 'label': '定位打卡', 'count': 1,
-                                 'names': ['打卡 24.1,101.6'], 'operator': '测试'}]})
+                                 'names': ['打卡 24.1,101.6'], 'operator': '测试'}],
+                        'geo': {'lat': '24.123456', 'lon': '101.678921', 'acc': 12,
+                                't': '2026-10-15 16:20:00'}})
     ok('H10 全部满足 → 提交成功', _r5.status_code == 200, str(_r5.get_json())[:100])
 
     # 落库回读
@@ -858,6 +860,16 @@ else:
     ok('H12 确认项已勾数正确落库',
        len(json.loads((_rec1.get('确认项') or {}).get('value') or '{}')) == len(_items),
        f"{len(_items)} 项")
+    # v0.32.5：提交留痕 geo + ip（环节级行；ip 服务端必记，geo 来自请求体）
+    _con_t = _M.db()
+    _steprow = _con_t.execute('SELECT geo, ip FROM flow_records WHERE workbook_id=? AND row_idx=?'
+                              ' AND flow_sheet=? AND step_no=1 AND factor=?',
+                              (_fwid, _ridx, _f2['flow_sheet'], '')).fetchone()
+    _con_t.close()
+    ok('H12b 提交留痕 ip', bool(_steprow and _steprow['ip']), str(dict(_steprow) if _steprow else None)[:100])
+    ok('H12c 提交留痕 geo（请求体带回的定位）',
+       bool(_steprow and '24.123456' in (_steprow['geo'] or '')),
+       str(_steprow['geo'] if _steprow else None)[:100])
 
     # 第 2 环节：数值×3 必填
     _r6 = cu.post(f'/api/workbooks/{_fwid}/flow', headers=HA,

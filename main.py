@@ -189,6 +189,13 @@ def init_db():
     bcols = {r[1] for r in con.execute('PRAGMA table_info(workbook_backups)')}
     if 'flows' not in bcols:
         con.execute("ALTER TABLE workbook_backups ADD COLUMN flows TEXT NOT NULL DEFAULT ''")
+    # 轻量迁移：v0.32.5 起验收提交留痕定位与 IP（审计：在哪儿、从哪个网络提交）
+    # geo 只记提交瞬间一次（best-effort，室内无定位为空），不是持续轨迹；ip 服务端取
+    fcols = {r[1] for r in con.execute('PRAGMA table_info(flow_records)')}
+    if 'geo' not in fcols:
+        con.execute("ALTER TABLE flow_records ADD COLUMN geo TEXT NOT NULL DEFAULT ''")
+    if 'ip' not in fcols:
+        con.execute("ALTER TABLE flow_records ADD COLUMN ip TEXT NOT NULL DEFAULT ''")
     # 轻量迁移：v0.10 前建的 photo_sync 无 kind/orig_size 列
     cols = {r[1] for r in con.execute('PRAGMA table_info(photo_sync)')}
     if 'kind' not in cols:
@@ -887,6 +894,20 @@ def api_flow_save(wid):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     att_json = json.dumps(att, ensure_ascii=False)
 
+    # v0.32.5：提交瞬间定位 + 客户端 IP（审计留痕：在哪儿、从哪个网络提交）。
+    # geo 由前端 best-effort 带来（室内无定位为空，绝不阻塞提交）；IP 服务端取，
+    # 前面隔着网关/反代（access.log 里是 172.18.0.2），优先取 X-Forwarded-For 第一跳。
+    geo_in = request.json.get('geo') or {}
+    geo_s = ''
+    if isinstance(geo_in, dict) and geo_in.get('lat') and geo_in.get('lon'):
+        geo_s = json.dumps({'lat': str(geo_in.get('lat'))[:16],
+                            'lon': str(geo_in.get('lon'))[:16],
+                            'acc': str(geo_in.get('acc') or '')[:8],
+                            't': str(geo_in.get('t') or '')[:24]},
+                           ensure_ascii=False)[:200]
+    fwd = (request.headers.get('X-Forwarded-For') or '').split(',')[0].strip()
+    ip = (fwd or request.remote_addr or '')[:64]
+
     # 转序闸门（服务端也要管，不能只靠前端置灰 —— 边界只在服务端，C13）。
     # **必须排在必填校验之前**：环节都还没到，先说"上一环节没做"更有意义；
     # 反过来会让人以为是自己填错了（2026-10-14 首测就踩了这个顺序问题）。
@@ -1017,24 +1038,26 @@ def api_flow_save(wid):
                 ' att_json,result,operator,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
                 (wid, ridx, hit['sheet'], step_no, str(factor)[:64], sval,
                  att_json, result, operator, now, now))
-    # 结果与附件挂在 step_no=0 的「环节级」行上（factor 固定为空串）
+    # 结果与附件挂在 step_no=0 的「环节级」行上（factor 固定为空串）；geo/ip 同行留痕
     ex = con.execute(
         'SELECT id FROM flow_records WHERE workbook_id=? AND row_idx=? AND flow_sheet=?'
         ' AND step_no=? AND factor=?', (wid, ridx, hit['sheet'], step_no, '')).fetchone()
     if ex:
         con.execute('UPDATE flow_records SET value=?,att_json=?,result=?,operator=?,'
-                    'updated_at=? WHERE id=?',
-                    (now, att_json, result, operator, now, ex['id']))
+                    'updated_at=?,geo=?,ip=? WHERE id=?',
+                    (now, att_json, result, operator, now, geo_s, ip, ex['id']))
     else:
         con.execute(
             'INSERT INTO flow_records(workbook_id,row_idx,flow_sheet,step_no,factor,value,'
-            ' att_json,result,operator,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-            (wid, ridx, hit['sheet'], step_no, '', now, att_json, result, operator, now, now))
+            ' att_json,result,operator,created_at,updated_at,geo,ip)'
+            ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            (wid, ridx, hit['sheet'], step_no, '', now, att_json, result, operator, now, now,
+             geo_s, ip))
     con.commit()
     con.close()
     _applog('flow', f'wid={wid} row={ridx} 提交成功 step={step_no} sheet={hit["sheet"]} '
                     f'环节={step["step"]} result={result} factors={len(values)} '
-                    f'att={len(att)} user={operator}')
+                    f'att={len(att)} geo={geo_s or "-"} ip={ip} user={operator}')
     return jsonify(ok=True, row_idx=ridx, step_no=step_no,
                    flow_sheet=hit['sheet'], factors=len(values), operator=operator)
 

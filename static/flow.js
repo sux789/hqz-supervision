@@ -598,6 +598,21 @@
   }
 
   /* ── 提交 ── */
+  /** 提交瞬间取一次定位（审计留痕，v0.32.5）。best-effort：3 秒拿不到/无权限 → null，
+   *  绝不阻塞提交（打卡是 8 秒因为用户在等结果；这里只是留痕，不能拖慢提交）。 */
+  function submitGeo() {
+    return new Promise((res) => {
+      if (!navigator.geolocation) return res(null);
+      const t = setTimeout(() => res(null), 3000);
+      navigator.geolocation.getCurrentPosition(
+        (p) => { clearTimeout(t);
+          res({ lat: p.coords.latitude.toFixed(6), lon: p.coords.longitude.toFixed(6),
+                acc: Math.round(p.coords.accuracy || 0), t: new Date().toLocaleString('zh-CN') }); },
+        () => { clearTimeout(t); res(null); },
+        { enableHighAccuracy: true, timeout: 3000 });
+    });
+  }
+
   async function submit(s) {
     if (F.busy) return;
     const miss = gate();
@@ -605,10 +620,12 @@
     if (!unlocked(F.cur)) { toast('请先完成前面的环节', true); return; }
     F.busy = true; refreshSubmit();
     try {
+      const geo = await submitGeo();
       const payload = {
         row: F.rowIdx, step_no: s.no,
         result: F.val['验收结果'] || '',
         att: F.att,
+        geo: geo,
         values: Object.assign({}, F.val, {
           验收人: window.__supUser || '',
           验收日期: F.val['验收日期'] || today(),
