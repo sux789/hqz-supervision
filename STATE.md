@@ -2,7 +2,8 @@
 
 > 每次迭代后更新，≤25 行。跨会话恢复先读本文件，不翻 doc/ 归档。v0.29 及以前的历史行已迁至 `doc/STATE历史归档.md`。
 
-- **版本**：v0.32.5 ｜ **更新**：2026-10-15
+- **版本**：v0.33 ｜ **更新**：2026-10-16
+- **v0.33 变化（轨迹按小班手动记录，doc/022，C21 反转）**：用户反转 v0.32「授权即持续采集」——自动采+间隔感知不合理。①开关持久化在原生（SharedPreferences track_on，默认关），load/resume 只在开关开时恢复采集；新增 setTracking(on)（on 需已授权+GPS 开，否则 reject）；status() 带 trackOn。②网页：▶ 记录轨迹（归属快照 trackCls=当前小班，localStorage 同步）/ ⏹ 结束轨迹（上传 GPX 文件名 轨迹_{归属小班}_{ts}.gpx，成功才停采清点，失败点保留可重试）；切小班/返回/录像=结算原小班并**停止**（不再续采）；「🗺 轨迹图」= 纯 SVG 示意路径（绿起点/红终点+点数/haversine 距离，无底图离线可用）。③采样不变 GPS 1s/2m（"15 秒一个点"实为静止 2m 过滤+通知 10s 节流+林下 fix 慢，doc/022 §二）。④后续按小班导出 SHP：数据基础=文件名含小班。⑤v0.10 补发版（16:29 发现 tag 从没打过、现场全是 v0.9.0——"点轨迹没提示/未授权"的底层原因）；发版铁律：改 versionCode+tag+push tag 后必须 `gh release view` 复核直链。**需出包 versionCode 11 / v0.11**；旧 APK 点轨迹提示升级。app.js?v=→0.33；回归 237 全绿
 - **v0.32.3~0.32.5（网页三连修，2026-10-14~15）**：③v0.32.3 修「带过来的数据看着填了、提交判没填」——数值×3 标准值改「实测·长/宽/深」占位、下拉未选改「请选择」，与 F.val 所见即所填（C22；方法论：线上真实数据离线重放 gate() 二分）②v0.32.4 验收步骤条：flex-wrap 换行、三态配色+图例、**未解锁环节可点开只读预览**；style.css 两个模板补 ?v=；改模板后先本地 test_client 渲染再部署 ①v0.32.5 提交留痕审计：flow_records 加 geo/ip 列（纯加列迁移），提交瞬间 best-effort 一次性定位（3s 超时为空不阻塞）+ 服务端取 X-Forwarded-For 第一跳 IP，落环节级行 + app.log [flow] 条目；e2e H12b/c
 - **v0.32.1（doc/021，C22）**：老内核（Android 9 / WebView Chrome 73）`??`×18 致 app.js 整段 SyntaxError，全改 `x != null ? x : 默认`；三层日志（前端错误→js.log、未捕获异常→app.log、验收提交各结局→[flow] 条目）+ 后台「运行日志」卡片。排查顺序：后台运行日志 → js.log 找 SyntaxError/资源失败 → app.log 找 [flow]/[EXC]
 - **v0.32（doc/020，C21，B21）**：授权即持续 GNSS 跟踪——采集生死权在原生 BgLocationPlugin（load/resume/授权回调三处幂等自启，仅 GPS_PROVIDER），缓冲先落 `files/track_buffer.csv` 再谈内存；网页只是观察者+上传者（attachTrack 按 GPS 时间戳去重+localStorage 水位线，**上传成功才 clearBuffer**）；versionCode 10。明确不做：开机自启/打卡水印走 Web 定位/手动停止按钮。**待真机验证 7 条见 doc/020 §二**

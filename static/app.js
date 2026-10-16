@@ -1548,21 +1548,28 @@ async function saveVideoLocal(blob, fname, subdir) {
   return `已下载：${fname}（${(blob.size / 1048576).toFixed(1)} MB）`;
 }
 
-/* ── 轨迹（v0.32）：**授权即持续采集**（原生 BgLocation 插件，仅 GPS_PROVIDER）─────────────
-   只要 App 拿到定位权限，原生侧就持续采集（冷启动/回前台/授权回调三处自启，幂等），
-   息屏/切后台/页面重载都不停；**完全弃用网络定位**——v0.19 起原生只注册 GPS_PROVIDER，
-   v0.32 删掉 WebView watchPosition 回退（fused 源会混入基站/WiFi 点，GCJ-02 且精度 50~1000m）。
+/* ── 轨迹（v0.33）：**点击开始，记录到当前小班**（原生 BgLocation 插件，仅 GPS_PROVIDER）──
+   v0.32 曾是"授权即持续采集"，2026-10-16 用户反转：自动采集不合理 → 手动开关（原生侧
+   持久化 track_on，页面按钮只是遥控器，重载/息屏不丢状态）。
+   · 点「▶ 记录轨迹」→ setTracking(on) + 归属快照 trackCls=当前小班；数据源仍只有卫星。
+   · 点「⏹ 结束轨迹」→ 上传 GPX（文件名 轨迹_{小班}_{时间}.gpx，"按小班导出 SHP"的数据基础），
+     成功才停采清点；失败点保留可重试。
+   · 切小班/返回列表/开始录像 → 自动结算原小班并停止（归属不跟丢）。
+   · 「🗺 轨迹图」→ 纯 SVG 示意路径（无底图，离线可用）。
+   · 采样：GPS 1s/2m（静止不记点防抖动毛团，行走 1~2 秒一个真实位移点）。
    点先落原生 files/track_buffer.csv（进程死了也不丢），网页只是观察者 + 上传者：
      · attachTrack()：drain() 回填未消费点 + startWatcher() 接实时流（按 GPS 时间戳去重）
-     · flushTrack()：结算上传当前段 GPX；成功后 clearBuffer() 并重置会话（迟到点留给下一段）
      · 水位线 hqz_sup_track_upto（localStorage 单数字）：已上传到的最大时间戳，防跨段/跨重载重复
    打卡/水印坐标仍走 Web getCurrentPosition（一次性，非轨迹链路） ── */
 let trackBgPlugin = null;
 let trackAttached = false;     // 网页是否接上了实时回调（= 插件可用且权限已给）
+let trackOn = false;           // v0.33：原生持久化开关（点开始/结束；页面重载从 status 恢复）
+let trackCls = '';             // v0.33：正在记录时归属的小班（开始时快照，切换/重载不跟丢）
 let trackPts = [];             // 当前段（未上传）
 let trackSeenT = new Set();    // 已在会话里的 GPS 时间戳（毫秒，去重）
 let trackGpsBound = false;     // gpsState 监听只绑一次
 const TRACK_UPTO_KEY = 'hqz_sup_track_upto';
+const TRACK_CLS_KEY = 'hqz_sup_track_cls';   // v0.33：记录中的小班（页面重载恢复）
 
 function bgLocationPlugin() {
   try {
@@ -1586,17 +1593,20 @@ function bumpTrackWatermark(t) {
   try { if (t > trackWatermark()) localStorage.setItem(TRACK_UPTO_KEY, String(t)); } catch (e) {}
 }
 
-/* 按钮状态：附着=持续采集在跑（有段内点时红 pulse）；未附着=不可用（无插件/无权限/浏览器） */
+/* 按钮状态（v0.33）：记录中=红「⏹ 结束轨迹 N 点」（点击结算上传）；未记录=「▶ 记录轨迹」。
+   有累积点时显示「🗺 轨迹图」入口。 */
 function refreshTrackBtn() {
   const b = $('#btnTrack'); if (!b) return;
-  if (trackAttached) {
-    b.classList.toggle('recording', trackPts.length > 0);
-    b.textContent = `● 记录中 ${trackPts.length} 点`;
-    b.title = '持续采集进行中（仅 GPS）；点击结算并上传当前段轨迹';
+  const m = $('#btnTrackMap');
+  if (m) m.classList.toggle('hidden', !(trackPts.length > 0 && !b.classList.contains('hidden')));
+  if (trackAttached && trackOn) {
+    b.classList.add('recording');
+    b.textContent = `⏹ 结束轨迹 ${trackPts.length} 点`;
+    b.title = `正在记录：${trackCls || keyVal() || '当前小班'}（仅卫星 GPS）；点击结束并上传该小班轨迹`;
   } else {
     b.classList.remove('recording');
-    b.textContent = '◎ 轨迹';
-    b.title = '点击上传当前段轨迹';
+    b.textContent = '▶ 记录轨迹';
+    b.title = '开始记录当前小班的卫星轨迹（仅 GPS；点击开始，再次点击结束并上传）';
   }
 }
 
@@ -1622,6 +1632,11 @@ async function attachTrack() {
   trackBgPlugin = plugin;
   let st = null;
   if (typeof plugin.status === 'function') st = await nativeTimeout(plugin.status(), 2000);
+  trackOn = !!(st && st.trackOn);                    // v0.33：页面重载后从原生恢复开关状态
+  if (trackOn && !trackCls) {
+    try { trackCls = localStorage.getItem(TRACK_CLS_KEY) || ''; } catch (e) {}   // 重载恢复归属小班
+  }
+  if (!trackOn) trackCls = '';
   if (!st || st.permission !== 'granted') {
     trackAttached = false; refreshTrackBtn(); return;           // 不弹窗：申请归 ensurePermissionsUpfront（C18）
   }
@@ -1651,39 +1666,75 @@ async function attachTrack() {
 }
 
 $('#btnTrack').addEventListener('click', async () => {
-  /* v0.32.6：不再一律说"未授权"。三种情况分开：
-     ① 已附着 → 结算上传当前段；② 非 App → 提示仅支持 App；
-     ③ App 但 status() 不可用 → 老版本 APK，提示升级（v0.32.1 的文案把它误说成"未授权"）；
-     ④ 权限未给 → 用户主动点轨迹就是明确意图，**当场再申请一次**（C18 手动入口），
-        拿到权限直接附着开采；仍拒绝才引导去系统设置。 */
-  if (trackAttached) { flushTrack('', false); return; }
-  if (!isNativeApp()) { toast('轨迹持续采集仅支持监理验收 App（仅 GPS，授权即采）', true); return; }
+  /* v0.33 语义：**点击开始 → 记录到当前小班；再次点击 → 结束并上传该小班轨迹**。
+     ① 记录中 → 结束：上传 GPX（归属=开始时快照的小班），成功才停采清点；
+        上传失败（林区无网）点保留在机，可稍后再点结束重试。
+     ② 没记录 → 开始：权限/版本检查后 setTracking(on)，归属=当前小班快照。
+     ③ 老 APK（status/setTracking 不可用）→ 提示升级 v0.11+。 */
+  if (trackAttached && trackOn) {                     // ── 结束 ──
+    const ok = await flushTrack('结束轨迹', false, trackCls || undefined);
+    if (ok) await setNativeTracking(false);
+    else toast('轨迹未上传（点已保留在本机）；恢复网络后再点一次「结束轨迹」即可重传', true);
+    return;
+  }
+  if (trackAttached) { await startRecording(); return; }
+  if (!isNativeApp()) { toast('轨迹记录仅支持监理验收 App（仅 GPS 卫星定位）', true); return; }
   const plugin = bgLocationPlugin();
-  if (!plugin) { toast('轨迹持续采集需要升级 App（v0.10+）', true); return; }
-  if (typeof plugin.status !== 'function') { toast('当前 App 版本较旧，请升级到 v0.10 及以上后使用持续轨迹', true); return; }
-  let st = await nativeTimeout(plugin.status(), 2000);   // 老桥无应答 → null → 按"版本较旧"处理
-  if (!st) { toast('当前 App 版本较旧，请升级到 v0.10 及以上后使用持续轨迹', true); return; }
+  if (!plugin || typeof plugin.setTracking !== 'function') { toast('请升级 App 到 v0.11 及以上后使用轨迹记录', true); return; }
+  let st = await nativeTimeout(plugin.status(), 2000);
+  if (!st) { toast('当前 App 版本较旧，请升级到 v0.11 及以上后使用轨迹记录', true); return; }
   if (st.permission !== 'granted') {
     const ap = (window.Capacitor && window.Capacitor.Plugins)
       ? window.Capacitor.Plugins.AppPermissions : null;
     if (ap && typeof ap.request === 'function') {
-      await nativeTimeout(ap.request({ type: 'location' }), 10000);   // 系统弹窗最长等 10 秒，卡死也不挂 handler
-      await attachTrack();                       // 授权回调自启是幂等的，这里再附着一次立即生效
+      await nativeTimeout(ap.request({ type: 'location' }), 10000);
+      await attachTrack();
     }
-    if (!trackAttached) toast('定位权限未授权，轨迹未开始：请在系统设置里给「监理验收」定位权限（选「始终允许」）', true);
-    else toast('轨迹持续采集中');
+    if (!trackAttached) toast('定位权限未授权：请在系统设置里给「监理验收」定位权限（选「始终允许」）', true);
+    else await startRecording();
     return;
   }
   if (st.gpsEnabled === false) { toast('GPS 已关闭，请先在系统设置打开定位', true); return; }
   await attachTrack();
-  toast(trackAttached ? '轨迹持续采集中' : '轨迹启动失败，请回前台重试', !trackAttached);
+  if (trackAttached) await startRecording();
+  else toast('轨迹启动失败，请回前台重试', true);
 });
 
-/* 结算上传当前段（**不停止采集**——采集是后台持续的，这里只切段；口径延续 hqz-survey F2）。
-   顺序讲究：上传成功才 clearBuffer；上传期间到的点留给下一段（仍在本机会话里，不丢）。 */
-async function flushTrack(reason, silent) {
-  if (!trackAttached) {
-    if (!silent) toast('轨迹持续采集需要新版 App（仅 GPS，授权即采）', true);
+/* 开关遥控（v0.33）：真正的开关持久化在原生侧；网页只记账 + 刷新按钮 */
+async function setNativeTracking(on) {
+  const plugin = trackBgPlugin || bgLocationPlugin();
+  if (plugin && typeof plugin.setTracking === 'function') {
+    await nativeTimeout(plugin.setTracking({ on }), 2000);
+  }
+  trackOn = on;
+  if (on) {
+    trackCls = keyVal() || '无小班';
+    try { localStorage.setItem(TRACK_CLS_KEY, trackCls); } catch (e) {}
+  } else {
+    trackCls = '';
+    try { localStorage.removeItem(TRACK_CLS_KEY); } catch (e) {}
+  }
+  refreshTrackBtn();
+}
+
+async function startRecording() {
+  const plugin = trackBgPlugin || bgLocationPlugin();
+  if (!plugin || typeof plugin.setTracking !== 'function') { toast('请升级 App 到 v0.11+', true); return; }
+  const r = await nativeTimeout(plugin.setTracking({ on: true }), 2000);
+  if (r == null) { toast('启动记录失败：请在系统设置确认定位权限与 GPS 已开', true); return; }
+  trackOn = true;
+  trackCls = keyVal() || '无小班';
+  try { localStorage.setItem(TRACK_CLS_KEY, trackCls); } catch (e) {}
+  refreshTrackBtn();
+  toast(`开始记录：${trackCls}（仅卫星 GPS · 行走时约 1~2 秒/点）`);
+}
+
+/* 结算上传（v0.33：cls 参数 = 轨迹归属小班——开始记录时快照，不随界面切换变；
+   这是"按小班导出（后续 SHP）"的数据基础：文件名 轨迹_{小班}_{时间}.gpx）。
+   上传成功才 clearBuffer；上传期间到的点保留（不丢）。 */
+async function flushTrack(reason, silent, cls) {
+  if (!trackAttached && !trackPts.length) {
+    if (!silent) toast('轨迹记录需要监理验收 App（v0.11+，仅 GPS 卫星定位）', true);
     return false;
   }
   const snap = trackPts.slice();          // 先取快照：上传期间继续到的点是下一段的
@@ -1692,8 +1743,8 @@ async function flushTrack(reason, silent) {
     return false;
   }
   const gpx = buildGpx(snap);
-  const cls = keyVal() || '无小班';
-  const name = `轨迹_${sanitizeSeg(cls)}_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '')}.gpx`;
+  const owner = cls || trackCls || keyVal() || '无小班';
+  const name = `轨迹_${sanitizeSeg(owner)}_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '')}.gpx`;
   const fd = new FormData();
   fd.append('file', new Blob([gpx], { type: 'application/gpx+xml' }), name);
   try {
@@ -1711,11 +1762,65 @@ async function flushTrack(reason, silent) {
   return true;
 }
 
-/* 互斥钩子（v0.20 口径的延续）：切小班 / 返回列表 / 开始录像 → 结算上一段并**续采**（不再停止采集）。
-   页面的生死与采集无关：原生侧只要权限在就一直在录，这里只负责把段切干净。 */
+/* 互斥钩子（v0.33 口径）：切小班 / 返回列表 / 开始录像 → **结算原小班轨迹并停止记录**。
+   （v0.32 是"结算并续采"；用户要求记录按小班归属——换小班即结束，新小班要重新点开始。）
+   记录中的归属用 trackCls（开始时快照），不用切换后的当前小班。 */
 async function flushTrackIfAny(reason) {
-  if (!trackAttached || trackPts.length < 2) return false;
-  return await flushTrack(reason, false);
+  if (!trackOn) return false;
+  if (trackPts.length < 2) {                    // 没走出有效轨迹：静默停止，不产生垃圾文件
+    await setNativeTracking(false);
+    return false;
+  }
+  const ok = await flushTrack(reason, false, trackCls || undefined);
+  await setNativeTracking(false);               // 无论传没传成，切换语境下都停（点保留可重试）
+  return ok;
+}
+
+/* ── 轨迹图（v0.33）：纯 SVG 示意路径，WGS-84 卫星点直绘，无底图、离线可用。
+   后续按小班导出 SHP 的数据基础与这里一致：轨迹文件名已含小班。 ── */
+function haversineM(a, b) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+  const s = Math.pow(Math.sin(dLat / 2), 2)
+    + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.pow(Math.sin(dLng / 2), 2);
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+function showTrackMap() {
+  const box = $('#trackMapBox');
+  if (!box) return;
+  if (!trackPts.length) { toast('还没有轨迹点：先点「▶ 记录轨迹」走一段', true); return; }
+  const pts = trackPts;
+  let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+  pts.forEach((p) => {
+    minLat = Math.min(minLat, p.lat); maxLat = Math.max(maxLat, p.lat);
+    minLng = Math.min(minLng, p.lng); maxLng = Math.max(maxLng, p.lng);
+  });
+  const W = 520, H = 420, P = 30;
+  const sx = (v) => P + (v - minLng) / Math.max(1e-9, maxLng - minLng) * (W - 2 * P);
+  const sy = (v) => H - P - (v - minLat) / Math.max(1e-9, maxLat - minLat) * (H - 2 * P);
+  const poly = pts.map((p) => sx(p.lng).toFixed(1) + ',' + sy(p.lat).toFixed(1)).join(' ');
+  let dist = 0;
+  for (let i = 1; i < pts.length; i++) dist += haversineM(pts[i - 1], pts[i]);
+  box.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;background:#f4f7f4;'
+    + 'border:1px solid #dde5dd;border-radius:8px;">'
+    + `<polyline points="${poly}" fill="none" stroke="#2f5d3a" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`
+    + `<circle cx="${sx(pts[0].lng).toFixed(1)}" cy="${sy(pts[0].lat).toFixed(1)}" r="6" fill="#1a7f37"/>`
+    + `<circle cx="${sx(pts[pts.length - 1].lng).toFixed(1)}" cy="${sy(pts[pts.length - 1].lat).toFixed(1)}" r="6" fill="#c0392b"/>`
+    + '</svg>'
+    + `<p class="muted">示意路径（WGS-84 卫星轨迹，绿=起点 红=终点，无底图）：`
+    + `${escapeHtml(String(trackCls || keyVal() || ''))} · ${pts.length} 点 · 约 ${dist.toFixed(0)} 米`
+    + ` · ${escapeHtml(String(pts[0].t).replace('T', ' ').slice(0, 19))} 起</p>`;
+  const mask = $('#trackMapModal');
+  if (mask) mask.classList.remove('hidden');
+}
+
+if ($('#btnTrackMap')) {
+  $('#btnTrackMap').addEventListener('click', showTrackMap);
+  $('#trackMapClose').addEventListener('click', () => $('#trackMapModal').classList.add('hidden'));
+  $('#trackMapModal').addEventListener('click', (e) => {
+    if (e.target === $('#trackMapModal')) $('#trackMapModal').classList.add('hidden');
+  });
 }
 
 function buildGpx(pts) {

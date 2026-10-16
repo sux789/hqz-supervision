@@ -84,6 +84,7 @@
         <button id="btnPhoto" class="btn primary hidden">📷 拍照</button>
         <button id="btnVideo" class="btn primary hidden">🎬 视频</button>
         <button id="btnTrack" class="btn primary hidden">◎ 轨迹</button>
+        <button id="btnTrackMap" class="btn ghost hidden">🗺 轨迹图</button>
         <button id="btnAlbum" class="btn ghost hidden">拍摄记录</button>
       </div>
       <div id="formEl"></div>
@@ -149,13 +150,24 @@
 
   <div id="toast" class="toast hidden"></div>
 
+  <!-- v0.33：轨迹图弹层 —— 纯 SVG 示意路径（WGS-84 卫星轨迹），无底图、离线可用 -->
+  <div id="trackMapModal" class="modal-mask hidden">
+    <div class="modal-box">
+      <h3>轨迹图</h3>
+      <div id="trackMapBox"></div>
+      <div class="modal-actions">
+        <button id="trackMapClose" class="btn">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <script>window.SUP_BASE = {{ request.script_root | tojson }};</script>
   <script src="{{ url_for('static', filename='vendor/jsuites.min.js') }}"></script>
   <script src="{{ url_for('static', filename='vendor/jspreadsheet.min.js') }}"></script>
   <script src="{{ url_for('static', filename='vendor/piexif.js') }}"></script>
   <script src="{{ url_for('static', filename='photo_exif.js') }}"></script>
   <!-- ?v= 版本号熔断：静态 JS 更新后 WebView/浏览器强制拉新（曾致 APK 端验收联动代码不生效） -->
-  <script src="{{ url_for('static', filename='app.js') }}?v=0.32.7"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=0.33"></script>
   <script src="{{ url_for('static', filename='flow.js') }}?v=0.32.5"></script>
 </body>
 </html>

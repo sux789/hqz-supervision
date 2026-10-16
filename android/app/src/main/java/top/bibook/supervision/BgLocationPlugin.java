@@ -45,13 +45,16 @@ import java.util.concurrent.Executors;
  * 宁可 GPS 无 fix 期间轨迹空白，不记偏点（2026-08-25 用户决策，v0.32 全链路闭环：
  * 网页侧 watchPosition 回退已删，本插件是唯一定位来源）。
  *
- * v0.32「授权即持续跟踪」：采集的生死只取决于**定位权限**，与页面/按钮无关——
- *   · load()（冷启动）/ handleOnResume()（每次回前台）/ 授权回调 三处 ensureTrackingIfPermitted() 自启，幂等
- *   · 息屏/切后台/页面重载都不停（插件随 Bridge 存活，页面重载不重建插件）
+ * v0.33「点击开始，按小班归属」（v0.32 是授权即持续采，2026-10-16 用户反转）：
+ *   · 采集开关 = **原生侧持久化**（SharedPreferences track_on，默认关）——网页按钮只是遥控器，
+ *     页面重载/切后台/息屏都**不丢开关状态**（C21 精神保留：开关不随页面生死）；
+ *     点「开始」记录到当时的小班（网页负责归属快照），点「结束」结算上传。
+ *   · 权限仍是前置条件：没权限时 setTracking(on) 直接拒绝；权限被撤（resume 检测）停采、缓冲保留。
+ *   · 采样不变：GPS_PROVIDER 1s/2m（纯 GNSS，无网络源）。
  *   · 点先进内存缓冲 + files/track_buffer.csv（进程被杀也不丢），网页 attach 后按水位线消费
- *   · 权限被撤（resume 检测到）→ 停采，缓冲文件保留
- * 网页侧契约（static/app.js 轨迹段）：startWatcher=附着（幂等）/ drain=取回未消费点 /
- * status=状态 / clearBuffer=上传成功后清缓冲 / gpsState 事件=GPS 开关变化。
+ * 网页侧契约（static/app.js 轨迹段）：startWatcher=附着（幂等，仅观察不触发开采）/
+ * setTracking=开关（持久化）/ drain=取回未消费点 / status=状态（含 trackOn）/
+ * clearBuffer=上传成功后清缓冲 / gpsState 事件=GPS 开关变化。
  */
 @CapacitorPlugin(
         name = "BgLocation",
@@ -64,6 +67,8 @@ import java.util.concurrent.Executors;
 )
 public class BgLocationPlugin extends Plugin {
     private static final String BUFFER_FILE = "track_buffer.csv";
+    private static final String PREFS = "track";
+    private static final String KEY_ON = "track_on";   // v0.33：手动开关，持久化（页面重载不丢）
     private static final int MEM_CAP = 50000;        // 内存缓冲上限（约 14h @1Hz，超出丢最旧）
     private static final int FILE_CAP = 100000;      // 文件行数上限，超出压缩回内存尾 MEM_CAP 条
     private static final long NOTIFY_INTERVAL_MS = 10000;
@@ -85,7 +90,7 @@ public class BgLocationPlugin extends Plugin {
     public void load() {
         if (io == null || io.isShutdown()) io = Executors.newSingleThreadExecutor();
         loadBufferFileSync();
-        ensureTrackingIfPermitted();      // 冷启动：已授权就直接开采（无需页面/按钮）
+        if (trackOnPref()) ensureTrackingIfPermitted();   // 冷启动：开关开着且已授权才恢复采集
     }
 
     @Override
@@ -94,7 +99,7 @@ public class BgLocationPlugin extends Plugin {
             if (tracking) stopGps();      // 权限被撤 → 停采（缓冲文件保留，数据不丢）
             return;
         }
-        ensureTrackingIfPermitted();      // 每次回前台自愈：授权后/被停后/进程重启
+        if (trackOnPref()) ensureTrackingIfPermitted();   // 回前台自愈：开关开着才恢复
     }
 
     @Override
@@ -130,12 +135,40 @@ public class BgLocationPlugin extends Plugin {
         call.resolve(ok);
     }
 
-    /** 彻底停止采集（权限撤销/退出场景）。缓冲文件保留，数据可续传。 */
+    /** 彻底停止采集（权限撤销/退出场景）。开关一并关闭；缓冲文件保留，数据可续传。 */
     @PluginMethod
     public void stopWatcher(PluginCall call) {
         releaseWatcher();
+        setTrackOnPref(false);
         stopGps();
         call.resolve();
+    }
+
+    /** v0.33：手动开关（持久化）。on=true 需已授权 + GPS 开；off 停采但缓冲保留。 */
+    @PluginMethod
+    public void setTracking(PluginCall call) {
+        boolean on = Boolean.TRUE.equals(call.getBoolean("on", Boolean.FALSE));
+        setTrackOnPref(on);
+        if (!on) {
+            stopGps();
+            JSObject off = new JSObject();
+            off.put("trackOn", false);
+            call.resolve(off);
+            return;
+        }
+        if (!hasLocationPermission()) {
+            call.reject("定位权限未授予", "NOT_AUTHORIZED");
+            return;
+        }
+        if (!isGpsEnabled()) {
+            call.reject("GPS 已关闭，请先打开系统定位", "GPS_OFF");
+            return;
+        }
+        startGps();
+        JSObject ok = new JSObject();
+        ok.put("trackOn", true);
+        ok.put("tracking", tracking);
+        call.resolve(ok);
     }
 
     /** 取回原生缓冲里的点并清空缓冲（网页 attach 时调一次；按 GPS 时间戳由网页去重） */
@@ -167,11 +200,12 @@ public class BgLocationPlugin extends Plugin {
         call.resolve();
     }
 
-    /** 状态：tracking/缓冲点数/provider/权限/GPS 开关 */
+    /** 状态：tracking/缓冲点数/provider/权限/GPS 开关/持久化开关 */
     @PluginMethod
     public void status(PluginCall call) {
         JSObject ret = new JSObject();
         ret.put("tracking", tracking);
+        ret.put("trackOn", trackOnPref());
         synchronized (lock) { ret.put("points", buffer.size()); }
         ret.put("provider", "gps");
         ret.put("permission", hasLocationPermission() ? "granted" : "denied");
@@ -201,10 +235,24 @@ public class BgLocationPlugin extends Plugin {
         }
     }
 
-    /** 幂等自启：已授权且没在采 → 注册 GPS 监听 + 拉起前台服务 */
+    private boolean trackOnPref() {
+        try {
+            return getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ON, false);
+        } catch (Exception e) { return false; }
+    }
+
+    private void setTrackOnPref(boolean v) {
+        try {
+            getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit().putBoolean(KEY_ON, v).apply();
+        } catch (Exception ignore) {}
+    }
+
+    /** 幂等自启：**开关开着**且已授权且没在采 → 注册 GPS 监听 + 拉起前台服务 */
     private void ensureTrackingIfPermitted() {
         if (tracking) return;
         if (!hasLocationPermission()) return;
+        if (!trackOnPref()) return;       // v0.33：手动开关关着就不采（页面附着只观察）
         startGps();
     }
 
