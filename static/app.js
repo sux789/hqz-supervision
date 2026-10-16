@@ -1570,6 +1570,15 @@ function bgLocationPlugin() {
       ? window.Capacitor.Plugins.BgLocation : null;
   } catch (e) { return null; }
 }
+/* v0.32.7：原生插件调用必须**限时**——老 APK 上 status() 等方法可能返回永不落定的
+   Promise（bridge 无应答），await 会把点击 handler 整个挂死，症状是"点了没任何提示"
+   （线上实测 2026-10-16）。竞速超时：到点返回 null，按"插件不可用/旧版本"处理。 */
+function nativeTimeout(p, ms) {
+  return Promise.race([
+    Promise.resolve(p).catch(() => null),
+    new Promise((res) => setTimeout(() => res(null), ms)),
+  ]);
+}
 function trackWatermark() {
   try { return parseInt(localStorage.getItem(TRACK_UPTO_KEY) || '0', 10) || 0; } catch (e) { return 0; }
 }
@@ -1612,13 +1621,13 @@ async function attachTrack() {
   if (!plugin) { trackAttached = false; refreshTrackBtn(); return; }
   trackBgPlugin = plugin;
   let st = null;
-  try { st = await plugin.status(); } catch (e) { st = null; }   // 旧版 APK 无此方法 → 不可用
+  if (typeof plugin.status === 'function') st = await nativeTimeout(plugin.status(), 2000);
   if (!st || st.permission !== 'granted') {
     trackAttached = false; refreshTrackBtn(); return;           // 不弹窗：申请归 ensurePermissionsUpfront（C18）
   }
   if (st.gpsEnabled === false) toast('GPS 已关闭，轨迹暂不更新，请先在系统设置打开定位', true);
   try {
-    const d = await plugin.drain();                              // ① 回填：原生缓冲里还没进过会话的点
+    const d = await nativeTimeout(plugin.drain(), 2000);          // ① 回填：原生缓冲里还没进过会话的点
     (d && d.points || []).forEach((p) => trackPush(p.latitude, p.longitude, p.altitude, p.time));
   } catch (e) {}
   if (!trackAttached) {
@@ -1651,14 +1660,14 @@ $('#btnTrack').addEventListener('click', async () => {
   if (!isNativeApp()) { toast('轨迹持续采集仅支持监理验收 App（仅 GPS，授权即采）', true); return; }
   const plugin = bgLocationPlugin();
   if (!plugin) { toast('轨迹持续采集需要升级 App（v0.10+）', true); return; }
-  let st = null;
-  try { st = await plugin.status(); } catch (e) { st = null; }
+  if (typeof plugin.status !== 'function') { toast('当前 App 版本较旧，请升级到 v0.10 及以上后使用持续轨迹', true); return; }
+  let st = await nativeTimeout(plugin.status(), 2000);   // 老桥无应答 → null → 按"版本较旧"处理
   if (!st) { toast('当前 App 版本较旧，请升级到 v0.10 及以上后使用持续轨迹', true); return; }
   if (st.permission !== 'granted') {
     const ap = (window.Capacitor && window.Capacitor.Plugins)
       ? window.Capacitor.Plugins.AppPermissions : null;
     if (ap && typeof ap.request === 'function') {
-      try { await ap.request({ type: 'location' }); } catch (e) {}
+      await nativeTimeout(ap.request({ type: 'location' }), 10000);   // 系统弹窗最长等 10 秒，卡死也不挂 handler
       await attachTrack();                       // 授权回调自启是幂等的，这里再附着一次立即生效
     }
     if (!trackAttached) toast('定位权限未授权，轨迹未开始：请在系统设置里给「监理验收」定位权限（选「始终允许」）', true);
