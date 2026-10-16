@@ -356,6 +356,10 @@ function jumpRow(idx) {
   syncSelectorToRow(idx);
   renderForm();
   renderShotList();
+  /* v0.32.6：搜索栏原地切换小班必须**同时刷新验收流程面板**——
+     v0.31 只把它接进 openDetail()，这里漏了，导致切小班后面板还显示
+     上一个小班的已填/已提交数据（线上实测 2026-10-16）。 */
+  openFlowView(cur.id, idx);
   rememberLast();
   $('#pageName').textContent = `${keyVal() || '详情'} · ${cur.name}`;
 }
@@ -1637,10 +1641,33 @@ async function attachTrack() {
   refreshTrackBtn();
 }
 
-$('#btnTrack').addEventListener('click', () => {
+$('#btnTrack').addEventListener('click', async () => {
+  /* v0.32.6：不再一律说"未授权"。三种情况分开：
+     ① 已附着 → 结算上传当前段；② 非 App → 提示仅支持 App；
+     ③ App 但 status() 不可用 → 老版本 APK，提示升级（v0.32.1 的文案把它误说成"未授权"）；
+     ④ 权限未给 → 用户主动点轨迹就是明确意图，**当场再申请一次**（C18 手动入口），
+        拿到权限直接附着开采；仍拒绝才引导去系统设置。 */
   if (trackAttached) { flushTrack('', false); return; }
-  if (isNativeApp()) toast('定位权限未授权，轨迹未开始：请在系统设置里给「监理验收」定位权限', true);
-  else toast('轨迹持续采集仅支持监理验收 App（仅 GPS，授权即采）', true);
+  if (!isNativeApp()) { toast('轨迹持续采集仅支持监理验收 App（仅 GPS，授权即采）', true); return; }
+  const plugin = bgLocationPlugin();
+  if (!plugin) { toast('轨迹持续采集需要升级 App（v0.10+）', true); return; }
+  let st = null;
+  try { st = await plugin.status(); } catch (e) { st = null; }
+  if (!st) { toast('当前 App 版本较旧，请升级到 v0.10 及以上后使用持续轨迹', true); return; }
+  if (st.permission !== 'granted') {
+    const ap = (window.Capacitor && window.Capacitor.Plugins)
+      ? window.Capacitor.Plugins.AppPermissions : null;
+    if (ap && typeof ap.request === 'function') {
+      try { await ap.request({ type: 'location' }); } catch (e) {}
+      await attachTrack();                       // 授权回调自启是幂等的，这里再附着一次立即生效
+    }
+    if (!trackAttached) toast('定位权限未授权，轨迹未开始：请在系统设置里给「监理验收」定位权限（选「始终允许」）', true);
+    else toast('轨迹持续采集中');
+    return;
+  }
+  if (st.gpsEnabled === false) { toast('GPS 已关闭，请先在系统设置打开定位', true); return; }
+  await attachTrack();
+  toast(trackAttached ? '轨迹持续采集中' : '轨迹启动失败，请回前台重试', !trackAttached);
 });
 
 /* 结算上传当前段（**不停止采集**——采集是后台持续的，这里只切段；口径延续 hqz-survey F2）。
