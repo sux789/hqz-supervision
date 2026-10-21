@@ -20,6 +20,10 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .btn:hover { background: #f0f2f4; }
 .btn.primary { background: #2f5d3a; border-color: #2f5d3a; color: #fff; }
 .btn.primary:hover { background: #27502f; }
+/* v0.36：禁用态必须一眼看出来 —— 现场会反复点"保存这一条"以为没反应（截图自测发现
+   未解锁的环节按钮仍是实心绿，看着完全能点） */
+.btn:disabled, .btn[disabled] { opacity: .45; cursor: not-allowed; }
+.btn.primary:disabled, .btn.primary[disabled] { background: #9db2a4; border-color: #9db2a4; color: #fff; }
 .btn.ghost { background: transparent; border-color: rgba(255,255,255,.4); color: inherit; }
 .btn.danger { color: #c0392b; border-color: #e2b6b0; }
 
@@ -341,3 +345,61 @@ textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size
 .fs-common { margin-top: 14px; padding-top: 12px; border-top: 1px solid #eef1f3;
              background: #fafbfc; border-radius: 6px; padding-left: 10px; padding-right: 10px; }
 .flow-submit { position: sticky; bottom: 0; z-index: 5; box-shadow: 0 -1px 3px rgba(0,0,0,.05); }
+
+/* ── v0.35 业务员填写版流程界面（doc/027）───────────────────────────
+   竖版纵向排列：现场一只手拿手机，横向滑动会看不到前序字段（纪要要求）。
+   基本信息条 / 是否通过双按钮 / 多次记录列表，三块都是业务员文档里勾出来的。 */
+.flow-basic { margin-top: 12px; background: #f7faf8; border: 1px solid #e2ece6;
+              border-radius: 8px; padding: 10px 12px; }
+.flow-basic .fb-h { font-size: 12px; font-weight: 600; color: #2f5d3a; margin-bottom: 8px; }
+.flow-basic .fb-h span { font-weight: 400; color: #8a939e; margin-left: 6px; }
+.flow-basic .fb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
+.flow-basic .fb-cell { display: flex; justify-content: space-between; gap: 8px;
+                       font-size: 12px; line-height: 1.6; border-bottom: 1px dotted #e2ece6; }
+.flow-basic .fb-cell .k { color: #8a939e; flex: 0 0 auto; }
+.flow-basic .fb-cell .v { color: #26303a; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+
+.flow-pass { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px; }
+.flow-pass .ps { padding: 14px 8px; font-size: 15px; font-weight: 600; border-radius: 8px;
+                 border: 1px solid #d5d9d4; background: #fff; color: #5b6570; cursor: pointer; }
+.flow-pass .ps.ok.cur { background: #e2f2e8; border-color: #2f5d3a; color: #1f4a2c; }
+.flow-pass .ps.bad.cur { background: #fdeaea; border-color: #c62828; color: #a01f1f; }
+.flow-pass .ps:disabled { opacity: .55; }
+
+.flow-multi { margin-top: 14px; border: 1px dashed #cfd8d2; border-radius: 8px; padding: 10px 12px;
+              background: #fcfdfc; }
+.flow-multi .fm-head { font-size: 12px; font-weight: 600; color: #2f5d3a; }
+.flow-multi .fm-head span { font-weight: 400; color: #8a939e; margin-left: 8px; }
+.flow-multi .fm-head .fm-editing { color: #a0681a; margin-left: 8px; font-weight: 600; }
+.flow-multi .fm-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.flow-multi .fm-item { display: flex; align-items: center; gap: 8px; text-align: left;
+                       padding: 8px 10px; border: 1px solid #e3e7eb; border-radius: 6px;
+                       background: #fff; font-size: 12px; color: #3c4650; cursor: pointer; }
+.flow-multi .fm-item.cur { border-color: #2f5d3a; background: #f3f8f5; }
+.flow-multi .fm-item .n { color: #8a939e; flex: 0 0 28px; }
+.flow-multi .fm-item .d { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-multi .fm-item .r { flex: 0 0 auto; font-weight: 600; color: #2f5d3a; }
+.flow-multi .fm-new { margin-top: 8px; width: 100%; padding: 9px; font-size: 13px;
+                      border: 1px dashed #2f5d3a; background: #fff; color: #2f5d3a;
+                      border-radius: 6px; cursor: pointer; }
+.flow-multi .fm-new:disabled { opacity: .5; }
+/* v0.36：入口 tab（验收 / 巡视）——同一个小班两条流程都能走，由人挑 */
+.flow-entries { display: flex; gap: 8px; margin-top: 10px; }
+.flow-entries .fe { flex: 1 1 0; padding: 9px 6px; font-size: 14px; font-weight: 600;
+                    border: 1px solid #cfd8d2; background: #fff; color: #46525c;
+                    border-radius: 8px; cursor: pointer; }
+.flow-entries .fe .n { display: block; font-size: 11px; font-weight: 400; color: #8a939e;
+                       margin-top: 2px; }
+.flow-entries .fe.cur { background: #2f5d3a; border-color: #2f5d3a; color: #fff; }
+.flow-entries .fe.cur .n { color: #cfe3d6; }
+/* v0.36：基本信息列多时折叠（原生 details，不依赖 JS） */
+.flow-basic .fb-more { margin-top: 2px; }
+.flow-basic .fb-more summary { font-size: 12px; color: #2f5d3a; cursor: pointer;
+                               outline: none; padding: 2px 0; }
+.flow-basic .fb-more[open] summary { margin-bottom: 8px; }
+/* v0.36：校验规则即时提示（不合规就标红，不等人点提交） */
+.fs-item .fs-bad { margin-top: 4px; font-size: 12px; color: #c62828; }
+.fs-item.bad input, .fs-item.bad select, .fs-item.bad textarea { border-color: #c62828; }
+@media (max-width: 420px) {
+  .flow-basic .fb-grid { grid-template-columns: 1fr; }
+}

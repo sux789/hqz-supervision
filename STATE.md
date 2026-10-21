@@ -1,26 +1,37 @@
 # STATE — 当前状态快照
 
-> 每次迭代后更新，≤25 行。跨会话恢复先读本文件，不翻 doc/ 归档。v0.29 及以前的历史行已迁至 `doc/STATE历史归档.md`。
+> 每次迭代后更新，正文 ≤25 行。跨会话恢复先跑 `bash tools/ai.sh brief`（4KB 一页），不翻 doc/ 归档。
+> v0.32.5 及以前的历史行已迁至 `doc/STATE历史归档.md`。
 
-- **版本**：v0.33 ｜ **更新**：2026-10-16
-- **v0.33 变化（轨迹按小班手动记录，doc/022，C21 反转）**：用户反转 v0.32「授权即持续采集」——自动采+间隔感知不合理。①开关持久化在原生（SharedPreferences track_on，默认关），load/resume 只在开关开时恢复采集；新增 setTracking(on)（on 需已授权+GPS 开，否则 reject）；status() 带 trackOn。②网页：▶ 记录轨迹（归属快照 trackCls=当前小班，localStorage 同步）/ ⏹ 结束轨迹（上传 GPX 文件名 轨迹_{归属小班}_{ts}.gpx，成功才停采清点，失败点保留可重试）；切小班/返回/录像=结算原小班并**停止**（不再续采）；「🗺 轨迹图」= 纯 SVG 示意路径（绿起点/红终点+点数/haversine 距离，无底图离线可用）。③采样不变 GPS 1s/2m（"15 秒一个点"实为静止 2m 过滤+通知 10s 节流+林下 fix 慢，doc/022 §二）。④后续按小班导出 SHP：数据基础=文件名含小班。⑤v0.10 补发版（16:29 发现 tag 从没打过、现场全是 v0.9.0——"点轨迹没提示/未授权"的底层原因）；发版铁律：改 versionCode+tag+push tag 后必须 `gh release view` 复核直链。**需出包 versionCode 11 / v0.11**；旧 APK 点轨迹提示升级。app.js?v=→0.33；回归 237 全绿
-- **v0.32.3~0.32.5（网页三连修，2026-10-14~15）**：③v0.32.3 修「带过来的数据看着填了、提交判没填」——数值×3 标准值改「实测·长/宽/深」占位、下拉未选改「请选择」，与 F.val 所见即所填（C22；方法论：线上真实数据离线重放 gate() 二分）②v0.32.4 验收步骤条：flex-wrap 换行、三态配色+图例、**未解锁环节可点开只读预览**；style.css 两个模板补 ?v=；改模板后先本地 test_client 渲染再部署 ①v0.32.5 提交留痕审计：flow_records 加 geo/ip 列（纯加列迁移），提交瞬间 best-effort 一次性定位（3s 超时为空不阻塞）+ 服务端取 X-Forwarded-For 第一跳 IP，落环节级行 + app.log [flow] 条目；e2e H12b/c
-- **v0.32.1（doc/021，C22）**：老内核（Android 9 / WebView Chrome 73）`??`×18 致 app.js 整段 SyntaxError，全改 `x != null ? x : 默认`；三层日志（前端错误→js.log、未捕获异常→app.log、验收提交各结局→[flow] 条目）+ 后台「运行日志」卡片。排查顺序：后台运行日志 → js.log 找 SyntaxError/资源失败 → app.log 找 [flow]/[EXC]
-- **v0.32（doc/020，C21，B21）**：授权即持续 GNSS 跟踪——采集生死权在原生 BgLocationPlugin（load/resume/授权回调三处幂等自启，仅 GPS_PROVIDER），缓冲先落 `files/track_buffer.csv` 再谈内存；网页只是观察者+上传者（attachTrack 按 GPS 时间戳去重+localStorage 水位线，**上传成功才 clearBuffer**）；versionCode 10。明确不做：开机自启/打卡水印走 Web 定位/手动停止按钮。**待真机验证 7 条见 doc/020 §二**
-- **v0.31（doc/019，B18/B19/B20）**：验收流程界面**已上线**（wb=6 就地更新）；`flow_parser.py` + `static/flow.js` + `flow_records` 表；转序闸门 409 / 必填逐项 400 / ≥标准自动判。上线踩的 5 个真 bug（api() 必须 JSON.stringify、datetime.time 还原、init_db 列名化、闸门先于必填、read_only 工作簿流只读一次）详见 doc/019
-- **v0.30（doc/017，C20，B17）**：piexifjs 保留真 EXIF + 水印坐标/时间优先取原片 EXIF；回写必处理 Orientation=1/删尺寸标签/删 MakerNote 三类标签，任何失败静默退回原行为
-- **v0.24~0.29 摘要**：下架三层（C13）、保存纪律（C14）、更新 Excel 就地合并+回滚（C15）、事故复盘 C19、EXIF/C20、云同步面板恢复+工作簿级目录占位符 `{{工作簿id}}_{{工作簿名}}/{{小班号}}`——详见 CONSTRAINTS.md 与 doc/011~016、`doc/STATE历史归档.md`。**⚠️ 云同步线上事实：`sync_enabled=1`，排查"照片没同步"第一步永远先看它**
-- **能跑**：https://forest.bibook.top/supervision 已上线 v0.32.5；本地 `python main.py` → http://127.0.0.1:8720（雷华雄/lhx123）
-- **回归**：`bash tests/run_all.sh` = 单元 108 + e2e 109 + EXIF 20 = **237 项全绿**（2026-10-15 复核）
-- **活跃约束**：C01–C22（详见 CONSTRAINTS.md）
-- **最近迭代文档**：doc/021-v0.32.1语法兼容与错误日志、doc/020-v0.32授权即持续GNSS跟踪、doc/019-验收流程界面设计、doc/018-功能总览（开发交接）
-- **下一步**：1. [ ] v0.32 出包后真机验证 7 条（doc/020 §二）2. [ ] APP 备案（包名 top.bibook.supervision + SHA256，见 android/keystore-info.txt）3. [ ] 开机自启 BOOT_COMPLETED（v0.32 列为后续项）
-- **v0.31 未决**：「功能」缺「打卡」，📍 按钮不受「功能」开关约束（待管理层定）；PDF 上传通道未实现（upload 类型只留痕清单）
-- **历史已知问题**：七牛回读域名未开放（pending 缓冲为主回读源）；百度 mkdir 偶发时间戳副本目录（无害）；详见归档
+- **版本**：v0.36（业务专家流程配置：入口/两级显隐/校验规则）｜ **业务**：v0.36 ｜ **更新**：2026-10-21
+- **v0.36 变化（业务专家版，doc/028）**：①改名「业务员」→「业务专家」，文件 `流程配置-业务专家填写版.xlsx`（旧版已删）；②**入口维度**：流程唯一键 `流程-名称·入口`，`GET/POST /flow` 加 `entry` 参数，GET 回传 `entries`，界面出**入口 tab**（验收/巡视）——验收和巡视同挂小班档案、同条件时 `match_flow` 只回一条，不加入口维度巡视**永久进不去**（本轮发现的真问题）；③**两级显隐**：②「显示的基本信息」白名单（留空=data 全部列）+「不显示的基本信息」黑名单优先 + ③「不显示选项」剪下拉；`expert` 标记必须随环节下发，否则老 12 列流程会突然冒出全部列；④**校验规则 DSL**（③校验规则列）：`整数/≥0/≤100/10-100/≤500字/日期≥今天/正则:…`，`；`分隔，配置期 `rule_ok` 认不出即报错，服务端 `check_rule` 权威、前端 `ruleBad` 只做即时提示；⑤**前置条件带结论**：`整地=通过；回塘及底肥=合格` → `prev_result`，正向词按 PASS_RESULTS 放宽判；⑥**唯一性校验**：不校验/同小班同日唯一/同批次号唯一；⑦修两个真 bug——唯一性原写死读 `记录日期`/`批次号`，而专家起的名字是「巡护日期」「进场批次号」，已改为取**环节内第一个日期/批次控件**；⑧规模：9 流程（验4/巡4/材1）/ 25 环节 / 73 核验项
+- **v0.35 摘要**：业务员可填流程配置（doc/027）——5 张窄表 → `flow_config.py` → `workbooks.flows`；四维（作用对象×可填次数×关联小班×前置环节）；`rec_no` 多次记录；转序反转（必须合格）
+- **v0.34 摘要**：协作基建（doc/024）——七门闸门 + brief/explain/triage/map + 任务卡并行 + 三钩子；入口 30KB/36KB
+- **v0.33 摘要**：轨迹按小班手动记录（doc/022，C21 反转）——原生持久化开关 track_on（默认关）、▶记录成功才停采清点、切小班结算、纯 SVG 轨迹图
+- **能跑**：https://forest.bibook.top/supervision 已上线 v0.32.5（业务未变）；本地 `bash tools/dev.sh start` → http://127.0.0.1:8720（雷华雄/lhx123）
+- **回归**：`bash tests/run_all.sh` = 单元 108 + 流程配置 77 + e2e 109 + 流程 e2e 25 + EXIF 20 = **339 项全绿**
+- **体检**：`bash tools/run.sh` 七门（模板 FATAL 5 为已知 WARN，非代码回归）；`--fast` <1s
+- **预算**：入口 6 文件 30KB/36KB；brief 3.7KB/4KB
+- **活跃约束**：C01–C26（详见 CONSTRAINTS.md）
+- **最近迭代文档**：doc/028-v0.36_业务专家流程配置（入口+显隐+校验）（本次）、doc/027-v0.35_业务员可填流程配置、doc/019-验收流程界面设计
+- **下一步**：1. [ ] 用户确认后 `tools/flow_build.py --apply <wid>` 换新配置（先 `--check` + `--dry-run`，自动备份 db） 2. [ ] 材料入口（项目级）App 界面——后端 `?entry=材料` 已可用，界面未做 3. [ ] 巡视记录统计视图 4. [ ] PDF 上传通道 5. [ ] 业务专家按真实项目填一版交回，跑 `--check` 迭代
+- **未决**：材料入口只有数据模型 + 后端参数、App 无入口页；PDF 上传通道未实现（upload 只留痕）；「功能」缺「打卡」，📍 按钮不受开关约束；七牛回读域名未开放
 
 ## 资产活跃度（每 5 版评审时更新）
 
-| 资产 | 状态 | 处置 |
-|---|---|---|
-| tests/run_all.sh | 每版必跑（提交闸，AGENTS.md） | 保留 |
-| compare.py / check_invariants.py / make_baseline.sh | 数据管线模板，本项目未启用（AGENTS.md 已标注） | 观察 |
+| 资产 | 上次发挥作用 | 作用 | 处置 |
+|---|---|---|---|
+| `tools/run.sh` + `checks/gates.py` | v0.34 | 七门一次跑完，拦住索引撞号/占位符/老内核语法 | 保留 |
+| `tools/checks/brief.py` | v0.34 | 会话上下文 30KB → 3.9KB | 保留 |
+| `tools/checks/tasks.py` | v0.34 | 并行范围租约，重叠当场拒绝 | 保留 |
+| `tools/checks/explain.py` | v0.34 | diff → 风险/影响面/待拍板 | 保留 |
+| `tools/checks/triage.py` | v0.34 | FAIL → 事实+候选原因+顺序 | 保留 |
+| `tools/hooks/*` | v0.34 | 提交/推送强制纪律 | 保留 |
+| `tools/checks/map.py` | v0.34 | 符号→行号，任务卡写范围用 | 观察（是否真被用） |
+| `tools/{dev,log,snapshot,align}.sh` | v0.32.x | 起停/日志/快照/看板 | 保留 |
+| `tools/check_template.py` | 每版 | 模板体检（上传前） | 保留 |
+| `tests/run_all.sh` | 每版 | 292 项回归，唯一业务事实来源 | 保留 |
+| `flow_config.py` + `tools/flow_build.py` | v0.35 | 业务员文档→配置→生效，不用改代码 | 保留 |
+| `tools/legacy/*` | — | 模板骨架，从未接线 | 观察（5 版未用则删） |
+
+> 连续 5 版「未发挥作用」→ 修复 / 合并 / 删除（doc/024 §8.3）。索引与代码脱节由门 3 自动报错。

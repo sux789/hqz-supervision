@@ -26,3 +26,11 @@
 | B19 | 流程匹配与体检（B19） | `flow_parser.py::match_flow/flow_warnings/std_lookup` | 注册表 + 流程定义 + data 行 | 命中的流程（含标准值）/ 配置坑清单 | B18 |
 | B20 | 流程填报界面与闸门 | `static/flow.js` + `templates/index.html#flowPanel` + `main.py::api_flow/api_flow_save` | 环节定义 + data 行 | 控件实例 + 提交落库 `flow_records` | B18、B19、B12（离场冲刷） |
 | B21 | 轨迹持续采集（v0.32，授权即采） | `BgLocationPlugin.java`（引擎+CSV 缓冲）+ `BgLocationService.java`（location 型前台服务壳）+ `static/app.js::attachTrack/flushTrack/flushTrackIfAny` | 定位权限 + GPS fix（仅 GPS_PROVIDER） | 原生缓冲点（`files/track_buffer.csv`）/ 实时点流 / GPX 上传 `/api/track` | — |
+
+| B22 | 闸门体检（唯一验证入口） | `tools/checks/gates.py` + `tools/run.sh` + `tools/hooks/*` | 仓库工作区 | 七门结论 → `doc/health/last_gates.json`（id+status） | B9 |
+| B23 | 开场简报（上下文压缩） | `tools/checks/brief.py` | STATE + last_gates + 约束表 + 任务卡 | `doc/brief.md`（≤4KB） | B22、B26 |
+| B24 | 改动评审单 | `tools/checks/explain.py` | `git status/diff` + BLOCKS + 文件→约束规则 | `doc/review.md`（风险/影响面/必跑/待拍板） | B22 |
+| B25 | 失败分诊 | `tools/checks/triage.py` | `last_gates.json` | `doc/health/TRIAGE.md`（事实+候选原因+顺序） | B22 |
+| B26 | 并行任务卡 | `tools/checks/tasks.py` | `--scope 文件:行` | `.agent/tasks/*.json` + 范围重叠判定 | — |
+| B27 | 符号地图 | `tools/checks/map.py` | 核心源文件 | `doc/map.md`（符号→行区间，供任务卡写范围） | — |
+| B28 | 业务专家流程配置（文档→配置→引擎，含入口/两级显隐/校验规则） | `flow_config.py` + `tools/build_flow_doc.py` + `tools/flow_build.py` + `static/flow.js` | 业务专家填写版 xlsx（①流程/②环节/③核验项/④选项/⑤字段字典） | `{registry, flows}`（与 B18 同构）+ 带行号校验结果 / `workbooks.flows` / 入口 tab | B18、B20 |

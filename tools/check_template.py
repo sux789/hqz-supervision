@@ -60,19 +60,29 @@ def check_file(path: Path, override_key=None):
         return (F, W + [f'不是填表模板（无「{PARAM_SHEET}」也无「{DATA_SHEET}」sheet，'
                         f'当前为 {names}）→ 已跳过'], P, info)
 
-    others = [n for n in names if n != PARAM_SHEET]
+    # 与 main.py::_pick_data_sheet（v0.31，doc/019）同一口径：
+    # 流程配置表（验收流程/流程-*/使用说明/因子控件对照）不是数据表，排除后再判断
+    meta = {PARAM_SHEET, '验收流程', '使用说明', '因子控件对照'}
+    is_cfg = lambda n: n in meta or n.startswith('流程-')
+    cfgs = [n for n in names if is_cfg(n)]
+    others = [n for n in names if n not in meta and not n.startswith('流程-')]
     if not others:
         wb.close()
-        return ['只有「参数」sheet，没有数据 sheet'], W, P, info
-    if len(others) > 1:
-        F.append(f'有 {len(others)} 个非「参数」sheet：{others}。后端用「第一个非参数 sheet」'
-                 f'定位数据表（main.py:354），多 sheet 会取错 → 只保留 1 个数据 sheet')
+        return ['只有「参数」' + ('/流程配置' if cfgs else '') + ' sheet，没有数据 sheet'], W, P, info
     if DATA_SHEET in others:
         data_name = DATA_SHEET
+        if len(others) > 1:
+            W.append(f'data 之外还有 {len(others) - 1} 个 sheet：'
+                     f'{[n for n in others if n != DATA_SHEET]}（后端优先精确取「data」，可容忍；'
+                     f'建议清理，只保留 1 个数据 sheet）')
     else:
         data_name = others[0]
-        W.append(f'数据 sheet 名为「{data_name}」，非约定名「{DATA_SHEET}」'
-                 f'（后端兼容，但通用化建议统一为「{DATA_SHEET}」）')
+        if len(others) > 1:
+            F.append(f'有 {len(others)} 个候选数据 sheet：{others}（无名「data」时后端歧义报错，C11）'
+                     f'→ 把数据表改名为「data」，或只保留 1 个数据 sheet')
+        else:
+            W.append(f'数据 sheet 名为「{data_name}」，非约定名「{DATA_SHEET}」'
+                     f'（后端兼容，但通用化建议统一为「{DATA_SHEET}」）')
     info['data_sheet'] = data_name
 
     ws_p = wb[PARAM_SHEET]

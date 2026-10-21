@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# pre-commit：秒级防线（全量回归在 pre-push）。目标 <2s，超时会诱使人 --no-verify。
+# 1) 生成物不许入库 2) staged JS 语法 3) 索引/占位符/密钥/预算 4) 任务卡范围只告警
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)" || exit 1
+fail=0
+staged="$(git diff --cached --name-only)"
+
+# 1) 派生视图禁止入库（改了就重跑命令，见 C23）
+bad="$(printf '%s\n' "$staged" | grep -E '^(doc/(brief|review|map|board)\.md|doc/health/|doc/align\.html|\.agent/)' || true)"
+if [ -n "$bad" ]; then
+  echo "✗ 派生视图不能入库（由命令生成，随时可重建）："
+  printf '  %s\n' $bad
+  echo "  处理：git restore --staged <文件>；并把路径加进 .gitignore"
+  fail=1
+fi
+
+# 2) staged JS 语法（node --check 只证明语法，不证明老内核可用；C22 由闸门扫）
+NODE="$(command -v node || true)"
+[ -x "/Users/sux/.workbuddy/binaries/node/versions/22.12.0/bin/node" ] && \
+  NODE="/Users/sux/.workbuddy/binaries/node/versions/22.12.0/bin/node"
+if [ -n "$NODE" ]; then
+  for f in $(printf '%s\n' "$staged" | grep -E '\.js$' || true); do
+    [ -f "$f" ] || continue
+    if ! "$NODE" --check "$f" >/dev/null 2>&1; then
+      echo "✗ JS 语法错误：$f"; "$NODE" --check "$f" 2>&1 | head -3; fail=1
+    fi
+  done
+fi
+
+# 3) 静态四门（不写 last_gates.json，避免半量结果污染简报）
+if ! python3 tools/checks/gates.py --only=js,index,placeholder,secret --no-write; then
+  echo "✗ 提交前闸门未过：先 bash tools/ai.sh triage"
+  fail=1
+fi
+
+# 4) 并行冲突只告警（不阻断单人流程）
+if ! python3 tools/checks/tasks.py check >/dev/null 2>&1; then
+  echo "⚠️  任务卡范围重叠：bash tools/ai.sh task check 查看（并行时必须先消除）"
+fi
+
+[ "$fail" -eq 0 ] && echo "✓ pre-commit 通过（全量闸门在 pre-push）"
+exit "$fail"

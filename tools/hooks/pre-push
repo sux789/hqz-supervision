@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# pre-push：全量闸门（含 237 项回归）。一次推送等一次，等得起；这里省下的时间会以线上事故偿还。
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+echo "pre-push：全量闸门（回归约 7s）……"
+if ! bash tools/ai.sh gates; then
+  echo ""
+  echo "✗ 闸门未过，推送已取消。"
+  echo "  下一步：bash tools/ai.sh triage"
+  exit 1
+fi
+exit 0

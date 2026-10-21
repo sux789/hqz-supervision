@@ -26,9 +26,34 @@ generated-images/
 # 本地调试产物（playwright 快照/日志）
 .playwright-cli/
 
+# tools/dev.sh 与 tools/snapshot.sh 运行时产物
+data/.dev.out
+data/.snapshots/
+
+# 对齐看板（纯生成物，bash tools/align.sh 随时再生）
+doc/align.html
+
+# 派生视图（C23：命令生成、可重建、禁止手改与入库）
+doc/brief.md
+doc/review.md
+doc/map.md
+doc/board.md
+doc/health/
+.agent/
+
+# 工具运行时日志
+data/logs/
+
 # macOS 垃圾文件
 .DS_Store
 
 # 验收流程设计本地备份
 data/验收流程设计/*.bak_*
 data/验收流程设计/.~*
+
+# 模板/数据库本地备份（flow_build、更新 Excel 自动生成，可随时再生）
+data/*.bak_*
+data/backups/
+
+# Trae IDE 本地文档目录
+.trae/

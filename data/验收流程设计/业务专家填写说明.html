@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>业务专家流程配置说明 · v0.36</title>
+<style>
+  :root {
+    --g: #2f5d3a; --g2: #4a7c59; --g3: #eaf2ec; --line: #dde7df;
+    --ink: #1f2a24; --sub: #6b7770; --bg: #f7faf8; --card: #fff;
+    --warn: #a0681a; --warnbg: #fdf6e8; --bad: #b3261e; --badbg: #fdeceb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 0 60px; background: var(--bg); color: var(--ink);
+    font: 15px/1.7 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 22px; }
+  header {
+    background: linear-gradient(135deg, #2f5d3a 0%, #427750 60%, #57875f 100%);
+    color: #fff; padding: 40px 0 34px; margin-bottom: 30px;
+  }
+  header .tag {
+    display: inline-block; font-size: 12px; letter-spacing: .12em; opacity: .85;
+    border: 1px solid rgba(255,255,255,.45); border-radius: 20px; padding: 2px 12px; margin-bottom: 14px;
+  }
+  h1 { font-size: 26px; margin: 0 0 10px; font-weight: 700; }
+  header p { margin: 0; opacity: .9; font-size: 14px; max-width: 780px; }
+  h2 {
+    font-size: 19px; margin: 38px 0 14px; padding-left: 11px;
+    border-left: 4px solid var(--g); line-height: 1.3;
+  }
+  h2 .n { color: var(--g2); font-weight: 700; margin-right: 6px; }
+  h3 { font-size: 15px; margin: 22px 0 10px; color: var(--g); }
+  p { margin: 9px 0; }
+  .lead { font-size: 15.5px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+  .qa { display: grid; gap: 12px; }
+  .q {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; position: relative;
+  }
+  .q .ask { font-weight: 600; color: var(--g); margin-bottom: 6px; }
+  .q .ask::before { content: "问"; display: inline-block; font-size: 11px; font-weight: 700;
+    background: var(--g3); color: var(--g); border-radius: 4px; padding: 1px 6px; margin-right: 8px; vertical-align: 1px; }
+  .q .ans { color: #33403a; }
+  .q .ans b { color: var(--g); }
+  table { width: 100%; border-collapse: collapse; background: var(--card); font-size: 13.5px;
+          border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--g3); color: var(--g); font-weight: 600; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  code { background: #eef3f0; padding: 1px 6px; border-radius: 4px; font-size: 12.5px;
+         font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #2b4a35; }
+  .flow { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; margin: 6px 0 4px; }
+  .fbox {
+    flex: 1 1 150px; background: var(--card); border: 1px solid var(--line); border-radius: 9px;
+    padding: 12px 13px; font-size: 13px; text-align: center;
+  }
+  .fbox .t { font-weight: 600; color: var(--g); display: block; margin-bottom: 3px; }
+  .fbox .d { color: var(--sub); font-size: 12px; }
+  .fbox.hl { border-color: var(--g2); background: var(--g3); }
+  .arrow { flex: 0 0 26px; display: flex; align-items: center; justify-content: center;
+           color: var(--g2); font-size: 17px; }
+  /* 界面模拟 */
+  .phone {
+    max-width: 430px; margin: 8px auto 6px; background: #fff; border: 1px solid var(--line);
+    border-radius: 14px; padding: 14px; box-shadow: 0 2px 12px rgba(47,93,58,.07);
+  }
+  .ph-head { font-size: 15px; font-weight: 700; color: var(--ink); }
+  .ph-meta { font-size: 11.5px; color: var(--sub); margin-top: 2px; }
+  .tabs { display: flex; gap: 8px; margin: 11px 0 12px; }
+  .tab { flex: 1; text-align: center; padding: 8px 4px; border: 1px solid var(--line);
+         border-radius: 8px; font-size: 13px; font-weight: 600; color: #46525c; background: #fff; }
+  .tab span { display: block; font-size: 10.5px; font-weight: 400; color: var(--sub); margin-top: 1px; }
+  .tab.cur { background: var(--g); border-color: var(--g); color: #fff; }
+  .tab.cur span { color: #cfe3d6; }
+  .basic { background: #f7faf8; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+  .basic .h { font-size: 12px; font-weight: 600; color: var(--g); margin-bottom: 7px; }
+  .basic .h em { font-style: normal; font-weight: 400; color: var(--sub); margin-left: 6px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: 12px; }
+  .cell { display: flex; justify-content: space-between; gap: 6px; border-bottom: 1px dashed #e6ede8; padding: 2px 0; }
+  .cell .k { color: var(--sub); } .cell .v { font-weight: 600; color: #26303a; }
+  .more { font-size: 12px; color: var(--g); margin-top: 6px; cursor: default; }
+  .pass { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin: 4px 0 10px; }
+  .pass div { text-align: center; padding: 12px 6px; border: 1px solid var(--line);
+              border-radius: 8px; font-weight: 600; font-size: 14px; color: #46525c; }
+  .pass .ok { background: var(--g3); border-color: var(--g); color: #1f4a2c; }
+  .pass .no { background: #fff; }
+  .note { background: var(--warnbg); border-left: 3px solid var(--warn); padding: 11px 14px;
+          border-radius: 0 8px 8px 0; font-size: 13.5px; color: #5d4a2a; margin: 12px 0; }
+  .bad { background: var(--badbg); border-left-color: var(--bad); color: #6d201b; }
+  .ok-note { background: var(--g3); border-left-color: var(--g); color: #24452f; }
+  ul, ol { margin: 8px 0; padding-left: 22px; } li { margin: 4px 0; }
+  .pill { display: inline-block; font-size: 11.5px; background: var(--g3); color: var(--g);
+          border-radius: 20px; padding: 1px 9px; margin-right: 5px; }
+  .pill.w { background: var(--warnbg); color: var(--warn); }
+  footer { margin-top: 40px; color: var(--sub); font-size: 12.5px; border-top: 1px solid var(--line); padding-top: 14px; }
+  @media (max-width: 700px) {
+    .flow { flex-direction: column; } .arrow { flex: 0 0 22px; transform: rotate(90deg); }
+    .grid2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="tag">v0.36 · 业务专家填写版</div>
+    <h1>一册 Excel，管住三个入口的全部环节</h1>
+    <p>你说"环节显示哪些基本元素、下拉里哪些不显示、提交什么控件、怎么验证、前置条件"——
+       这五件事现在都是 Excel 里的五列，改完跑一条命令就生效，不用找程序员改代码。</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <h2><span class="n">01</span>你的四个问题，逐个答</h2>
+  <div class="qa">
+    <div class="q">
+      <div class="ask">行里选"是巡视 / 验收 / 材料"，然后一个界面操作？</div>
+      <div class="ans"><b>正是这么做的</b>，但选择点放在<b>界面顶部的入口 tab</b>，不放 Excel 行里。
+        原因：Excel 的行是小班档案（一个造林小班），它同时"可以做验收"也"可以被巡视"，
+        这是小班的两种用法，不是小班的两种属性 —— 写进行里等于给一个小班钉死一个身份，
+        第二年想回头巡视就得改数据。tab 让人每次进来自己选。</div>
+    </div>
+    <div class="q">
+      <div class="ask">分成「流程配置-巡视」「流程配置-验收-人工造林」「流程配置-材料」三个文件，是否更简化？</div>
+      <div class="ans"><b>不更简化，反而更贵。</b>拆开就变成三个真相源：加一个项目类型要改三处，
+        漏一处就是"验收有、巡视没有"，而这种残缺在界面上表现为"某个 tab 点进去是空的"，
+        现场根本没法自查。实际测算：现在是一个文件 66 行，拆开是 3 个文件 10 / 10 / 46 行，
+        却要额外写脚本才能回答"验收有的项目类型，巡视都有吗"。
+        你要的"简化"实际靠的是<b>入口列</b>——在一个文件里按「入口」筛选，视图上是分开的，数据上是一份。</div>
+    </div>
+    <div class="q">
+      <div class="ask">环节显示哪些基本元素，下拉框里哪些不显示？</div>
+      <div class="ans">两列管住：<b>「显示的基本信息」</b>写要看的列（留空 = data 全部列都显示），
+        <b>「不显示的基本信息」</b>写要剔掉的列（黑名单优先）。下拉框用第三列
+        <b>「不显示选项」</b>剪掉不该选的选项。三个都是填空题，写列名 / 选项名，用「；」分隔。</div>
+    </div>
+    <div class="q">
+      <div class="ask">提交什么数据和控件、怎么验证、前置条件？</div>
+      <div class="ans">控件由「填什么」一列派生（下拉 / 数值 / 日期 / 多选 / 数值×3 / 照片…），
+        <b>你不用写控件语法</b>；验证由「校验规则」一列用一句话描述（<code>整数；≥0</code>、
+        <code>0-100</code>、<code>≤500字</code>、<code>日期≥今天</code>）；
+        前置条件从"只能等上一环节"升级为<b>可以点名等哪几个、且要求什么结论</b>：
+        <code>整地=通过；回塘及底肥=合格</code>。</div>
+    </div>
+  </div>
+
+  <h2><span class="n">02</span>一个文件，怎么变成三个入口</h2>
+  <p class="lead">流程的身份证带入口后缀（<code>流程-人工造林（2026版）·验收</code>），
+     所以同一个流程名的「验收」和「巡视」是两条独立的流程，互不覆盖，界面上是顶部的两个 tab。</p>
+
+  <div class="flow">
+    <div class="fbox hl">
+      <span class="t">①流程 + ②环节<br>③核验项（一份 Excel）</span>
+      <span class="d">9 条流程 / 25 环节<br>73 个核验项</span>
+    </div>
+    <div class="arrow">→</div>
+    <div class="fbox">
+      <span class="t">按「入口」列分组</span>
+      <span class="d">验收 / 巡视 / 材料<br>自动带上入口后缀</span>
+    </div>
+    <div class="arrow">→</div>
+    <div class="fbox">
+      <span class="t">小班档案 · 入口 tab</span>
+      <span class="d">验收 7 环节<br>巡视 1 环节（可多次）</span>
+    </div>
+    <div class="arrow">→</div>
+    <div class="fbox">
+      <span class="t">项目级入口「材料」</span>
+      <span class="d">不挂小班，按批次<br>2 环节</span>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>为什么必须加入口这一层（本轮发现的真问题）：</b>
+    验收和巡视都挂在「小班档案」下、条件都是「项目类型」，匹配器按优先级只会返回其中一条 ——
+    那么另一条<b>永远进不去</b>。所以入口不能靠程序猜，必须由人指定（tab），程序才去那个入口里找流程。
+  </div>
+
+  <h2><span class="n">03</span>专家能拧的六个旋钮</h2>
+  <table>
+    <tr><th>旋钮</th><th>在哪张表、哪一列</th><th>怎么填</th><th>界面表现</th></tr>
+    <tr>
+      <td><b>入口</b></td><td>①流程 · 入口</td>
+      <td><code>验收</code> / <code>巡视</code> / <code>材料</code></td>
+      <td>小班详情页顶部的切换 tab</td>
+    </tr>
+    <tr>
+      <td><b>显示哪些元素</b></td><td>②环节 · 显示的基本信息</td>
+      <td>列名，「；」分隔。<b>留空 = 全部列</b></td>
+      <td>环节卡片顶部的"本环节基本信息"（只读）</td>
+    </tr>
+    <tr>
+      <td><b>不显示哪些元素</b></td><td>②环节 · 不显示的基本信息</td>
+      <td>要剔掉的列名，黑名单优先</td>
+      <td>上面基础上少几行；列多时折叠成"展开全部 N 项"</td>
+    </tr>
+    <tr>
+      <td><b>下拉里不显示哪些选项</b></td><td>③核验项 · 不显示选项</td>
+      <td>选项名，「；」分隔</td>
+      <td>那个下拉里就没有这一项了（数据本身不动）</td>
+    </tr>
+    <tr>
+      <td><b>怎么验证</b></td><td>③核验项 · 校验规则</td>
+      <td><code>整数；≥0</code> <code>0-100</code> <code>≤500字</code> <code>日期≥今天</code> <code>正则:^\d{11}$</code></td>
+      <td>填错当场红字提示并挡住提交；服务端再拦一次</td>
+    </tr>
+    <tr>
+      <td><b>前置条件</b></td><td>②环节 · 前置环节</td>
+      <td><code>整地=通过；回塘及底肥=合格</code>（不写结论默认"通过"）</td>
+      <td>没满足时环节置灰，点进去只能看不能填</td>
+    </tr>
+  </table>
+
+  <h2><span class="n">04</span>界面长这样（示意）</h2>
+  <p>以「人工造林（2026版）」一个小班为例：顶部两个 tab，进入哪个入口就只显示那个入口的环节。</p>
+
+  <div class="phone">
+    <div class="ph-head">验收 · 人工造林（2026版）</div>
+    <div class="ph-meta">流程命中：流程-人工造林（2026版）·验收 · 优先级 10</div>
+    <div class="tabs">
+      <div class="tab cur">验收<span>7 环节</span></div>
+      <div class="tab">巡视<span>1 环节</span></div>
+    </div>
+    <div class="basic">
+      <div class="h">本环节基本信息 <em>来自本底数据，不可修改 · 共 18 项 · 已隐藏 11 项</em></div>
+      <div class="grid2">
+        <div class="cell"><span class="k">小班号</span><span class="v">YJ-1199</span></div>
+        <div class="cell"><span class="k">小班面积</span><span class="v">86.4</span></div>
+        <div class="cell"><span class="k">项目类型</span><span class="v">人工造乔木林</span></div>
+        <div class="cell"><span class="k">造林树种</span><span class="v">华山松</span></div>
+        <div class="cell"><span class="k">密度</span><span class="v">74</span></div>
+        <div class="cell"><span class="k">总株数</span><span class="v">627</span></div>
+      </div>
+      <div class="more">▸ 展开全部 18 项</div>
+    </div>
+    <div class="pass">
+      <div class="ok">✓ 通过</div>
+      <div class="no">✗ 不通过</div>
+    </div>
+    <div class="ph-meta">选「不通过」时，原因框变必填：写清具体问题与位置，不能只写"不合格"。</div>
+  </div>
+
+  <div class="note ok-note">
+    上面藏起来的 11 项分两类：<b>8 项是你填黑名单里的</b>（补植面积、修复方式、模型、采伐方式、
+    株数强度、蓄积强度、割灌割草、验收备注）—— 整地环节用不上，现场不必被它们干扰；
+    <b>另外 3 项是系统自动藏的</b>（验收人、验收日期、验收结果），因为它们是本系统自己产出的填报结果，
+    不是本底数据 —— 让「验收结果：—」出现在"不可修改"区域里，现场会误以为这环节已经有结论。
+    <br>另一种写法是反过来只点名要看的：回塘及底肥只写了「密度 / 株行距 / 整地方式」三列。
+  </div>
+
+  <h2><span class="n">05</span>两条语法，记住就够</h2>
+
+  <h3>前置条件（写在「②环节 · 前置环节」）</h3>
+  <table>
+    <tr><th>写法</th><th>含义</th></tr>
+    <tr><td><code>整地</code></td><td>整地这一环节必须已通过（默认结论 = 通过）</td></tr>
+    <tr><td><code>整地=通过；回塘及底肥=合格</code></td><td>两个都要满足，各自的结论也要对得上</td></tr>
+    <tr><td><b>留空</b></td><td>沿用默认：前面所有环节都要通过（老规矩，不用改）</td></tr>
+  </table>
+  <p style="font-size:13.5px;color:var(--sub)">
+    注：「通过 / 合格 / 整改后合格 / 全部完成 / 已完成 / 符合」被视为同一类"正向结论"。
+    所以前置写「整地=通过」时，整地结论填「合格」也放行 —— 现场用词不可能永远一模一样，卡这个没有意义。
+    如果前置写的是别的词，就要求精确相等。
+  </p>
+
+  <h3>校验规则（写在「③核验项 · 校验规则」）</h3>
+  <table>
+    <tr><th>写法</th><th>拦住什么</th><th>提示长什么样</th></tr>
+    <tr><td><code>整数</code></td><td>小数、文字</td><td>整地数量必须是整数</td></tr>
+    <tr><td><code>≥0</code> <code>&gt;0</code> <code>≤100</code></td><td>越界的数</td><td>整地数量不满足「≥0」（现 -5）</td></tr>
+    <tr><td><code>0-100</code></td><td>不在区间内的数</td><td>混交比例要在 0~100 之间（现 120）</td></tr>
+    <tr><td><code>≤500字</code></td><td>超长文字</td><td>问题描述不能超过 500 字（现 680 字）</td></tr>
+    <tr><td><code>日期≥今天</code></td><td>补填前日期</td><td>整改期限不能早于今天</td></tr>
+    <tr><td><code>正则:^\d{11}$</code></td><td>格式不对</td><td>联系电话格式不对</td></tr>
+  </table>
+  <p style="font-size:13.5px;color:var(--sub)">
+    多个规则用「；」连起来，要全部满足才放行。<b>空值不归规则管</b> —— 空着由「必填」去管，
+    规则只管"填了但填错了"。规则写法如果认不出来，生成配置时会直接报错，
+    <b>不会静默失效</b>（静默不校验比不配更危险）。
+  </p>
+
+  <h2><span class="n">06</span>改完怎么让它生效</h2>
+  <ol>
+    <li>改 <code>data/验收流程设计/流程配置-业务专家填写版.xlsx</code> 里的单元格（黄底表头是必填列）。</li>
+    <li>跑校验：<code>python tools/flow_build.py 该文件 --check</code>
+      —— 写错会告诉你<b>哪张表第几行哪个词</b>不认，改完再跑。</li>
+    <li>看差异：<code>--apply &lt;工作簿id&gt; --dry-run</code>，确认"现有流程 / 即将写入"符合预期。</li>
+    <li>正式写：<code>--apply &lt;工作簿id&gt;</code>（自动备份数据库，可整库回滚），
+      手机下拉刷新即按新流程显示，<b>不用重新上传 Excel</b>。</li>
+  </ol>
+  <p class="lead" style="margin-top:14px"><span class="pill">一次生效，无需发版</span>
+    <span class="pill">改前自动备份</span> <span class="pill w">别手改数据库里的 flows 字段</span></p>
+
+  <h2><span class="n">07</span>现在这份配置里有什么</h2>
+  <table>
+    <tr><th>入口</th><th>流程</th><th>环节</th><th>特点</th></tr>
+    <tr><td>验收</td><td>人工造林（2026版）</td><td>7</td>
+      <td>边界确认 → 整地 → 回塘及底肥 → 栽植 → 成活率 → 保存率 → 完工汇总</td></tr>
+    <tr><td>巡视</td><td>人工造林（2026版）</td><td>1</td>
+      <td>日常巡护，可多次；同一小班同一天只留一条（防重复刷）</td></tr>
+    <tr><td>验收</td><td>退化林修复 / 四旁植树 / 低效林改造</td><td>各 4</td>
+      <td>按项目类型各自的工序，互不干扰</td></tr>
+    <tr><td>巡视</td><td>退化林修复 / 四旁植树 / 低效林改造</td><td>各 1</td>
+      <td>共用"日常巡护"的填报口径</td></tr>
+    <tr><td>材料</td><td>材料检验（按批次）</td><td>2</td>
+      <td>苗木进场检验 / 肥料等材料检验，一条记录可挂多个小班（验苗）</td></tr>
+  </table>
+
+  <div class="note">
+    <b>还差一件：</b>「材料」是项目级入口，不挂小班，所以它不在小班的 tab 里。
+    后端已经支持（<code>?entry=材料</code>），但 App 上<b>还没有那个入口页</b> —— 这是下一轮的事，
+    不影响现在验收和巡视的使用。
+  </div>
+
+  <footer>
+    hqz-supervision v0.36 · 依据 <code>doc/028-v0.36_业务专家流程配置（入口+显隐+校验）.md</code><br>
+    配置源：<code>data/验收流程设计/流程配置-业务专家填写版.xlsx</code>（①流程 9 / ②环节 25 / ③核验项 73 / ④选项 / ⑤字段字典）<br>
+    回归：<code>bash tests/run_all.sh</code> = 338 项全绿
+  </footer>
+</div>
+</body>
+</html>

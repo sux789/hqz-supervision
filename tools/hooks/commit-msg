@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# commit-msg：提交必须带反转链锚点 Refs: doc/NNN。
+# 理由：三个月后没人知道某行为什么改——一句话的锚点是最便宜的追溯。
+# 逃生阀：[no-refs]（必须在迭代文档写明原因）
+set -uo pipefail
+msg_file="$1"
+msg="$(cat "$msg_file")"
+
+if printf '%s' "$msg" | head -1 | grep -qE '^(Merge|Revert|fixup!|squash!)'; then
+  exit 0
+fi
+
+if printf '%s' "$msg" | grep -qE 'Refs:[[:space:]]*doc/[0-9]{3}'; then
+  exit 0
+fi
+
+if printf '%s' "$msg" | grep -q '\[no-refs\]'; then
+  echo "⚠️  本次提交未带 Refs（已用 [no-refs] 豁免）——请在当版迭代文档写明原因。"
+  exit 0
+fi
+
+cat <<'EOF'
+✗ 提交信息缺少反转链锚点。
+
+请补一行（放在正文最后）：
+    Refs: doc/024
+
+规则：
+  - doc/NNN 必须真实存在（门4 会校验）
+  - 一版改多个主题时，写主文档号即可，明细在文档里
+  - 确实无需文档（如纯格式、回滚）：在正文写 [no-refs] 并说明原因
+EOF
+exit 1

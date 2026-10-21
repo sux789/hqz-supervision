@@ -160,7 +160,9 @@ def ctl_options(ctl):
 def _tidy_label(p):
     """标签取片段自身，剥掉「照片」「各N张」这类尾巴，读起来就是现场话术。"""
     s = re.sub(r'各\s*\d+\s*张', '', p)
-    s = re.sub(r'照片?$', '', s)
+    # 业务员写的是「整地现场照片 2 张」（不是「各 2 张」），这张数要算进下限、不进标签
+    s = re.sub(r'\d+\s*张', '', s)
+    s = re.sub(r'照片?$', '', s.strip())
     s = re.sub(r'的$', '', s)
     return s.strip() or p
 
@@ -217,6 +219,11 @@ def parse_att(text):
             if min_ and min_ != n:
                 warn = f'“各{n}张”与该按钮下限冲突，取 {n}'
             min_ = n or min_
+        else:
+            # 「整地现场照片 2 张」这类写法（业务员填写版最常见），张数直接算下限
+            one = re.search(r'(\d+)\s*张', p)
+            if one:
+                min_ = _to_int(one.group(1)) or min_
         if not label:
             label = _tidy_label(p)
 

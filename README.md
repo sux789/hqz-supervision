@@ -1,109 +1,58 @@
-# 项目模板（Vibe Coding 启动套件）
+# hqz-supervision · 野外验收监管系统
 
-> **来源**：forest-data 项目 30+ 次迭代、3 轮重构实测提炼，完整方法论见 [doc/000-vibe_coding成功因素手册.md](doc/000-vibe_coding成功因素手册.md)。
-> **用途**：开新项目时整个目录复制过去，按本 README 填空，即获得经过验证的 AI 协作开发基建。
+> Excel 驱动的通用网格填表 + 验收流程 App（Flask 线上多用户 / Android WebView 壳）。  
+> 管理员上传含「数据 sheet + 参数 sheet」的 Excel 即成为工作簿；用户在 App 里按参数配置填表、走验收流程、  
+> 拍照水印、录像、记录轨迹；照片经服务器中转上云（七牛 → 百度网盘），关键动作留痕审计。  
+> **不含调查专属业务**（无样地/GDB），行为由参数表驱动，换一类 Excel 尽量不改代码。
 
----
+- **线上**：<https://forest.bibook.top/supervision（网关挂载，跳转必须> `window.SUP_BASE`）
+- **本地**：`bash tools/dev.sh start` → <http://127.0.0.1:8720（雷华雄> / lhx123）
+- **版本**：业务 v0.33 ｜ 协作基 v0.34（`STATE.md` 为准）
 
-## 启动 5 动作（按顺序，前一步没完成不进下一步）
-
-### 1. 复制模板
+## 三条命令
 
 ```bash
-cp -r project-template 新项目名 && cd 新项目名 && git init
+bash tools/ai.sh brief     # 开工：4KB 现状（现在 / 必须知道 / 下一步）
+bash tools/run.sh          # 体检：七门（回归 237 项 / JS / 索引 / 占位符 / 密钥 / 预算 / 模板）
+bash tools/ai.sh explain   # 交付：评审单（风险 / 影响面 / 必跑 / 待拍板）
 ```
 
-### 2. 放真实用例
-
-≥3 份真实输入 + 期望输出（golden）放进 `data/`。覆盖「正常 + 边界 + 会报错」三类。
-**mock 数据不算数**——真实数据的边界情况才是拆分积木和回归测试的依据。
-
-### 3. 填根目录三件套 + 接自动加载
-
-| 文件 | 填什么 | 何时填 |
-|---|---|---|
-| `AI_INSTRUCTIONS.md` | 把 `[方括号]` 占位换成本项目的方向/边界 | 第一天 |
-| `CONSTRAINTS.md` | 硬约束注册表，第一条约束出现时开始填 | 持续 |
-| `BLOCKS.md` | 积木注册表，MVP 跑通后盘点时填 | 第 4 步后 |
-| `AGENTS.md` | 不用填——按你的 AI 工具接适配器（文件内有说明） | 第一天 |
-
-### 4. 跑通 MVP 再拆分
-
-单文件 `main.py` 端到端跑通真实输入、产出正确输出，然后 `bash make_baseline.sh` 存基线，**然后**才拆积木。
-没跑通就拆 = 空中楼阁。拆分后：积木出入口预埋 `debug(tag="BX_in/out")`，错误走集中错误码。
-
-### 5. 给 AI 的第一条指令（复制改括号即用）
+## 结构（根目录只放「每会话必读」，其余进 tools/ 与 doc/）
 
 ```text
-先读 AI_INSTRUCTIONS.md、CONSTRAINTS.md、BLOCKS.md、STATE.md。
-本项目 [一句话业务]，输入 [什么]，输出 [什么]。
-当前任务：[具体任务，精确到 积木/文件:行号/单元格]。
-约束：不改 [模板/数据] 只改代码；拿不准列待确认清单，不猜。
-改动后：python check_invariants.py out/ && python compare.py baseline/latest/ out/，全绿才提交。
+AGENTS.md              AI 入口（先 brief，再按需回查）
+AI_INSTRUCTIONS.md     协作协议 + DOD（完成定义，机器判定）
+CONSTRAINTS.md         硬约束 C01–C25（违反=返工）
+BLOCKS.md              积木 B1–B27（指令坐标）
+GLOSSARY.md            术语表（词一致）
+STATE.md               现状快照 + 资产活跃度
+doc/024-…手册.md       方法与判据：三旋钮 / 三本账 / 六步流水线 / 多 Agent 并行
+main.py                Flask 后端（接口 / 摄入 / 导出 / 审计）
+param_parser.py        参数 sheet 解析与合并
+flow_parser.py         验收流程表解析
+static/                app.js / flow.js / admin.js / photo_exif.js
+android/               Capacitor 壳 + 原生 BgLocationPlugin
+tests/                 run_all.sh（单元/e2e/EXIF）+ 用例
+tools/                 ai.sh / run.sh / dev.sh / log.sh / snapshot.sh / checks/ / hooks/
+data/                  工作簿、模板、库（不入 git）
 ```
 
----
+## 常用
 
-## 文件清单
+| 目的      | 命令                                                   |      |          |        |
+| ------- | ---------------------------------------------------- | ---- | -------- | ------ |
+| 全量回归    | `bash tests/run_all.sh`（237 项）                       |      |          |        |
+| 改模板后体检  | `python3 tools/check_template.py data/*.xlsx`        |      |          |        |
+| 本地服务    | \`bash tools/dev.sh start                            | stop | status\` |        |
+| 危险操作前快照 | `bash tools/snapshot.sh save <标签>`                   |      |          |        |
+| 排障日志    | \`bash tools/log.sh [app                             | js   | flow     | exc]\` |
+| 并行任务    | `bash tools/ai.sh task list`                         |      |          |        |
+| 人机看板    | `bash tools/align.sh --open`                         |      |          |        |
+| 部署      | `bash deploy.sh`（网页改动无需出包；原生改动推 `v*` tag 由 CI 出 APK） |      |          |        |
 
-| 文件 | 作用 | 对应手册章节 |
-|---|---|---|
-| `AGENTS.md` | AI 自动加载入口（指针），解决「文件不会自己进 AI 上下文」 | §7 X4 |
-| `STATE.md` | 当前状态快照 + 资产活跃度表，跨会话恢复先读它 | §7 X8 |
-| `AI_INSTRUCTIONS.md` | AI 协作协议，每会话必读 | §2 协作层 |
-| `CONSTRAINTS.md` | 硬约束注册表（带版本号+反转链） | §3 A5 / §7 X5 |
-| `BLOCKS.md` | 积木注册表，AI 定位入口 | §4 E1 |
-| `compare.py` | 新旧输出双跑对比闸（证明没改坏） | §4 E4 |
-| `check_invariants.py` | 业务勾稽断言（证明输出对） | §4 E5 可执行化 |
-| `make_baseline.sh` | 一键存基线，降低双跑对比摩擦 | §4 E4 配套 |
-| `inspect.py` | 输入/模板结构探测，不懂结构先跑不猜 | §3 A6 |
-| `validate.py` | 输入校验骨架，坏数据入口炸掉带行号 | §4 E7 |
-| `deploy.sh` | 部署骨架，踩坑已注释固化 | §3 A7 |
-| `doc/000-…手册.md` | 方法论全集：33 因素 + 失效信号诊断表 + 健康度度量 + 进化机制 | — |
-| `doc/001-迭代文档模板.md` | 每版迭代复制一份改编号 | §3 A4 |
-| `data/` | 真实用例库（自行放入） | §3 A1 |
-| `baseline/` | 基线快照（make_baseline.sh 生成，加 .gitignore） | §4 E4 配套 |
+## 文档地图
 
----
-
-## 每次迭代的固定循环
-
-```text
-需求 → 设计（大改先文档）→ make_baseline → 实现 → check_invariants + compare 双跑
-     → 差异归因 → 迭代文档 → 更新 STATE/CONSTRAINTS → 部署
-```
-
-- 对比出差异**先归因**（代码bug/数据问题/基准错/合理多解），不默认改代码对齐。
-- 迭代文档用 `doc/001-迭代文档模板.md` 复制，七段式，**反转记录不可省**。
-- 改口径必同步三处：模板 + 代码 + 测试断言。
-
----
-
-## 资产进化：去掉低价值，长出高价值
-
-每个资产必须能回答「它防住过什么错误、省过什么成本」，答不上进观察名单。
-
-**进化链（错误 → 自动化，单步 ≤10 分钟，不跳级）**：
-
-```text
-翻车 1 次 → 写 CONSTRAINTS 文字约束（1 分钟）
-约束靠人记 → 写 check_invariants 勾稽断言（10 分钟）
-断言靠手跑 → 挂 pre-commit 自动跑（5 分钟）
-人工动作重复 3 次 → 脚本化收进本模板（Rule of Three）
-```
-
-**退化链（零引用 → 清除）**：资产连续 5 版未发挥作用（看 STATE.md 活跃度表）→ 三选一：
-**修复**（腐化就更新）/ **合并**（两个半有用并一个）/ **删除**（git 有历史，不心疼）。
-BLOCKS.md、STATE.md 与代码脱节属腐化，发现立即修，不等评审——过期的索引比没有更糟。
-
-**评审节奏**：每 5 版或每月 10 分钟：① 看手册第 11 章健康度度量趋势；② 过活跃度表标「保留/修复/合并/删除」，结果写进当版迭代文档。
-
----
-
-## 卡顿时
-
-查 `doc/000` 手册**第 6 章失效信号诊断表**：按症状找缺失因素，按处方补。
-
-## 何时不要用本模板
-
-一次性脚本 / 原型验证 / 探索 notebook / 框架强约定项目（Django、Rails、Next.js app router）/ 单文件 <100 行工具——结构性开销大于收益，直接写代码。
+- 协作方法：`doc/024-AI高效协作手册.md`（人 3 分钟 / AI 40 秒 / 新 Agent 5 分钟）
+- 约束详解：`doc/023-约束详解.md` ｜ 参数规范：`doc/025-参数sheet配置规范.md`
+- 功能总览：`doc/018-功能总览（开发交接）.md` ｜ 迭代模板：`doc/001-迭代文档模板.md`
+- 历史：`doc/STATE历史归档.md`、`doc/NNN-版本_主题.md`

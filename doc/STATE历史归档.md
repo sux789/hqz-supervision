@@ -28,3 +28,14 @@
 - **v0.9.x 变化**：相片云同步上线（doc/007，七牛 zz-1 暂存 + data/pending 缓冲 → 百度网盘，状态机 received→qiniu_ok→baidu_ok）；水印版式优化（半透明白底块+实心黑字，默认压缩 1440/0.80）；时间戳水印首行（C06）；积压补推后台线程
 - **历史已知问题**：v0.8 前旧工作簿无 source 模板导出需重传；v0.8.2 前已保存的行验收人为空；七牛回读域名未开放（pending 缓冲为主回读源）；百度 mkdir 对已存在目录偶发时间戳副本（无害）
 - **旧「能跑」行（已被 v0.32.5 行取代）**：v0.9 起上线 https://forest.bibook.top/supervision；账号 雷华雄/lhx123
+
+## 迁入自 STATE（v0.30–v0.32.5 详情）
+
+- **v0.32.5**：验收提交留痕 GNSS 定位 + 客户端 IP（flow_records 加 geo/ip 列，纯加列迁移；提交瞬间 best-effort 一次性定位 3s 超时；服务端取 X-Forwarded-For 第一跳）。e2e H12b/c
+- **v0.32.4**：验收步骤条三态配色 + flex-wrap 换行 + 未解锁环节可点开只读预览；改模板后先本地 test_client 渲染再部署
+- **v0.32.3**：修「带过来的数据看着填了、提交判没填」——数值×3 标准值改「实测·长/宽/深」占位、下拉未选改「请选择」，与 F.val 所见即所填一致（C22）；方法论：线上真实数据离线重放 gate() 二分
+- **v0.32.1**：老内核（Android 9 / WebView Chrome 73）`??`×18 致 app.js 整段 SyntaxError；三层日志（js.log / app.log [EXC] / [flow]）+ 后台「运行日志」卡片
+- **v0.32**：授权即持续 GNSS 跟踪（C21，已被 v0.33 反转）；计划 versionCode 10
+- **v0.31**：验收流程界面上线（wb=6 就地更新）；flow_parser + flow.js + flow_records；上线踩的 5 个真 bug 见 doc/019
+- **v0.30**：piexifjs 保留真 EXIF + 水印优先取原片 EXIF；回写必处理 Orientation=1/删尺寸标签/删 MakerNote
+- **v0.24~v0.29 摘要**：下架三层（C13）、保存纪律（C14）、更新 Excel 就地合并+回滚（C15）、C19 事故复盘、云同步面板与工作簿级目录占位符——详见 CONSTRAINTS 与 doc/011~016

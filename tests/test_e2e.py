@@ -760,11 +760,14 @@ _FLOW_XLSX = None
 # 只看 data/ 下的**模板目录**，排除 data/workbooks/<id>/source.xlsx（历史留存副本）
 # 与 .~ 临时文件；同时要求「填报控件」列存在 —— 设计稿阶段的「副本」只有 11 列，
 # 用它跑会因为 controls 全空而让必填校验用例失真（真因：2026-10-14 首次跑 H 组时误选副本）。
-for _cand in sorted(BASE.glob('data/**/*.xlsx')):
-    if 'workbooks' in _cand.parts or _cand.name.startswith('.~'):
-        continue
+# v0.33.1：运行时模板也带流程 sheet 了（造林 3 流程 / 中幼林抚育 1 流程），glob 不再唯一 ——
+# 优先用注释里指定的设计文件（8 环节、口径最全），找不到才回落到 glob 扫描。
+def _flow_ok(_cand):
     try:
         _wb = openpyxl.load_workbook(_cand, read_only=True)
+    except Exception:
+        return False
+    try:
         _ns = _wb.sheetnames
         _has = any(n.startswith('流程-') for n in _ns) and '验收流程' in _ns
         if _has:
@@ -772,12 +775,20 @@ for _cand in sorted(BASE.glob('data/**/*.xlsx')):
             _hdr = [str(h).strip() if h else '' for h in
                     next(_fh.iter_rows(max_row=1, max_col=16, values_only=True))]
             _has = '填报控件' in _hdr
+    finally:
         _wb.close()
-    except Exception:
-        _has = False
-    if _has:
-        _FLOW_XLSX = _cand
-        break
+    return _has
+
+_PREFERRED = BASE / 'data/验收流程设计/造林项目-验收模板-含验收流程.xlsx'
+if _PREFERRED.exists() and _flow_ok(_PREFERRED):
+    _FLOW_XLSX = _PREFERRED
+else:
+    for _cand in sorted(BASE.glob('data/**/*.xlsx')):
+        if 'workbooks' in _cand.parts or _cand.name.startswith('.~'):
+            continue
+        if _flow_ok(_cand):
+            _FLOW_XLSX = _cand
+            break
 
 if _FLOW_XLSX is None:
     print('  ⏭ 跳过：仓库里找不到含「验收流程」+「流程-」sheet 的 Excel')
