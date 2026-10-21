@@ -83,7 +83,9 @@
       // 该行任何流程都没命中 → 退回网格填表（老行为）
       if (!j || !(j.entries || []).length) return false;
       // 只是这个入口没命中：留着上一份数据反而更糊涂，直接报清楚
-      toast(`该小班没有「${entry}」流程`, true);
+      // v0.37：rowIdx<0 = 项目级（材料检验不挂小班档案），主语是该"项目"不是该"小班"
+      const who = rowIdx < 0 ? '该项目' : '该小班';
+      toast(`${who}没有「${entry}」流程`, true);
       return false;
     }
     F.data = j;
@@ -319,7 +321,12 @@
       + `<div class="flow-title">${esc(F.data.entry || '验收')} · `
       + `${esc(F.data.flow_sheet.replace(/^流程-/, '').replace(/·[^·]*$/, ''))}</div>`
       + `<div class="flow-meta">流程命中：${esc(F.data.flow_sheet)} · 优先级 ${F.data.prio}`
-      + (F.data.cond_field && F.data.cond_field !== '1' ? ` · 条件 ${esc(F.data.cond_field)}=${esc(F.data.cond_val)}` : '')
+      // v0.37：项目级（材料检验按批次）明说"不挂小班"，避免现场以为漏选了小班
+      + (F.rowIdx < 0 ? ' · 项目级（按批次登记，不挂小班）' : '')
+      // 「独立入口=独立入口」是内部注册标记（flow_config 写死它，保证任何行都
+      // 匹配不到材料流程），给现场人看反而困惑 —— 项目级不显示这一行
+      + (F.data.cond_field && F.data.cond_field !== '1' && F.data.cond_field !== '独立入口'
+         ? ` · 条件 ${esc(F.data.cond_field)}=${esc(F.data.cond_val)}` : '')
       + '</div></div>';
 
     // 入口 tab（验收 / 巡视）：同一个小班往往两条流程都能走，
@@ -389,6 +396,15 @@
       const bad = {};
       hide.forEach((k) => { bad[String(k).trim()] = 1; });
       basic = basic.filter((k) => !bad[String(k).trim()]);
+    }
+    // v0.37：项目级（材料批次一条记录关联多个小班）只显示拿得到值的基本信息 ——
+    // 白名单里随小班变化的列（造林树种/总株数…）在项目级没有单一值，
+    // 渲染成「—」会被现场当成"数据缺失"，直接不显示；小班差异看「关联小班」多选
+    if (F.rowIdx < 0) {
+      basic = basic.filter((k) => {
+        const v = (std[k] != null && std[k] !== '') ? std[k] : std[String(k).trim()];
+        return v != null && v !== '';
+      });
     }
     if (basic.length) {
       const cellOf = (k) => {
@@ -986,8 +1002,11 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      // 回读一次拿服务端最终结果（实测对照设计会自动改写验收结果）
-      F.data = await api(`/api/workbooks/${F.wid}/flow?row=${F.rowIdx}`);
+      // 回读一次拿服务端最终结果（实测对照设计会自动改写验收结果）。
+      // **必须带 entry**：同一个小班可能同时命中验收/巡视两条流程，不带 entry
+      // 会回读到另一条的数据；项目级 row=-1 不带 entry 更是直接匹配不到（v0.37 修）。
+      F.data = await api(`/api/workbooks/${F.wid}/flow?row=${F.rowIdx}`
+        + `&entry=${encodeURIComponent(F.data.entry || '')}`);
       clearDraft();
       toast(`已提交「${s.step}」`);
       if (s.multi) {

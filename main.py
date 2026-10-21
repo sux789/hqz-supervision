@@ -807,7 +807,20 @@ def _entries_of(flows, headers, rows, ridx, file_name=''):
     """
     reg = (flows or {}).get('registry') or []
     fmap = (flows or {}).get('flows') or {}
-    if not reg or ridx is None or ridx < 0 or ridx >= len(rows):
+    if not reg:
+        return []
+    if ridx is not None and ridx < 0:
+        # v0.37：项目级（材料检验按批次，不挂小班档案）——与行无关，
+        # 只列「独立入口」挂载的流程（注册条件写死 独立入口=独立入口 的那批）。
+        out = []
+        for r in reg:
+            en = _entry_of(r['sheet'])
+            if en and r.get('cond_field') == '独立入口':
+                out.append({'entry': en, 'mount': r.get('mount') or '独立入口',
+                            'sheet': r['sheet'], 'prio': r['prio'],
+                            'steps': len(fmap.get(r['sheet']) or [])})
+        return out
+    if ridx is None or ridx < 0 or ridx >= len(rows):
         return []
     row = dict(zip(headers, rows[ridx]))
     order, seen = [], set()
@@ -827,28 +840,33 @@ def _entries_of(flows, headers, rows, ridx, file_name=''):
     return out
 
 
-def _flow_hit(flows, headers, rows, ridx, file_name='', entry=''):
-    """该行命中的流程（含各环节 + 每个因子的标准值），未命中返回 None。
+def _project_std(headers, rows):
+    """项目级常量列：全部数据行 trim 后取值都相同的列（项目名称/标段/实施年度…）。
 
-    `entry` 给定（验收/巡视/材料）时只在带该入口后缀的流程里匹配；
-    留空 = 老行为（全量匹配，取优先级最高那条）。
+    v0.37 材料检验（按批次）不挂小班档案、一条记录关联多个小班 ——
+    基本信息若给随小班变化的列（造林树种/总株数…）会误导（一条批次记录
+    该显示哪个小班的值？），只给项目级常量；小班差异由「关联小班」多选承担。
+    全空列不算常量（给了也是「—」，不如不给）。
     """
-    if not flows or not flows.get('registry') or not flows.get('flows'):
-        return None
-    if ridx is None or ridx < 0 or ridx >= len(rows):
-        return None
-    reg, fmap = flows['registry'], flows['flows']
-    if entry:
-        reg = [r for r in reg if _entry_of(r['sheet']) == entry]
-        fmap = {k: v for k, v in fmap.items() if _entry_of(k) == entry}
-        if not reg:
-            return None
-    row = dict(zip(headers, rows[ridx]))
-    m = flow_parser.match_flow(reg, fmap, row, file_name)
-    if not m:
-        return None
-    # 标准值随环节带出（trim 后取，「总株数  」这类尾随空格表头也能取到）
-    std = flow_parser.std_lookup(row)
+    cols, vals = [], {}
+    for i, h in enumerate(headers):
+        name = str(h or '').strip()
+        if not name:
+            continue
+        seen = set()
+        for r in rows:
+            v = _s(r[i]) if i < len(r) else ''
+            seen.add(v)
+            if len(seen) > 1:
+                break
+        if len(seen) == 1 and '' not in seen:
+            cols.append(name)
+            vals[name] = seen.pop()
+    return cols, vals
+
+
+def _hit_payload(m, std, std_cols, warns):
+    """流程命中 → 前端要的全部内容（环节定义 + 标准值 + 警告）。行级/项目级共用。"""
     steps = []
     for s in m['steps']:
         steps.append({
@@ -885,7 +903,6 @@ def _flow_hit(flows, headers, rows, ridx, file_name='', entry=''):
             v = std.get(col)
             if v not in (None, ''):
                 std[c['name']] = v
-    warns = list(flows.get('warn') or [])
     return {'sheet': m['sheet'], 'prio': m['prio'], 'entry': _entry_of(m['sheet']),
             'cond_field': m['cond_field'], 'cond_val': m['cond_val'],
             'scope': m['scope'], 'steps': steps, 'std': std, 'warn': warns,
@@ -893,7 +910,59 @@ def _flow_hit(flows, headers, rows, ridx, file_name='', entry=''):
             # **必须单独给一份**：std 里混着"控件名 → 设计值"的映射（整地数量=627 这种），
             # 前端拿 Object.keys(std) 当"data 全部列"会多出几个假列，黑名单也就剔不干净
             # （2026-10-21 截图自测：33 键里 4 个是映射，29-8 被算成 33-8=25）。
-            'std_cols': [str(h) for h in headers if str(h or '').strip()]}
+            'std_cols': [str(h) for h in std_cols if str(h or '').strip()]}
+
+
+def _project_hit(reg, fmap, headers, rows, file_name, warns):
+    """项目级入口（v0.37：材料检验按批次）—— row=-1 时按入口认领，不走行条件匹配。
+
+    材料流程的注册条件写死「独立入口=独立入口」（flow_config 第 470 行），
+    任何行都匹配不到它 —— 否则每个小班都会跑一遍材料流程。项目级在这里显式认领：
+    同入口内取优先级最高、已启用、范围相符、条件为无条件或独立入口的那条。
+    """
+    cand = [r for r in reg if r['enabled']
+            and (not r['scope'] or r['scope'] == '全部' or r['scope'] == file_name)
+            and r['cond_field'] in ('', '1', '独立入口')]
+    if not cand:
+        return None
+    best = min(cand, key=lambda r: r['prio'])
+    steps = fmap.get(best['sheet'])
+    if not steps:
+        return None
+    m = {'sheet': best['sheet'], 'prio': best['prio'],
+         'cond_field': best['cond_field'], 'cond_val': best['cond_val'],
+         'scope': best['scope'], 'steps': steps}
+    cols, std = _project_std(headers, rows)
+    return _hit_payload(m, std, cols, warns)
+
+
+def _flow_hit(flows, headers, rows, ridx, file_name='', entry=''):
+    """该行/该项目命中的流程（含各环节 + 每个因子的标准值），未命中返回 None。
+
+    `entry` 给定（验收/巡视/材料）时只在带该入口后缀的流程里匹配；
+    留空 = 老行为（全量匹配，取优先级最高那条）。
+    **ridx < 0 = 项目级**（v0.37 材料检验按批次，不挂小班档案）：
+    不走行条件匹配，按入口认领「独立入口」流程，标准值只给项目级常量列。
+    """
+    if not flows or not flows.get('registry') or not flows.get('flows'):
+        return None
+    reg, fmap = flows['registry'], flows['flows']
+    if entry:
+        reg = [r for r in reg if _entry_of(r['sheet']) == entry]
+        fmap = {k: v for k, v in fmap.items() if _entry_of(k) == entry}
+        if not reg:
+            return None
+    warns = list(flows.get('warn') or [])
+    if ridx is not None and ridx < 0:
+        return _project_hit(reg, fmap, headers, rows, file_name, warns)
+    if ridx is None or ridx < 0 or ridx >= len(rows):
+        return None
+    row = dict(zip(headers, rows[ridx]))
+    m = flow_parser.match_flow(reg, fmap, row, file_name)
+    if not m:
+        return None
+    # 标准值随环节带出（trim 后取，「总株数  」这类尾随空格表头也能取到）
+    return _hit_payload(m, flow_parser.std_lookup(row), headers, warns)
 
 
 def _rule_errors(step, values):
@@ -961,10 +1030,12 @@ def _unique_conflict(con, wid, ridx, sheet, step, values, rec_no):
 @bp.route('/api/workbooks/<int:wid>/flow', methods=['GET'])
 @login_required
 def api_flow(wid):
-    """某一行命中的验收流程（8 环节定义 + 标准值 + 已填记录）。
+    """某一行/该项目命中的验收流程（8 环节定义 + 标准值 + 已填记录）。
 
-    `?row=<ridx>` 省略时取 0。返回 ok=false 表示该行没有流程配置，
-    前端据此退回原网格填表（老工作簿/该行类型不匹配都走这里）。
+    `?row=<ridx>` 省略时取 0；**row=-1 = 项目级**（v0.37 材料检验按批次，
+    不挂小班档案，一条记录关联多个小班）——配合 `?entry=材料` 使用。
+    返回 ok=false 表示没有流程配置，前端据此退回原网格填表
+    （老工作簿/该行类型不匹配/该工作簿没配材料流程都走这里）。
     """
     con = db()
     r = con.execute('SELECT * FROM workbooks WHERE id=?', (wid,)).fetchone()

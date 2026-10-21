@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""业务专家流程配置的端到端测试（v0.36，doc/028）
+"""业务专家流程配置的端到端测试（v0.36 doc/028 + v0.37 doc/029 项目级材料入口）
 
 用法：python tests/test_flow_e2e.py      # 全绿退出码 0
 
@@ -11,6 +11,8 @@
   D4  入口维度：同一小班能分别进「验收」和「巡视」两条流程（tab 切换）
   D5  校验规则：整地数量填 -5 / 小数 → 400（服务端权威，前端只是提示）
   D6  唯一性：巡视声明「同小班同日唯一」→ 同一天第二条 400
+  E1~E13  项目级入口（v0.37）：材料检验按批次登记，row=-1 不挂小班档案 ——
+          命中/常量列/关联小班多选/转序/同批次号唯一/多条记录/行级要材料→false
 
 会在本地库临时建工作簿，跑完自动清理（与 test_e2e 同口径）。
 登录不上（改过管理员密码）时整段 SKIP，不算失败。
@@ -227,6 +229,95 @@ def main():
         ok('D24 入口隔离：巡视提交不覆盖验收的环节记录',
            ((f6.get('records') or {}).get('1') or {}).get('', {}).get('result') == '通过',
            str(((f6.get('records') or {}).get('1') or {}).get('', {}).get('result')))
+
+        # ── 项目级入口：材料检验（v0.37，doc/029，row=-1 不挂小班档案）──
+        fm = cli.get(f'/api/workbooks/{wid}/flow?row=-1&entry=材料', headers=H).get_json()
+        ok('E1 项目级 row=-1&entry=材料 命中「材料检验（按批次）」2 环节',
+           fm.get('ok') is True and fm.get('flow_sheet') == '流程-材料检验（按批次）·材料'
+           and len(fm.get('steps') or []) == 2,
+           f"{fm.get('flow_sheet')} {len(fm.get('steps') or [])}")
+        ok('E2 项目级不显示内部条件标记（cond_field=独立入口 是注册用的，不该给现场看）',
+           fm.get('cond_field') == '独立入口')
+        ok('E3 项目级 entries 只有「材料」且挂载=独立入口',
+           [e.get('entry') for e in (fm.get('entries') or [])] == ['材料']
+           and (fm.get('entries') or [{}])[0].get('mount') == '独立入口',
+           str(fm.get('entries')))
+        std = fm.get('std') or {}
+        ok('E4 项目级 std 只含项目级常量列（项目名称有值、造林树种没有）',
+           std.get('项目名称') and '造林树种' not in std,
+           str({k: std[k] for k in list(std)[:4]}))
+        s1 = (fm.get('steps') or [{}])[0]
+        link_ctl = next((c for c in (s1.get('controls') or []) if c['name'] == '关联小班'), None)
+        batch_ctl = next((c for c in (s1.get('controls') or []) if '批次' in c['name']), None)
+        ok('E5 苗木进场检验带「关联小班」多选 + 批次号控件（均必填）',
+           link_ctl and link_ctl['type'] == '多选' and link_ctl.get('required') is True
+           and batch_ctl and batch_ctl.get('required') is True
+           and s1.get('link') == '多选' and s1.get('subject') == '苗木批次',
+           f"{link_ctl and link_ctl['type']}/{batch_ctl and batch_ctl['name']}")
+
+        # 转序：苗木进场检验没做 → 肥料检验 409（先测这个，后面才好提交）
+        fert_vals = {'关联小班': ['YJ-1436'], '进场批次号': '2026-F-001',
+                     '材料名称': '复合肥', '进场数量': 40, '抽检结论': '合格',
+                     '是否通过': '通过', '记录日期': '2026-10-21'}
+        e1 = cli.post(f'/api/workbooks/{wid}/flow', headers=H, json={
+            'row': -1, 'step_no': 2, 'entry': '材料', 'values': fert_vals, 'att': []})
+        ok('E6 苗木进场未检验 → 肥料检验 409（转序闸门对项目级同样生效）',
+           e1.status_code == 409 and '苗木进场检验' in str((e1.get_json() or {}).get('error', '')),
+           str((e1.get_json() or {}).get('error'))[:80])
+
+        seed_vals = {'关联小班': ['YJ-1436', 'YJ-1437'], '进场批次号': '2026-M-001',
+                     '苗木树种': '余甘子+清香木', '苗龄': 2, '地径': 1.2, '苗高': 80,
+                     '进场数量': 5000, '是否通过': '通过', '记录日期': '2026-10-21'}
+        # 「苗木证件」被 parse_att 判成 upload 且下限 1（三证一签|证件 规则）——
+        # 种苗规格/剪苗作业照片下限 0，不传也能过
+        seed_att = [{'kind': 'upload', 'label': '苗木证件', 'count': 1,
+                     'names': ['苗木生产经营许可证.pdf']}]
+        e2 = cli.post(f'/api/workbooks/{wid}/flow', headers=H, json={
+            'row': -1, 'step_no': 1, 'entry': '材料', 'values': seed_vals, 'att': seed_att})
+        ok('E7 苗木批次第 1 条提交成功（项目级，row=-1）',
+           e2.status_code == 200 and (e2.get_json() or {}).get('rec_no') == 1,
+           f'{e2.status_code} {str((e2.get_json() or {}).get("error"))[:80]}')
+
+        e3 = cli.post(f'/api/workbooks/{wid}/flow', headers=H, json={
+            'row': -1, 'step_no': 1, 'entry': '材料',
+            'values': dict(seed_vals, 苗木树种='余甘子+云南松'), 'att': seed_att})
+        ok('E8 同批次号再交一条 → 400（同批次号唯一，项目级查重）',
+           e3.status_code == 400 and '批次号' in str((e3.get_json() or {}).get('error', '')),
+           str((e3.get_json() or {}).get('error'))[:80])
+
+        e4 = cli.post(f'/api/workbooks/{wid}/flow', headers=H, json={
+            'row': -1, 'step_no': 2, 'entry': '材料', 'values': fert_vals, 'att': []})
+        ok('E9 苗木已检合格 → 肥料批次可提交', e4.status_code == 200,
+           f'{e4.status_code} {str((e4.get_json() or {}).get("error"))[:80]}')
+
+        e5 = cli.post(f'/api/workbooks/{wid}/flow', headers=H, json={
+            'row': -1, 'step_no': 1, 'entry': '材料',
+            'values': dict(seed_vals, 进场批次号='2026-M-002', 进场数量=3000),
+            'att': seed_att})
+        ok('E10 换一个批次号 → 新增第 2 条（按批次多次登记）',
+           e5.status_code == 200 and (e5.get_json() or {}).get('rec_no') == 2,
+           str((e5.get_json() or {}).get('rec_no')))
+
+        fm2 = cli.get(f'/api/workbooks/{wid}/flow?row=-1&entry=材料', headers=H).get_json()
+        m1 = (fm2.get('multi') or {}).get('1') or {}
+        m2 = (fm2.get('multi') or {}).get('2') or {}
+        link_raw = (m1.get('1', {}).get('values', {}).get('关联小班') or '')
+        try:    # 多选落库是 JSON 字符串（前端 decodeVal 解析），测试里也要解
+            link_arr = json.loads(link_raw) if isinstance(link_raw, str) else link_raw
+        except ValueError:
+            link_arr = None
+        ok('E11 GET 回传两条苗木批次，关联小班数组落库',
+           len(m1) == 2 and len(m2) == 1 and link_arr == ['YJ-1436', 'YJ-1437'],
+           str({k: v.get('values', {}).get('进场批次号') for k, v in m1.items()}))
+
+        fm3 = cli.get(f'/api/workbooks/{wid}/flow?row=-1', headers=H).get_json()
+        ok('E12 项目级不带 entry 也命中材料流程（唯一项目级候选）',
+           fm3.get('flow_sheet') == '流程-材料检验（按批次）·材料',
+           str(fm3.get('flow_sheet')))
+
+        fm4 = cli.get(f'/api/workbooks/{wid}/flow?row={ridx}&entry=材料', headers=H).get_json()
+        ok('E13 行级要材料流程 → ok=false（材料不挂小班，不能从行进）',
+           fm4.get('ok') is False, str(fm4.get('reason'))[:60])
     finally:
         import sqlite3
         con = sqlite3.connect(_M.DB_PATH)

@@ -5,6 +5,7 @@ const $ = (s) => document.querySelector(s);
 const el = (h) => { const d = document.createElement('div'); d.innerHTML = h.trim(); return d.firstChild; };
 
 let cur = null;           // 当前工作簿 {id, headers, rows, config}
+let wbHasMaterial = false; // v0.37：当前工作簿配了「材料」入口（项目级）才显示材料检验按钮
 let allRows = [];         // 全量行（编辑后同步）
 let curIdx = -1;          // 当前小班行索引（详情页上下文：拍照/轨迹/保存）
 let formGrid = null;      // 两列表单 jspreadsheet 实例
@@ -90,6 +91,10 @@ async function ensureWb(id) {
   try { cur = await api(`/api/workbooks/${id}`); }
   catch (e) { toast('打开工作簿失败：' + e.message, true); nav('#/'); return false; }
   allRows = cur.rows.map((r) => r.map((v) => (v == null ? '' : String(v))));
+  // v0.37：配了「材料」入口才显示材料检验按钮。sheet 名形如「流程-材料检验（按批次）·材料」，
+  // 取 · 后一段即入口；老 12 列格式没有 · → 取到的不是「材料」，按钮不显示（零请求判断）
+  const reg = (cur.flows && cur.flows.registry) || [];
+  wbHasMaterial = reg.some((r) => String(r.sheet || '').split('·').pop() === '材料');
   return true;
 }
 
@@ -379,6 +384,8 @@ function openDetail(idx) {
   $('#btnVideo').classList.toggle('hidden', !feats.includes('视频'));
   $('#btnTrack').classList.toggle('hidden', !feats.includes('轨迹'));
   refreshTrackBtn();
+  // v0.37：材料检验（项目级，按批次）—— 配了「材料」入口的工作簿才显示
+  $('#btnMaterial').classList.toggle('hidden', !wbHasMaterial);
   openFlowView(cur.id, idx);   // v0.31：无流程配置时 flow.js 自己把面板藏起来
 }
 
@@ -387,8 +394,9 @@ function openDetail(idx) {
      ① 注入它需要的上下文（当前用户 / data 行 / 验收结果选项）
      ② 调它 open（内部自己判断有无流程）
      ③ 没有流程时把面板保持隐藏 → 老工作簿界面与 v0.30 完全一致
-   注意：flow.js 若因任何原因没加载成功，这里必须**静默降级**而不是让整页失效（C16）。 */
-function openFlowView(wid, idx) {
+   注意：flow.js 若因任何原因没加载成功，这里必须**静默降级**而不是让整页失效（C16）。
+   v0.37：idx<0 = 项目级（材料检验按批次），entry 显式传「材料」。 */
+function openFlowView(wid, idx, entry) {
   const panel = $('#flowPanel');
   if (panel) panel.innerHTML = '';
   if (!window.supFlow) return;
@@ -400,11 +408,14 @@ function openFlowView(wid, idx) {
       return o;
     });
     window.__supAcceptOpts = cfgList('验收结果选项');
-    window.supFlow.open(wid, idx);
+    window.supFlow.open(wid, idx, entry);
   } catch (e) {
     console.warn('验收流程面板加载失败，已退回网格填表', e);
     if (panel) panel.classList.add('hidden');
   }
+  // 材料检验按钮激活态：正在看项目级材料面板时高亮，点任一小班即退回行级流程
+  const bm = $('#btnMaterial');
+  if (bm) bm.classList.toggle('cur', idx < 0);
 }
 
 function setSaveStatus(text, cls) {
@@ -741,6 +752,15 @@ async function exportWorkbook(id, fallbackName) {
 $('#btnExport').addEventListener('click', () => {
   if (!cur) return;
   exportWorkbook(cur.id, `${cur.name.replace(/\.xls[xm]$/i, '')}_导出.xlsx`);
+});
+
+/* v0.37：材料检验（项目级，按批次登记，不挂小班档案）。
+   行级流程挂在小班上（验收/巡视），材料批次一条记录可关联多个小班，
+   所以它是项目级入口：rowIdx=-1 + entry=材料，flow.js 走 row=-1 分支。
+   点了任一小班（openDetail/jumpRow）会自动退回该小班的行级流程。 */
+$('#btnMaterial').addEventListener('click', () => {
+  if (!cur) return;
+  openFlowView(cur.id, -1, '材料');
 });
 
 /* 解析下拉选项键：形如「XX选项」且 XX 是真实表头列（排除「搜索选项」控件映射键）。

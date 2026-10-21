@@ -41,7 +41,7 @@
   <!-- jsuites/jspreadsheet 自托管（国内 jsdelivr CDN 不可靠，曾致网格页白屏） -->
   <link rel="stylesheet" href="{{ url_for('static', filename='vendor/jsuites.min.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='vendor/jspreadsheet.min.css') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=0.36">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=0.37">
 </head>
 <body>
   <!-- 登录 -->
@@ -85,6 +85,8 @@
         <button id="btnVideo" class="btn primary hidden">🎬 视频</button>
         <button id="btnTrack" class="btn primary hidden">◎ 轨迹</button>
         <button id="btnTrackMap" class="btn ghost hidden">🗺 轨迹图</button>
+        <!-- v0.37：材料检验（项目级，按批次登记，不挂小班档案）——配了「材料」入口才显示 -->
+        <button id="btnMaterial" class="btn primary hidden">🧱 材料检验</button>
         <button id="btnAlbum" class="btn ghost hidden">拍摄记录</button>
       </div>
       <div id="formEl"></div>
@@ -167,7 +169,7 @@
   <script src="{{ url_for('static', filename='vendor/piexif.js') }}"></script>
   <script src="{{ url_for('static', filename='photo_exif.js') }}"></script>
   <!-- ?v= 版本号熔断：静态 JS 更新后 WebView/浏览器强制拉新（曾致 APK 端验收联动代码不生效） -->
-  <script src="{{ url_for('static', filename='app.js') }}?v=0.33"></script>
-  <script src="{{ url_for('static', filename='flow.js') }}?v=0.36"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=0.37"></script>
+  <script src="{{ url_for('static', filename='flow.js') }}?v=0.37"></script>
 </body>
 </html>

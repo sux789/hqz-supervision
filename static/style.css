@@ -26,6 +26,10 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .btn.primary:disabled, .btn.primary[disabled] { background: #9db2a4; border-color: #9db2a4; color: #fff; }
 .btn.ghost { background: transparent; border-color: rgba(255,255,255,.4); color: inherit; }
 .btn.danger { color: #c0392b; border-color: #e2b6b0; }
+/* v0.37：材料检验按钮激活态（正在看项目级材料面板）——深一档的绿 + 琥珀内环，
+   现场一眼看出"现在填的是材料不是小班"；点任一小班即解除 */
+#btnMaterial.cur { background: #1f4d2a; border-color: #1f4d2a;
+                   box-shadow: inset 0 0 0 2px #ffd54f; }
 
 /* 登录 */
 .center-wrap { display: flex; justify-content: center; padding-top: 12vh; }
@@ -308,7 +312,9 @@ textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size
 .fs-item input:disabled { background: #f2f4f6; color: #6b7480; }
 .fs-item textarea { min-height: 64px; resize: vertical; }
 .fs-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.fs-multi { display: flex; gap: 14px; flex-wrap: wrap; }
+/* v0.37：「关联小班」多选可能列出全部小班号（数百项），限高内滚，别把页面撑爆 */
+.fs-multi { display: flex; gap: 14px; flex-wrap: wrap; max-height: 264px; overflow-y: auto;
+            padding: 2px; }
 .fs-chk { display: flex; align-items: center; gap: 7px; padding: 6px 0;
           font-size: 13px; }
 .fs-chk input { width: 17px; height: 17px; }
