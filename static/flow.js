@@ -604,6 +604,7 @@
           }
           return;
         }
+        if (c.verdict) return;      // 结论由底部「通过 / 不通过」按钮给出，不在表单里校验
         if (c.type === '自动') return;
         const v = vals[c.name];
         const label = c.name === s.step ? c.name : s.step + '·' + c.name;
@@ -645,12 +646,15 @@
     const locked = !!d.flow_locked;
     const noteNeed = v2NoteNeed();
     const curName = flowName(d.flow_sheet);
-    const list = (d.flow_list || []).slice().sort((a, b) => (a.no || 0) - (b.no || 0));
+    // 主线按序号在前；独立流程（巡护）排最后，且不参与默认选择
+    const list = (d.flow_list || []).slice().sort((a, b) =>
+      ((a.independent ? 1 : 0) - (b.independent ? 1 : 0)) || ((a.no || 0) - (b.no || 0)));
 
     let h = '<div class="flow-head">'
       + `<div class="flow-title">${esc(curName)}</div>`
       + `<div class="flow-meta">项目类型：${esc(d.cond_val || '')}`
-      + (d.flow_repeat ? ' · 可重复填报（每次提交新增一次记录）' : '')
+      + (d.flow_independent ? ' · 独立流程（可多次，不参与主线先后）'
+        : d.flow_repeat ? ' · 可重复填报（每次提交新增一次记录）' : '')
       + (d.flow_trigger ? ` · ${esc(d.flow_trigger)}` : '')
       + '</div></div>';
 
@@ -660,8 +664,9 @@
     list.forEach((f) => {
       const tag = f.done ? (f.repeat ? '　可继续填报' : '　✓ 已完成')
         : (f.available ? '' : '　🔒 需先完成前置');
+      const noTag = f.independent ? '独立' : `${f.no}. `;
       h += `<option value="${esc(f.sheet)}"${f.sheet === d.flow_sheet ? ' selected' : ''}>`
-        + `${f.no}. ${esc(flowName(f.sheet))}${tag}</option>`;
+        + `${noTag}${esc(flowName(f.sheet))}${tag}</option>`;
     });
     h += '</select>';
     if (d.flow_repeat) {
@@ -684,6 +689,8 @@
     steps.forEach((s) => {
       const vals = v2Vals(s.no);
       const c = (s.controls || [])[0] || {};
+      // 结论行不单独渲染：底部「通过 / 不通过」就是提交按钮
+      if (c.verdict) return;
       // 隐藏备注：不通过 / 选了备注项时才出现；其余情况不占版面
       if (c.hidden && !noteNeed) return;
       h += '<div class="flow-card' + (locked ? ' locked' : '') + '">';
@@ -700,12 +707,15 @@
     const miss = locked ? [] : v2Gate();
     h += '<div class="flow-submit"><span class="prog">'
       + (locked ? '🔒 流程未解锁'
-        : miss.length ? '还差 ' + miss.length + ' 项：' + esc(miss.join('、')) : '可以提交')
+        : miss.length ? '还差 ' + miss.length + ' 项：' + esc(miss.join('、'))
+          : '填完了，选择结论提交')
       + '</span>'
-      + (locked ? '<span class="why">未解锁，提交置灰</span>'
-        : miss.length ? '<span class="why">未完成，提交置灰</span>' : '')
-      + `<button id="flowSubmitV2" class="btn primary"${locked || miss.length || F.busy ? ' disabled' : ''}>`
-      + `提交「${esc(curName)}」</button></div>`;
+      + (locked ? '<span class="why">未解锁，不能提交</span>'
+        : miss.length ? '<span class="why">未完成，点「通过」会列出缺项</span>' : '')
+      + `<button id="flowPass" class="btn pass"${locked || F.busy ? ' disabled' : ''}>`
+      + `✓ 通过</button>`
+      + `<button id="flowReject" class="btn reject"${locked || F.busy ? ' disabled' : ''}>`
+      + `✗ 不通过</button></div>`;
 
     host.innerHTML = h;
 
@@ -731,14 +741,6 @@
         + `${esc(lbl)}</span><b>${hasStd ? esc(stdV) : '—'}</b>`
         + (c.unit ? `<span class="u">${esc(c.unit)}</span>` : '')
         + '</div>';
-    }
-    if (c.verdict) {
-      const cur = String(vals[c.name] || '');
-      h += '<div class="flow-pass">'
-        + `<button class="ps ok${cur === '通过' ? ' cur' : ''}" data-s="${s.no}" data-pass="通过">✓ 通过</button>`
-        + `<button class="ps bad${cur === '不通过' ? ' cur' : ''}" data-s="${s.no}" data-pass="不通过">✗ 不通过</button>`
-        + '</div>';
-      return h;
     }
     if (c.type === '自动') {
       const v = vals[c.name];
@@ -850,14 +852,6 @@
       });
     });
 
-    Array.prototype.forEach.call(host.querySelectorAll('[data-s][data-pass]'), (el) => {
-      on(el, 'click', () => {
-        v2Vals(+el.dataset.s)['是否通过'] = el.dataset.pass;
-        saveDraft();
-        render();          // 重新画：按钮高亮 + 备注区出现/消失
-      });
-    });
-
     Array.prototype.forEach.call(host.querySelectorAll('[data-s][data-att2]'), (el) => {
       on(el, 'click', () => {
         const no = +el.dataset.s, s = v2Step(no);
@@ -868,7 +862,8 @@
       });
     });
 
-    on($('#flowSubmitV2'), 'click', submitV2);
+    on($('#flowPass'), 'click', () => submitV2('通过'));
+    on($('#flowReject'), 'click', () => submitV2('不通过'));
   }
 
   /** 自动字段重算（只改那一格，不整块重画，避免输入框失焦）。
@@ -896,21 +891,43 @@
     const host = $('#flowPanel');
     if (!host) return;
     const bar = host.querySelector('.flow-submit');
-    const btn = host.querySelector('#flowSubmitV2');
-    if (!bar || !btn) return;
+    const pass = host.querySelector('#flowPass');
+    const reject = host.querySelector('#flowReject');
+    if (!bar || !pass || !reject) return;
     const locked = !!F.data.flow_locked;
     const miss = locked ? [] : v2Gate();
     bar.querySelector('.prog').textContent = locked
       ? '🔒 流程未解锁'
-      : miss.length ? '还差 ' + miss.length + ' 项：' + miss.join('、') : '可以提交';
-    btn.disabled = locked || miss.length > 0 || F.busy;
+      : miss.length ? '还差 ' + miss.length + ' 项：' + miss.join('、') : '填完了，选择结论提交';
+    pass.disabled = locked || F.busy;
+    reject.disabled = locked || F.busy;
   }
 
-  async function submitV2() {
+  /** 底部「通过 / 不通过」= 提交：结论写进流程的「是否通过」控件，再走整条提交。
+   *  不通过且备注 <2 汉字时先展开备注框并聚焦，不提交。 */
+  async function submitV2(verdict) {
     if (F.busy) return;
     if (F.data.flow_locked) { toast('该流程尚未解锁，请先完成前置流程', true); return; }
+    const vs = (F.data.steps || []).find((s) => (s.controls || []).some((c) => c.verdict));
+    if (vs) {
+      const vc = (vs.controls || []).find((c) => c.verdict);
+      if (vc) v2Vals(vs.no)[vc.name] = verdict;
+    }
     const miss = v2Gate();
-    if (miss.length) { toast('还有 ' + miss.length + ' 项未完成：' + miss.slice(0, 3).join('、'), true); return; }
+    if (miss.length) {
+      saveDraft();
+      render();          // 选「不通过」后把隐藏的备注框画出来
+      if (verdict === '不通过') {
+        toast('不通过需填写备注（≥2 个汉字）');
+        setTimeout(() => {
+          const el2 = document.querySelector('#flowPanel .flow-card textarea');
+          if (el2) el2.focus();
+        }, 0);
+      } else {
+        toast('还有 ' + miss.length + ' 项未完成：' + miss.slice(0, 3).join('、'), true);
+      }
+      return;
+    }
     const sheet = F.data.flow_sheet;
     F.busy = true;
     refreshV2Submit();
@@ -925,7 +942,7 @@
         body: JSON.stringify({ row: F.rowIdx, flow: sheet, steps: steps, geo: geo }),
       });
       clearDraft();
-      toast('已提交「' + flowName(sheet) + '」');
+      toast('已提交「' + flowName(sheet) + '」·' + verdict);
       await open(F.wid, F.rowIdx, '', sheet);
     } catch (e) {
       toast('提交失败：' + e.message, true);

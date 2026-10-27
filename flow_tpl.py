@@ -182,12 +182,17 @@ def parse_routes(wb):
             raise TplError(f'「流程路由」第 {ln} 行缺少「流程」')
         if d['可重复'] not in REPEAT_VALUES:
             raise TplError(f'「流程路由」第 {ln} 行「可重复」必须是 是 / 否（实际「{d["可重复"]}」）')
+        prereq = [x.strip() for x in re.split(r'[;；]', d['前置流程']) if x.strip()]
+        repeat = d['可重复'] == '是'
         out.append({
             'no': _to_int(d['序号'], len(out) + 1),
             'type': d['项目类型'],
             'flow': flow,
-            'prereq': [x.strip() for x in re.split(r'[;；]', d['前置流程']) if x.strip()],
-            'repeat': d['可重复'] == '是',
+            'prereq': prereq,
+            'repeat': repeat,
+            # 无前置 + 可重复 = 独立流程（如日常巡护）：随时可发起、可多次，
+            # 不参与主线默认选择，也不阻塞 / 解锁任何流程
+            'independent': repeat and not prereq,
             'trigger': d['触发方式'],
             'note': d['说明'],
             'line': ln,
@@ -297,10 +302,11 @@ def parse(wb, data_headers=None):
 
 
 def routes_for(flows, project_type):
-    """某项目类型的流程，按路由「序号」排序。"""
+    """某项目类型的流程：主线按「序号」在前，独立流程（巡护）排最后。"""
     return sorted([r for r in (flows.get('routes') or [])
                    if _s(r.get('type')) == _s(project_type)],
-                  key=lambda r: (r.get('no') or 0, r.get('line') or 0))
+                  key=lambda r: (1 if r.get('independent') else 0,
+                                 r.get('no') or 0, r.get('line') or 0))
 
 
 def steps_of(flows, sheet):

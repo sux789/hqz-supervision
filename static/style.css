@@ -342,8 +342,15 @@ textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size
 .flow-submit .why { margin-left: auto; font-size: 12px; color: #a0681a; }
 .flow-submit .btn.primary { margin-left: auto; }
 .flow-submit .btn.primary:disabled { opacity: .5; cursor: not-allowed; }
+/* v0.39：底部统一「通过 / 不通过」= 提交（取代单独的提交按钮） */
+.flow-submit .btn.pass { margin-left: auto; background: #2f5d3a; border-color: #2f5d3a; color: #fff; }
+.flow-submit .btn.pass:hover { background: #27502f; }
+.flow-submit .btn.reject { background: #fff; border-color: #e2b6b0; color: #c0392b; }
+.flow-submit .btn.reject:hover { background: #fdeaea; }
+.flow-submit .btn.pass:disabled, .flow-submit .btn.reject:disabled { opacity: .5; cursor: not-allowed; }
 @media (max-width: 420px) {
   .flow-submit .btn.primary { margin-left: 0; width: 100%; }
+  .flow-submit .btn.pass, .flow-submit .btn.reject { margin-left: 0; flex: 1; }
   .fs-grid3 { grid-template-columns: 1fr 1fr; }
 }
 

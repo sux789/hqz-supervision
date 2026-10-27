@@ -62,14 +62,20 @@ def check_file(path: Path, override_key=None):
 
     # 与 main.py::_pick_data_sheet（v0.31，doc/019）同一口径：
     # 流程配置表（验收流程/流程-*/使用说明/因子控件对照）不是数据表，排除后再判断
-    meta = {PARAM_SHEET, '验收流程', '使用说明', '因子控件对照'}
+    # v2 模板（v0.38+）：数据表固定叫「设计值」，流程路由/说明 也是非数据页
+    meta = {PARAM_SHEET, '验收流程', '使用说明', '因子控件对照', '流程路由', '说明'}
     is_cfg = lambda n: n in meta or n.startswith('流程-')
     cfgs = [n for n in names if is_cfg(n)]
     others = [n for n in names if n not in meta and not n.startswith('流程-')]
     if not others:
         wb.close()
         return ['只有「参数」' + ('/流程配置' if cfgs else '') + ' sheet，没有数据 sheet'], W, P, info
-    if DATA_SHEET in others:
+    if '设计值' in others:
+        data_name = '设计值'
+        extra = [n for n in others if n != '设计值']
+        if extra:
+            W.append(f'设计值之外还有 {len(extra)} 个 sheet：{extra}（后端优先取「设计值」，建议清理）')
+    elif DATA_SHEET in others:
         data_name = DATA_SHEET
         if len(others) > 1:
             W.append(f'data 之外还有 {len(others) - 1} 个 sheet：'

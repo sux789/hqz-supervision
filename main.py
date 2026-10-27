@@ -638,14 +638,15 @@ def _tpl_default_config(headers):
     cfg['可编辑列'] = ''
     cfg['功能'] = ''
     names = [_s(h) for h in headers]
+    # 级联顺序固定：项目类型 → 标段 → 乡（镇）→ 村（社区），小班最后（文本搜索）。
+    # 模板带「参数」页时以模板值为准，这里只是没参数页时的兜底。
     sel = []
-    for h in names:
-        if h == '小班号':
-            sel.append('小班号|search')
-        elif h in ('项目类型', '标段', '乡（镇）', '乡镇', '村（社区）', '村'):
+    for h in ('项目类型', '标段', '乡（镇）', '乡镇', '村（社区）', '村'):
+        if h in names:
             sel.append(f'{h}|select')
-    if not any(x.endswith('|search') for x in sel):
-        sel.insert(0, '小班号|search')
+    key = '小班号' if '小班号' in names else (names[0] if names else '')
+    if key:
+        sel.append(f'{key}|search')
     cfg['搜索选项'] = ';'.join(sel)
     return cfg
 
@@ -1046,27 +1047,31 @@ def _tpl_route_status(con, wid, ridx, flows, routes):
         out[r['flow']] = {
             'sheet': r['flow'], 'no': r['no'], 'prereq': r['prereq'],
             'repeat': r['repeat'], 'trigger': r['trigger'], 'note': r['note'],
+            'independent': bool(r.get('independent')),
             'done': info['done'], 'has': info['has'], 'available': True,
             '_values': info['values'], '_meta': info['meta'], '_rec_no': info['rec_no'],
         }
     for r in routes:
         cur = out[r['flow']]
-        cur['available'] = all(out.get(p, {}).get('done') for p in r['prereq'])
+        # 独立流程没有前置，永远可发起；也不能被别人的前置引用（模板解析已保证不串线）
+        cur['available'] = (True if r.get('independent')
+                            else all(out.get(p, {}).get('done') for p in r['prereq']))
     return out
 
 
 def _tpl_default_route(routes, status):
     """按路由顺序找"当前该做的那条"：前置完成、自己还没完成；可重复流程始终可选。
 
-    全部完成后落到最后一条（通常是可重复的日常巡护），不会出现空下拉。
+    独立流程（巡护）不参与默认选择；主线全部完成后落到最后一条主线，不会跳到巡护。
     """
-    for r in routes:
+    main = [r for r in routes if not r.get('independent')] or routes
+    for r in main:
         st = status.get(r['flow']) or {}
         if not st.get('available'):
             continue
         if r['repeat'] or not st.get('done'):
             return r
-    return routes[-1] if routes else None
+    return main[-1] if main else None
 
 
 _ARITH = {ast.Add: _op.add, ast.Sub: _op.sub, ast.Mult: _op.mul,
@@ -1175,6 +1180,7 @@ def _tpl_hit(flows, headers, rows, ridx, flow_sheet='', wid=None):
         'flow_locked': not cur['available'],
         'flow_prereq': chosen['prereq'],
         'flow_repeat': bool(chosen['repeat']),
+        'flow_independent': bool(chosen.get('independent')),
         'flow_trigger': chosen['trigger'],
         'values': cur['_values'],
         'meta': cur['_meta'],
@@ -1352,6 +1358,7 @@ def api_flow(wid):
                    flow_list=hit.get('flow_list') or [],
                    flow_locked=bool(hit.get('flow_locked')),
                    flow_repeat=bool(hit.get('flow_repeat')),
+                   flow_independent=bool(hit.get('flow_independent')),
                    flow_prereq=hit.get('flow_prereq') or [],
                    flow_trigger=hit.get('flow_trigger') or '',
                    values=hit.get('values') or {},

@@ -251,11 +251,38 @@ function parseSelCfg() {
   }
 }
 
-function uniqueVals(field) {
+/* 级联：前 N 个 select 字段过滤后的候选行（pos=0 即全部） */
+function prefixIdxs(pos) {
+  let idxs = allRows.map((_, i) => i);
+  for (let j = 0; j < pos; j++) {
+    const c = selCfg[j];
+    if (c.type !== 'select') continue;
+    const v = selState[c.field];
+    if (!v) continue;
+    const ci = cur.headers.indexOf(c.field);
+    idxs = idxs.filter((i) => String(allRows[i][ci] == null ? '' : allRows[i][ci]).trim() === v);
+  }
+  return idxs;
+}
+
+function valsIn(idxs, field) {
   const ci = cur.headers.indexOf(field);
   const set = new Set();
-  for (const r of allRows) { const v = String(r[ci] == null ? '' : r[ci]).trim(); if (v) set.add(v); }
+  for (const i of idxs) { const v = String(allRows[i][ci] == null ? '' : allRows[i][ci]).trim(); if (v) set.add(v); }
   return [...set].sort((a, b) => a.localeCompare(b, 'zh'));
+}
+
+/* 改了第 pos 个字段后，清掉后面已失效的选择（级联回退） */
+function pruneAfter(pos) {
+  for (let j = pos + 1; j < selCfg.length; j++) {
+    const c = selCfg[j];
+    const v = selState[c.field];
+    if (!v) continue;
+    const pre = prefixIdxs(j);
+    const ci = cur.headers.indexOf(c.field);
+    const alive = pre.some((i) => String(allRows[i][ci] == null ? '' : allRows[i][ci]).trim() === v);
+    if (!alive) selState[c.field] = '';
+  }
 }
 
 /* 按搜索栏（select 字段）过滤候选行索引 */
@@ -282,18 +309,20 @@ function syncSelectorToRow(idx) {
 function renderSelectorBar() {
   const bar = $('#selectorBar');
   bar.innerHTML = '';
-  for (const c of selCfg) {
+  selCfg.forEach((c, i) => {
     const wrap = el(`<div class="sel-field"><label>${escapeHtml(c.field)}${c.type === 'search' ? '（输入筛选，点击选中）' : ''}</label></div>`);
     if (c.type === 'select') {
       const sel = document.createElement('select');
       sel.add(new Option('全部', ''));
-      uniqueVals(c.field).forEach((v) => sel.add(new Option(v, v, false, selState[c.field] === v)));
+      // 选项来自前面已选条件的候选行 —— 级联：乡随标段、村随乡、小班随村
+      valsIn(prefixIdxs(i), c.field).forEach((v) => sel.add(new Option(v, v, false, selState[c.field] === v)));
       sel.addEventListener('change', () => {
         selState[c.field] = sel.value;
+        pruneAfter(i);
         const cands = candidateIdxs();
         if (cands.length === 1) jumpRow(cands[0]);
         else if (cands.length && !cands.includes(curIdx)) jumpRow(cands[0]);
-        else updateSelMeta();
+        else renderSelectorBar();
       });
       wrap.appendChild(sel);
     } else {
@@ -342,7 +371,7 @@ function renderSelectorBar() {
       });
     }
     bar.appendChild(wrap);
-  }
+  });
   updateSelMeta();
 }
 

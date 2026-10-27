@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""v2 流程模板（设计值 / 流程路由 / 流程-*）端到端测试（v0.38 doc/030）
+"""v2 流程模板（设计值 / 流程路由 / 参数 / 流程-*）端到端测试（v0.38 doc/030、v0.39 doc/031）
 
 用法：python tests/test_flow_tpl_e2e.py      # 全绿退出码 0
 
 模板结构变了（一列一因子 → 一行一环节），App 的行为也跟着变：
   T1  上传 → flows.schema=flow_tpl/1；5 条路由；设计值表头映射成 std
+  T1c 「参数」页驱动搜索栏（项目类型→标段→乡→村→小班，级联顺序）
   T2  不带 flow → 默认给「当前该做的那条」，其余按路由顺序放进 flow_list
+  T2g 独立流程（日常巡护）排最后、无前置、可多次，且不抢默认流程
   T3  前置未完成 → flow_locked（GET 可预览，POST 409）
   T4  不通过 / 选了带 →备注 的选项 → 备注不足 2 个汉字 400
   T5  必填缺项 400；数值 -5 → 400（服务端权威，C13）
   T6  整条流程一次提交 → 全部环节同一 rec_no
   T7  通过后下一条解锁（整地→回塘底肥→栽植→完工）
   T8  自动(公式)由服务端算：90/(90+10)×100 = 90
-  T9  可重复流程每次提交 rec_no 递增；带 rec_no = 改那一次
+  T9  独立流程先交不阻塞主线；可重复流程每次 rec_no 递增；带 rec_no = 改那一次
   T10 v2 工作簿走老 /flow 提交 → 400（不许绕过整条校验）
 
-模板不在仓库里（业务同事在桌面维护），所以按 TPL_V2 环境变量 → 已知路径 → data/ 里找；
-找不到整段 SKIP，不算失败。
+模板放在仓库 data/ 下（可用 TPL_V2 覆盖）；找不到整段 SKIP，不算失败。
 """
 import io
 import os
@@ -36,7 +37,7 @@ ADMIN = ('雷华雄', 'lhx123')
 
 CANDIDATES = [
     os.environ.get('TPL_V2'),
-    '/Users/sux/Desktop/task-sp-tpl/tpl-人工造林-验收流程模板.xlsx',
+    str(BASE / 'data' / 'tpl-人工造林-验收流程模板.xlsx'),
 ]
 TPL = next((Path(p) for p in CANDIDATES if p and Path(p).exists()), None)
 if TPL is None:
@@ -153,6 +154,11 @@ def main():
         ok('T1b 设计值表被认作数据表（149 小班）',
            g.get('sheet_name') == '设计值' and len(rows) == 149,
            f"{g.get('sheet_name')} {len(rows)} 行")
+        ok('T1c「参数」页驱动搜索栏：项目类型→标段→乡→村→小班（级联顺序）',
+           (g.get('config') or {}).get('搜索选项')
+           == '项目类型|select;标段|select;乡（镇）|select;村（社区）|select;小班号|search'
+           and g.get('key_column') == '小班号',
+           str((g.get('config') or {}).get('搜索选项')))
         ridx = next(i for i, x in enumerate(rows)
                     if str(dict(zip(hdrs, x)).get('小班号', '')).strip() == 'XP-1320')
 
@@ -178,6 +184,13 @@ def main():
            f.get('flow_locked') is False
            and (f.get('flow_list') or [{}])[1].get('available') is False,
            str([(x.get('sheet'), x.get('available')) for x in f.get('flow_list') or []]))
+        patrol = (f.get('flow_list') or [{}])[-1]
+        ok('T2g 独立流程「日常巡护」排最后：无前置、可多次、不抢默认',
+           patrol.get('sheet') == ROUTES[4] and patrol.get('independent') is True
+           and patrol.get('available') is True and patrol.get('repeat') is True
+           and f.get('flow_sheet') != ROUTES[4],
+           f"{patrol.get('sheet')} independent={patrol.get('independent')} "
+           f"available={patrol.get('available')} default={f.get('flow_sheet')}")
 
         # ── 老接口不许走 ──
         r = cli.post(f'/api/workbooks/{wid}/flow', headers=H, json={
@@ -209,6 +222,19 @@ def main():
         ok('T4b 选了「不正确」（→备注）没写备注 → 400',
            r.status_code == 400 and '备注' in str((r.get_json() or {}).get('error', '')),
            str((r.get_json() or {}).get('error'))[:80])
+
+        # ── 独立流程：先交巡护，不许影响主线 ──
+        r = batch(cli, H, wid, ridx, ROUTES[4], full_steps(PATROL_PASS))
+        ok('T9a 独立流程可先于主线提交（rec_no=1）',
+           r.status_code == 200 and (r.get_json() or {}).get('rec_no') == 1,
+           f'{r.status_code} {(r.get_json() or {}).get("rec_no")} '
+           f'{str((r.get_json() or {}).get("error"))[:60]}')
+        f = cli.get(f'/api/workbooks/{wid}/flow?row={ridx}', headers=H).get_json()
+        ok('T9b 巡护提交后主线默认仍是整地、回塘仍锁定（互不阻塞）',
+           f.get('flow_sheet') == ROUTES[0] and f.get('flow_locked') is False
+           and (f.get('flow_list') or [{}])[1].get('available') is False,
+           f"default={f.get('flow_sheet')} "
+           f"回塘locked={not (f.get('flow_list') or [{}])[1].get('available')}")
 
         r = batch(cli, H, wid, ridx, ROUTES[1], full_steps(BASE_PASS))
         ok('T3 前置未完成提交回塘底肥 → 409（流程路由闸门）',
@@ -255,14 +281,18 @@ def main():
         ok('T8b 主线四条流程全部 done',
            all(x.get('done') for x in (f.get('flow_list') or [])[:4]),
            str([(x.get('sheet'), x.get('done')) for x in f.get('flow_list') or []]))
+        f = cli.get(f'/api/workbooks/{wid}/flow?row={ridx}', headers=H).get_json()
+        ok('T8c 主线全完成后默认仍停在完工验收，不跳到独立巡护',
+           f.get('flow_sheet') == ROUTES[3] and f.get('flow_independent') is False,
+           f"{f.get('flow_sheet')} independent={f.get('flow_independent')}")
 
-        # ── 可重复流程：日常巡护 ──
+        # ── 可重复 / 独立流程：日常巡护 ──
         r1 = batch(cli, H, wid, ridx, ROUTES[4], full_steps(PATROL_PASS))
         r2 = batch(cli, H, wid, ridx, ROUTES[4], full_steps(PATROL_PASS))
-        ok('T9 可重复流程连交两次 → rec_no 1/2',
+        ok('T9c 独立流程连交两次 → rec_no 2/3（接着先前那次）',
            r1.status_code == 200 and r2.status_code == 200
-           and (r1.get_json() or {}).get('rec_no') == 1
-           and (r2.get_json() or {}).get('rec_no') == 2,
+           and (r1.get_json() or {}).get('rec_no') == 2
+           and (r2.get_json() or {}).get('rec_no') == 3,
            f'{r1.status_code}/{r2.status_code} '
            f'{(r1.get_json() or {}).get("rec_no")}/{(r2.get_json() or {}).get("rec_no")}')
 
@@ -270,15 +300,16 @@ def main():
         fp = cli.get(f'/api/workbooks/{wid}/flow?row={ridx}&flow={ROUTES[4]}',
                      headers=H).get_json()
         m = (fp.get('multi') or {}).get('1') or {}
-        ok('T9b 带 rec_no=1 提交 = 改那一次，不新增',
-           r3.status_code == 200 and (r3.get_json() or {}).get('rec_no') == 1 and len(m) == 2,
+        ok('T9d 带 rec_no=1 提交 = 改那一次，不新增（仍 3 次）',
+           r3.status_code == 200 and (r3.get_json() or {}).get('rec_no') == 1 and len(m) == 3,
            f'{(r3.get_json() or {}).get("rec_no")} / {len(m)} 条')
-        ok('T9c 巡护多选落库为数组',
+        ok('T9e 巡护多选落库为数组',
            '林地清理、整地巡护' in str((m.get('1') or {}).get('values', {}).get('巡护情况')),
            str((m.get('1') or {}).get('values', {}).get('巡护情况'))[:60])
-        ok('T9d 巡护可重复流程在 GET 里标记 repeat / 定期',
-           fp.get('flow_repeat') is True and fp.get('flow_trigger') == '定期',
-           f"{fp.get('flow_repeat')} {fp.get('flow_trigger')}")
+        ok('T9f 巡护在 GET 里标记 independent / repeat / 定期',
+           fp.get('flow_independent') is True and fp.get('flow_repeat') is True
+           and fp.get('flow_trigger') == '定期',
+           f"{fp.get('flow_independent')} {fp.get('flow_repeat')} {fp.get('flow_trigger')}")
     finally:
         con = sqlite3.connect(_M.DB_PATH)
         con.execute('DELETE FROM workbooks WHERE id=?', (wid,))
