@@ -173,6 +173,22 @@ def init_db():
             updated_at TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS idx_flow_rec
             ON flow_records(workbook_id, row_idx, flow_sheet, step_no);
+        -- v0.40：每次「通过/不通过」提交留一条审计（即使非重复流程的填报值被
+        -- 覆盖，历次结论仍在）；页面最下方日志区读这张表。
+        CREATE TABLE IF NOT EXISTS flow_audit(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workbook_id INTEGER NOT NULL,
+            row_idx INTEGER NOT NULL,
+            flow_sheet TEXT NOT NULL,
+            rec_no INTEGER NOT NULL DEFAULT 0,
+            result TEXT NOT NULL DEFAULT '',
+            operator TEXT NOT NULL DEFAULT '',
+            geo TEXT NOT NULL DEFAULT '',
+            ip TEXT NOT NULL DEFAULT '',
+            steps INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_flow_audit
+            ON flow_audit(workbook_id, row_idx, flow_sheet);
     ''')
     # 轻量迁移：v0.21 前建的 users 表无 pwd_ver 列（改密码令旧令牌失效用）
     ucols = {r[1] for r in con.execute('PRAGMA table_info(users)')}
@@ -1039,6 +1055,39 @@ def _decode_value(v):
     return v
 
 
+def _geo_obj(s):
+    try:
+        g = json.loads(s or '{}')
+    except (TypeError, ValueError):
+        return {}
+    return g if isinstance(g, dict) else {}
+
+
+def _flow_log_from_records(recs):
+    """v0.40 之前的提交没有 flow_audit 行：从 factor='' 的环节留痕反推日志。
+
+    一次批量提交里每个环节各有一条 factor='' 记录（同 rec_no / 结论 / 定位），
+    按 rec_no 归并成一条；rec_no=0 的非重复流程就是最近一次。
+    """
+    seen = {}
+    for x in recs:
+        if x['factor']:
+            continue
+        rn = int(x['rec_no'] or 0)
+        e = seen.get(rn)
+        if not e:
+            e = seen[rn] = {'rec_no': rn, 'result': '', 'operator': '', 'ip': '',
+                            'geo': {}, 'steps': 0, 'at': ''}
+        e['steps'] += 1
+        e['result'] = x['result'] or e['result']
+        e['operator'] = x['operator'] or e['operator']
+        e['ip'] = x['ip'] or e['ip']
+        e['geo'] = _geo_obj(x['geo']) or e['geo']
+        e['at'] = x['updated_at'] or x['created_at'] or e['at']
+    return sorted(seen.values(), key=lambda e: (e['rec_no'], e['at']),
+                  reverse=True)[:100]
+
+
 def _tpl_route_status(con, wid, ridx, flows, routes):
     """每条流程的 done / has / available（available = 前置流程全部完成）。"""
     out = {}
@@ -1322,10 +1371,25 @@ def api_flow(wid):
     # 已填记录：按 step_no 归拢，factor → {value, att, result, operator, updated_at}
     con = db()
     recs = con.execute(
-        'SELECT step_no,rec_no,factor,value,att_json,result,operator,updated_at'
+        'SELECT step_no,rec_no,factor,value,att_json,result,operator,geo,ip,'
+        ' created_at,updated_at'
         ' FROM flow_records WHERE workbook_id=? AND row_idx=? AND flow_sheet=?'
         ' ORDER BY step_no, rec_no, id', (wid, ridx, hit['sheet'])).fetchall()
+    # v0.40：通过/不通过审计日志（新的在前）；老数据没有审计行时从填报记录兜底
+    flow_log = []
+    for x in con.execute(
+            'SELECT rec_no,result,operator,geo,ip,steps,created_at FROM flow_audit'
+            ' WHERE workbook_id=? AND row_idx=? AND flow_sheet=?'
+            ' ORDER BY id DESC LIMIT 100', (wid, ridx, hit['sheet'])).fetchall():
+        flow_log.append({
+            'rec_no': int(x['rec_no'] or 0), 'result': x['result'] or '',
+            'operator': x['operator'] or '', 'ip': x['ip'] or '',
+            'geo': _geo_obj(x['geo']), 'steps': int(x['steps'] or 0),
+            'at': x['created_at'] or '',
+        })
     con.close()
+    if not flow_log:
+        flow_log = _flow_log_from_records(recs)
     by_step = {}
     multi = {}
     for x in recs:
@@ -1363,6 +1427,7 @@ def api_flow(wid):
                    flow_trigger=hit.get('flow_trigger') or '',
                    values=hit.get('values') or {},
                    meta=hit.get('meta') or {},
+                   flow_log=flow_log,
                    flow_rec_no=hit.get('rec_no') or 0,
                    note_step_no=hit.get('note_step_no') or 0,
                    note_field=hit.get('note_field') or '')
@@ -1873,6 +1938,11 @@ def api_flow_batch(wid):
                 ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (wid, ridx, flow, no, '', now, att_json, verdict, operator, now, now,
                  geo_s, ip, rec_no))
+    # v0.40：每次提交（含改那一次）都留审计，页面日志区按此展示
+    con.execute(
+        'INSERT INTO flow_audit(workbook_id,row_idx,flow_sheet,rec_no,result,operator,'
+        ' geo,ip,steps,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
+        (wid, ridx, flow, rec_no, verdict, operator, geo_s, ip, len(hit['steps']), now))
     con.commit()
     con.close()
     _applog('flow', f'wid={wid} row={ridx} v2整条提交 flow={flow} steps={len(hit["steps"])} '
@@ -1897,6 +1967,7 @@ def api_delete(wid):
         con.execute('DELETE FROM accept_logs WHERE workbook_id=?', (wid,))
         con.execute('DELETE FROM photo_sync WHERE workbook_id=?', (wid,))
         con.execute('DELETE FROM flow_records WHERE workbook_id=?', (wid,))   # v0.31
+        con.execute('DELETE FROM flow_audit WHERE workbook_id=?', (wid,))     # v0.40
         con.commit()
         con.close()
         shutil.rmtree(UPLOAD_DIR / str(wid), ignore_errors=True)   # 源模板目录

@@ -354,6 +354,28 @@ textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size
   .fs-grid3 { grid-template-columns: 1fr 1fr; }
 }
 
+/* v0.40：页面最下方提交日志（每次通过 / 不通过都留痕） */
+.flow-log { margin: 14px 0 8px; border: 1px solid #e3e8ec; border-radius: 8px;
+            background: #fbfcfd; padding: 10px 12px; }
+.flow-log .fl-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+                     font-size: 13px; font-weight: 600; color: #2f3a44; }
+.flow-log .fl-cnt { font-size: 11px; font-weight: 400; color: #5b6570;
+                    background: #eef1f3; border-radius: 10px; padding: 1px 8px; }
+.flow-log .fl-hint { margin-left: auto; font-size: 11px; font-weight: 400; color: #8a939e; }
+.flow-log .fl-empty { margin-top: 8px; font-size: 12px; color: #8a939e; }
+.flow-log .fl-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.flow-log .fl-item { border: 1px solid #eef1f3; border-radius: 6px; background: #fff;
+                     padding: 7px 9px; }
+.flow-log .fl-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+                     font-size: 12px; }
+.flow-log .fl-res { font-weight: 600; color: #5b6570; }
+.flow-log .fl-res.pass { color: #2f7a4d; }
+.flow-log .fl-res.reject { color: #c0392b; }
+.flow-log .fl-nth { color: #8a939e; font-size: 11px; }
+.flow-log .fl-time { margin-left: auto; color: #5b6570; font-variant-numeric: tabular-nums; }
+.flow-log .fl-sub { margin-top: 4px; display: flex; gap: 12px; flex-wrap: wrap;
+                    font-size: 11px; color: #8a939e; }
+
 /* ── v0.38：v2 模板（设计值 / 流程路由）────────────────────────────
    选流程下拉 + 设计值前置提示（放大输入组） */
 .flow-pick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;

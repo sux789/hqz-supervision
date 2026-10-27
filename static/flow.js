@@ -640,6 +640,46 @@
     });
   }
 
+  function v2GeoText(g) {
+    if (!g || g.lat == null || g.lon == null || g.lat === '' || g.lon === '') return '—';
+    return `${g.lat}, ${g.lon}` + (g.acc ? `（±${g.acc}m）` : '');
+  }
+
+  /** 页面最下方日志区：每次通过/不通过都留痕（结论 · 时间 · 操作人 · IP · 经纬度）。 */
+  function v2LogHtml() {
+    const d = F.data || {};
+    const list = d.flow_log || [];
+    const repeat = !!d.flow_repeat;
+    let h = '<div class="flow-log"><div class="fl-head">提交日志'
+      + `<span class="fl-cnt">${list.length} 条</span>`
+      + '<span class="fl-hint">通过 / 不通过均留痕</span></div>';
+    if (!list.length) {
+      h += '<div class="fl-empty">还没有通过 / 不通过的提交记录</div></div>';
+      return h;
+    }
+    h += '<div class="fl-list">';
+    list.forEach((x, i) => {
+      const pass = x.result === '通过';
+      const reject = x.result === '不通过';
+      const tag = x.result ? (pass ? '✓ 通过' : reject ? '✗ 不通过' : esc(x.result)) : '—';
+      const nth = repeat && x.rec_no ? `第 ${x.rec_no} 次`
+        : (i === 0 ? '最近一次' : `历史 ${i}`);
+      h += '<div class="fl-item">'
+        + '<div class="fl-line">'
+        + `<span class="fl-res${pass ? ' pass' : reject ? ' reject' : ''}">${tag}</span>`
+        + `<span class="fl-nth">${nth}</span>`
+        + `<span class="fl-time">${esc(String(x.at || '').slice(0, 16))}</span></div>`
+        + '<div class="fl-sub">'
+        + `<span>操作人 ${esc(x.operator || '—')}</span>`
+        + `<span>IP ${esc(x.ip || '—')}</span>`
+        + `<span>经纬度 ${esc(v2GeoText(x.geo))}</span>`
+        + (x.steps ? `<span>${x.steps} 个环节</span>` : '')
+        + '</div></div>';
+    });
+    h += '</div></div>';
+    return h;
+  }
+
   function renderV2(host) {
     v2Normalize();
     const d = F.data, steps = d.steps || [];
@@ -716,6 +756,8 @@
       + `✓ 通过</button>`
       + `<button id="flowReject" class="btn reject"${locked || F.busy ? ' disabled' : ''}>`
       + `✗ 不通过</button></div>`;
+
+    h += v2LogHtml();
 
     host.innerHTML = h;
 

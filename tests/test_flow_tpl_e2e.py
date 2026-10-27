@@ -54,10 +54,12 @@ def ok(name, cond, detail=''):
     print(f'  {"✅" if cond else "❌"} {name}  {detail}')
 
 
-def batch(cli, H, wid, ridx, flow, steps, rec_no=None):
+def batch(cli, H, wid, ridx, flow, steps, rec_no=None, geo=None):
     body = {'row': ridx, 'flow': flow, 'steps': steps}
     if rec_no is not None:
         body['rec_no'] = rec_no
+    if geo is not None:
+        body['geo'] = geo
     return cli.post(f'/api/workbooks/{wid}/flow/batch', headers=H, json=body)
 
 
@@ -224,7 +226,8 @@ def main():
            str((r.get_json() or {}).get('error'))[:80])
 
         # ── 独立流程：先交巡护，不许影响主线 ──
-        r = batch(cli, H, wid, ridx, ROUTES[4], full_steps(PATROL_PASS))
+        r = batch(cli, H, wid, ridx, ROUTES[4], full_steps(PATROL_PASS),
+                  geo={'lat': 22.1234, 'lon': 102.1234, 'acc': 8})
         ok('T9a 独立流程可先于主线提交（rec_no=1）',
            r.status_code == 200 and (r.get_json() or {}).get('rec_no') == 1,
            f'{r.status_code} {(r.get_json() or {}).get("rec_no")} '
@@ -261,6 +264,12 @@ def main():
         ok('T7c 常量设计值也进 std（回塘底肥 1.5kg/株）',
            f.get('std', {}).get('有机肥1.5kg/株') == '1.5kg/株',
            str(f.get('std', {}).get('有机肥1.5kg/株')))
+        lg = fl0.get('flow_log') or []
+        ok('T7g 主线流程也出日志：结论/操作人/时间/环节数',
+           len(lg) == 1 and lg[0].get('result') == '通过'
+           and lg[0].get('operator') == ADMIN[0] and lg[0].get('at')
+           and lg[0].get('steps') == 8,
+           str(lg[:1])[:120])
 
         r = batch(cli, H, wid, ridx, ROUTES[1], full_steps(BASE_PASS))
         ok('T7d 回塘底肥提交成功', r.status_code == 200,
@@ -310,10 +319,25 @@ def main():
            fp.get('flow_independent') is True and fp.get('flow_repeat') is True
            and fp.get('flow_trigger') == '定期',
            f"{fp.get('flow_independent')} {fp.get('flow_repeat')} {fp.get('flow_trigger')}")
+
+        # ── v0.40 提交日志：每次通过/不通过都留痕（含改那一次）──
+        lg = fp.get('flow_log') or []
+        ok('T9g 独立流程日志 4 条（含改第 1 次），结论/操作人/IP 齐全且新的在前',
+           len(lg) == 4
+           and all(x.get('result') == '通过' and x.get('operator') == ADMIN[0]
+                   and x.get('ip') for x in lg)
+           and [x.get('rec_no') for x in lg] == [1, 3, 2, 1],
+           f'{len(lg)} 条 rec={[x.get("rec_no") for x in lg]}')
+        g0 = (lg[-1] or {}).get('geo') or {}
+        ok('T9h 日志记下提交瞬间经纬度（22.1234 / 102.1234）',
+           str(g0.get('lat')) == '22.1234' and str(g0.get('lon')) == '102.1234'
+           and str(g0.get('acc')) == '8',
+           str(g0)[:80])
     finally:
         con = sqlite3.connect(_M.DB_PATH)
         con.execute('DELETE FROM workbooks WHERE id=?', (wid,))
         con.execute('DELETE FROM flow_records WHERE workbook_id=?', (wid,))
+        con.execute('DELETE FROM flow_audit WHERE workbook_id=?', (wid,))
         con.commit()
         con.close()
         shutil.rmtree(_M.UPLOAD_DIR / str(wid), ignore_errors=True)
