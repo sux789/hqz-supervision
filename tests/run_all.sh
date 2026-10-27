@@ -37,6 +37,7 @@ echo
 echo "########## 4/5 端到端测试 ##########"
 $PY tests/test_e2e.py
 $PY tests/test_flow_e2e.py
+$PY tests/test_flow_tpl_e2e.py
 
 echo
 echo "########## 5/5 照片 EXIF 读取/回写（node）##########"

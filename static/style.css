@@ -347,7 +347,34 @@ textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size
   .fs-grid3 { grid-template-columns: 1fr 1fr; }
 }
 
-/* 跨环节通用区（验收结果 / 整改期限）—— 不在「填报控件」列里，但每个环节必填 */
+/* ── v0.38：v2 模板（设计值 / 流程路由）────────────────────────────
+   选流程下拉 + 设计值前置提示（放大输入组） */
+.flow-pick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+             margin-top: 12px; padding: 10px 12px; background: #f4f7fa;
+             border: 1px solid #dde5ec; border-radius: 8px; }
+.flow-pick label { font-size: 13px; font-weight: 600; }
+.flow-pick select { flex: 1 1 220px; min-width: 180px; padding: 9px 10px;
+                    font: inherit; font-size: 14px; border: 1px solid #c9d2db;
+                    border-radius: 6px; background: #fff; color: #26303a; }
+.flow-pick .fs-hint { margin-left: 0; }
+
+/* 设计值提示：放在输入组之前，值放大加粗，现场先看设计再填实测 */
+.fs-design { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+             margin-bottom: 8px; padding: 9px 12px; border-radius: 8px;
+             background: #eef6f0; border: 1px solid #cfe3d6; color: #24503a; }
+.fs-design .k { font-size: 12px; color: #4a6b57; }
+.fs-design b { font-size: 20px; font-weight: 700; letter-spacing: .3px; }
+.fs-design .u { font-size: 12px; color: #4a6b57; }
+.fs-design .tag { font-size: 10px; padding: 1px 6px; border-radius: 999px;
+                  background: #d8ecdf; color: #2f5d3a; }
+
+/* 有设计值的输入组放大一档（触屏好点、读数不费劲） */
+.flow-ctrls.v2-big .fs-item input[type="text"],
+.flow-ctrls.v2-big .fs-item input[type="number"],
+.flow-ctrls.v2-big .fs-item select { font-size: 18px; padding: 12px 12px; font-weight: 600; }
+.flow-ctrls.v2-big .fs-label { font-size: 14px; }
+
+
 .fs-common { margin-top: 14px; padding-top: 12px; border-top: 1px solid #eef1f3;
              background: #fafbfc; border-radius: 6px; padding-left: 10px; padding-right: 10px; }
 .flow-submit { position: sticky; bottom: 0; z-index: 5; box-shadow: 0 -1px 3px rgba(0,0,0,.05); }

@@ -6,11 +6,13 @@
      C07 相片不落服务器（App 存系统相册 / 浏览器下载，前端仅记录文件名提示）
 启动：python main.py  →  http://127.0.0.1:8720
 """
+import ast
 import base64
 import hashlib
 import hmac
 import io
 import json
+import operator as _op
 import re
 import shutil
 import sqlite3
@@ -29,12 +31,13 @@ from werkzeug.exceptions import HTTPException
 
 import flow_parser
 import flow_config
+import flow_tpl
 import sync_cloud
 import track_export
 from param_parser import (ParamError, _s, check_unique_column, export_filters_of,
                           filter_options, filter_rows, log_fields_of, merge_rows,
                           parse_params, percent_cols_of, row_key_column, split_list,
-                          unique_key_of)
+                          unique_key_of, KEYS as PARAM_KEYS)
 
 BASE = Path(__file__).resolve().parent
 DATA_DIR = BASE / 'data'
@@ -530,7 +533,8 @@ def _norm_rows(headers, rows, config=None):
 PARAM_SHEET = '参数'   # 参数 sheet 固定名（C02）
 DATA_SHEET = 'data'    # 数据 sheet 约定名（v0.23，C11）
 # 非数据 sheet（v0.31，doc/019）：这些 sheet 不参与"选哪个当数据表"的判断
-META_SHEETS = {PARAM_SHEET, flow_parser.FLOW_REGISTRY_SHEET, '使用说明', '因子控件对照'}
+META_SHEETS = {PARAM_SHEET, flow_parser.FLOW_REGISTRY_SHEET, '使用说明', '因子控件对照',
+               flow_tpl.ROUTE_SHEET, flow_tpl.DOC_SHEET}
 
 
 def _is_flow_sheet(n):
@@ -547,7 +551,12 @@ def _pick_data_sheet(sheetnames):
     v0.31（doc/019）：验收流程工作簿会带「验收流程」「流程-XXX」「使用说明」
     「因子控件对照」等说明性 sheet，它们**不是数据表**，必须排除后再判断，
     否则一份流程 Excel 会因为 sheet 太多而根本传不上去。
+
+    v2 流程模板（flow_tpl）：第一个 sheet「设计值」就是数据表，直接认领。
     """
+    if flow_tpl.DESIGN_SHEET in sheetnames and flow_tpl.ROUTE_SHEET in sheetnames:
+        return flow_tpl.DESIGN_SHEET
+
     others = [n for n in sheetnames
               if n not in META_SHEETS and not _is_flow_sheet(n)]
     if not others:
@@ -562,15 +571,29 @@ def _pick_data_sheet(sheetnames):
 
 
 def _parse_flows(wb, headers=None, rows=None):
-    """解析验收流程配置（v0.31 老格式 + v0.35 业务员填写版，doc/019 / doc/027）。
+    """解析验收流程配置（v0.31 老格式 + v0.35 业务员填写版 + v2 模板，doc/019 / doc/027）。
 
-    两套格式**共用同一个落库结构**（registry + flows），前端无感：
+    三套格式**各自落地、前端按 schema 分派**：
     - `流程-XXX` 12 列大宽表（程序员口径，flow_parser）
     - `①流程 / ②环节 / ③核验项` 业务员填写版（flow_config，优先识别）
+    - `设计值 / 流程路由 / 流程-*` v2 模板（flow_tpl，界面为「选流程 → 整张表单」）
 
     流程配置**不阻断上传**：解析失败时记一条 warning 存进 flows_json['warn']，
     界面退回原网格填表 —— 现场不能因为"流程表写错了一个字"就填不了表。
     """
+    if flow_tpl.is_tpl_doc(wb):
+        try:
+            res = flow_tpl.parse(wb, data_headers=headers)
+        except flow_tpl.TplError as e:
+            return json.dumps({'registry': [], 'flows': {}, 'warn': [
+                {'level': 'error', 'text': 'v2 流程模板有错误，本次不生效：' + str(e)}]},
+                ensure_ascii=False)
+        except Exception as e:      # 结构异常也不能让整份 Excel 传不上来
+            return json.dumps({'registry': [], 'flows': {}, 'warn': [
+                {'level': 'error', 'text': 'v2 流程模板解析失败：' + str(e)}]},
+                ensure_ascii=False)
+        return json.dumps(res, ensure_ascii=False)
+
     if flow_config.is_user_doc(wb):
         res = flow_config.parse(wb, data_headers=headers)
         if res['errors']:
@@ -605,6 +628,28 @@ def _parse_flows(wb, headers=None, rows=None):
     return json.dumps(out, ensure_ascii=False)
 
 
+def _tpl_default_config(headers):
+    """v2 流程模板没有「参数」页时的缺省配置（零配置即可跑通）。
+
+    只影响搜索栏与工具按钮：v2 的界面主体是「选流程 → 整张表单」，数据网格不显示，
+    所以「可编辑列」为空；「功能」也为空（模板暂未声明拍照/轨迹）。
+    """
+    cfg = {k: '' for k in PARAM_KEYS}
+    cfg['可编辑列'] = ''
+    cfg['功能'] = ''
+    names = [_s(h) for h in headers]
+    sel = []
+    for h in names:
+        if h == '小班号':
+            sel.append('小班号|search')
+        elif h in ('项目类型', '标段', '乡（镇）', '乡镇', '村（社区）', '村'):
+            sel.append(f'{h}|select')
+    if not any(x.endswith('|search') for x in sel):
+        sel.insert(0, '小班号|search')
+    cfg['搜索选项'] = ';'.join(sel)
+    return cfg
+
+
 def parse_workbook_storage(stream):
     """解析上传的 xlsx：数据 sheet + 参数 sheet（+ 验收流程 sheet，v0.31）。
 
@@ -613,16 +658,20 @@ def parse_workbook_storage(stream):
     """
     wb = openpyxl.load_workbook(stream, data_only=True, read_only=True)
     try:
-        if PARAM_SHEET not in wb.sheetnames:
+        is_tpl = flow_tpl.is_tpl_doc(wb)
+        if PARAM_SHEET not in wb.sheetnames and not is_tpl:
             raise ParamError(
                 f'上传的 Excel 缺少「{PARAM_SHEET}」sheet（需同时含数据 sheet 和「{PARAM_SHEET}」sheet；'
                 f'当前 sheet：{wb.sheetnames}）')
         data_name = _pick_data_sheet(wb.sheetnames)
 
-        ws_p = wb[PARAM_SHEET]
-        prows = [(i, r) for i, r in enumerate(
-            ws_p.iter_rows(max_col=6, values_only=True), 1)
-            if any(x not in (None, '') for x in r)]
+        # v2 流程模板可以不带「参数」页：搜索栏/功能全部走缺省值（见 _tpl_default_config）
+        prows = []
+        if PARAM_SHEET in wb.sheetnames:
+            ws_p = wb[PARAM_SHEET]
+            prows = [(i, r) for i, r in enumerate(
+                ws_p.iter_rows(max_col=6, values_only=True), 1)
+                if any(x not in (None, '') for x in r)]
 
         ws_d = wb[data_name]
         it = ws_d.iter_rows(max_col=64, values_only=True)  # read_only 维度可能误报列数，强制扩列
@@ -641,7 +690,7 @@ def parse_workbook_storage(stream):
             if any(v not in (None, '') for v in vals[:ncols]):
                 rows.append(vals[:ncols])
 
-        config = parse_params(prows, headers)
+        config = parse_params(prows, headers) if prows else _tpl_default_config(headers)
         rows = _norm_rows(headers, rows, config)
         # C11：声明了 unique-key 才校验（未声明 = 不校验，旧模板零改动）
         uerr = check_unique_column(rows, headers, config)
@@ -807,6 +856,9 @@ def _entries_of(flows, headers, rows, ridx, file_name=''):
     """
     reg = (flows or {}).get('registry') or []
     fmap = (flows or {}).get('flows') or {}
+    # v2 模板没有「入口 tab」：所有流程按路由顺序进同一个下拉框，由前端渲染 select
+    if (flows or {}).get('schema') == 'flow_tpl/1':
+        return []
     if not reg:
         return []
     if ridx is not None and ridx < 0:
@@ -888,6 +940,8 @@ def _hit_payload(m, std, std_cols, warns):
             'verdict': s.get('verdict', ''),
             'question': s.get('question', ''),
             'note_required': bool(s.get('note_required')),
+            'note_field': s.get('note_field', ''),
+            'note_no': s.get('note_no', 0),
             'unique': s.get('unique', '不校验'),
             'prev': s.get('prev') or [],
             'prev_result': s.get('prev_result') or {},
@@ -936,7 +990,202 @@ def _project_hit(reg, fmap, headers, rows, file_name, warns):
     return _hit_payload(m, std, cols, warns)
 
 
-def _flow_hit(flows, headers, rows, ridx, file_name='', entry=''):
+def _tpl_row_type(headers, rows, ridx):
+    if ridx is None or ridx < 0 or ridx >= len(rows):
+        return ''
+    return _s(dict(zip(headers, rows[ridx])).get('项目类型'))
+
+
+def _tpl_flow_info(con, wid, ridx, flow, steps):
+    """一条流程在某个小班上的完成状态 + 最近一次的值（v2 模板）。
+
+    一次提交会把流程内所有环节写成同一个 rec_no（批次），所以取最大 rec_no
+    就是"最近一次填报"。完成 = 最近一次里每个环节的结论都在 PASS_RESULTS。
+    """
+    rows = con.execute(
+        'SELECT step_no,rec_no,factor,value,result,operator,updated_at'
+        ' FROM flow_records WHERE workbook_id=? AND row_idx=? AND flow_sheet=?'
+        ' ORDER BY rec_no, id', (wid, ridx, flow)).fetchall() if con is not None else []
+    latest = max([int(x['rec_no'] or 0) for x in rows], default=0) if rows else 0
+    values, meta = {}, {}
+    for x in rows:
+        rn = int(x['rec_no'] or 0)
+        if rn != latest:
+            continue
+        sn = str(int(x['step_no']))
+        if x['factor']:
+            values.setdefault(sn, {})[x['factor']] = _decode_value(x['value'])
+        else:
+            meta[sn] = {'result': x['result'] or '', 'operator': x['operator'] or '',
+                        'updated_at': x['updated_at'] or ''}
+    done = bool(steps) and all(
+        (meta.get(str(int(s['no']))) or {}).get('result') in flow_config.PASS_RESULTS
+        for s in steps
+        # v2：一条流程只有一个「是否通过」结论环节，其余环节没有独立结论；
+        # 只按结论环节判完成，否则永远 done=False，流程永远不往下走
+        if s.get('verdict'))
+    return {'has': bool(rows), 'done': done, 'values': values, 'meta': meta,
+            'rec_no': latest}
+
+
+def _decode_value(v):
+    """flow_records 里多选/勾选存 JSON 字符串；取回时按首字符判断，不硬 parse。"""
+    if isinstance(v, str) and v[:1] in ('[', '{'):
+        try:
+            return json.loads(v)
+        except (TypeError, ValueError):
+            return v
+    return v
+
+
+def _tpl_route_status(con, wid, ridx, flows, routes):
+    """每条流程的 done / has / available（available = 前置流程全部完成）。"""
+    out = {}
+    for r in routes:
+        info = _tpl_flow_info(con, wid, ridx, r['flow'], flow_tpl.steps_of(flows, r['flow']))
+        out[r['flow']] = {
+            'sheet': r['flow'], 'no': r['no'], 'prereq': r['prereq'],
+            'repeat': r['repeat'], 'trigger': r['trigger'], 'note': r['note'],
+            'done': info['done'], 'has': info['has'], 'available': True,
+            '_values': info['values'], '_meta': info['meta'], '_rec_no': info['rec_no'],
+        }
+    for r in routes:
+        cur = out[r['flow']]
+        cur['available'] = all(out.get(p, {}).get('done') for p in r['prereq'])
+    return out
+
+
+def _tpl_default_route(routes, status):
+    """按路由顺序找"当前该做的那条"：前置完成、自己还没完成；可重复流程始终可选。
+
+    全部完成后落到最后一条（通常是可重复的日常巡护），不会出现空下拉。
+    """
+    for r in routes:
+        st = status.get(r['flow']) or {}
+        if not st.get('available'):
+            continue
+        if r['repeat'] or not st.get('done'):
+            return r
+    return routes[-1] if routes else None
+
+
+_ARITH = {ast.Add: _op.add, ast.Sub: _op.sub, ast.Mult: _op.mul,
+          ast.Div: _op.truediv, ast.USub: _op.neg, ast.UAdd: _op.pos}
+
+
+def _safe_arith(expr):
+    """只允许 + - * / 与括号的数字表达式（不 eval，模板内容不可信）。"""
+    def walk(n):
+        if isinstance(n, ast.Expression):
+            return walk(n.body)
+        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)):
+            return float(n.value)
+        if isinstance(n, ast.BinOp) and type(n.op) in _ARITH:
+            return _ARITH[type(n.op)](walk(n.left), walk(n.right))
+        if isinstance(n, ast.UnaryOp) and type(n.op) in _ARITH:
+            return _ARITH[type(n.op)](walk(n.operand))
+        raise ValueError('不支持的公式')
+    return walk(ast.parse(expr, mode='eval'))
+
+
+def _tpl_formula(expr, values):
+    """v2「自动(公式)」求值 → 数字；变量名解析不出来 / 值不是数字 → None。
+
+    模板里的变量写的是短名（公式 `成活株数/(成活株数+死亡株数)×100%`，
+    环节却叫「样地调查成活株数」），所以先精确匹配，再按**后缀唯一匹配**。
+    末尾的 `%` 是"按百分数展示"的单位，去掉后 ×100 才是 0-100 的数值。
+    """
+    s = _s(expr)
+    if not s:
+        return None
+    s = (s.replace('×', '*').replace('÷', '/')
+          .replace('（', '(').replace('）', ')').replace('，', ','))
+    s = re.sub(r'%\s*$', '', s)
+    nums = {}
+    for tok in re.findall(r'[\u4e00-\u9fff]+', s):
+        if tok in nums:
+            continue
+        cand = [k for k in values if _s(k) == tok]
+        if not cand:
+            cand = ([k for k in values if _s(k).endswith(tok)]
+                    or [k for k in values if tok in _s(k)])
+        if not cand:
+            return None
+        try:
+            nums[tok] = float(_s(values.get(cand[0])))
+        except (TypeError, ValueError):
+            return None
+    for tok in sorted(nums, key=len, reverse=True):
+        s = s.replace(tok, ('%.6f' % nums[tok]).rstrip('0').rstrip('.'))
+    try:
+        return round(_safe_arith(s), 2)
+    except (ValueError, SyntaxError, ZeroDivisionError, TypeError):
+        return None
+
+
+def _tpl_hit(flows, headers, rows, ridx, flow_sheet='', wid=None):
+    """v2 模板：某小班的一条流程（含路由状态、设计值、备注行引用）。"""
+    if ridx is None or ridx < 0 or ridx >= len(rows):
+        return None
+    ptype = _tpl_row_type(headers, rows, ridx)
+    routes = flow_tpl.routes_for(flows, ptype)
+    if not routes:
+        return None
+    con = db() if wid is not None else None
+    try:
+        status = _tpl_route_status(con, wid, ridx, flows, routes)
+    finally:
+        if con is not None:
+            con.close()
+    chosen = next((r for r in routes if r['flow'] == flow_sheet), None)
+    if flow_sheet and not chosen:
+        return None
+    if not chosen:
+        chosen = _tpl_default_route(routes, status)
+    if not chosen:
+        return None
+    steps = [dict(s, multi=bool(chosen['repeat']))
+             for s in flow_tpl.steps_of(flows, chosen['flow'])]
+    if not steps:
+        return None
+    row = dict(zip(headers, rows[ridx]))
+    m = {'sheet': chosen['flow'], 'prio': chosen['no'],
+         'cond_field': '项目类型', 'cond_val': ptype, 'scope': '全部',
+         'steps': steps}
+    payload = _hit_payload(m, flow_parser.std_lookup(row), headers,
+                           list(flows.get('warn') or []))
+    # 常量设计值（常量：1.5kg/株）没有 data 列，_hit_payload 拿不到，这里补上
+    for s in payload['steps']:
+        for c in s['controls']:
+            if c.get('design_const') and c.get('design_value'):
+                payload['std'][c['name']] = c['design_value']
+    note_no, note_field = 0, ''
+    for s in steps:
+        if s.get('note_no'):
+            note_no, note_field = s['note_no'], s.get('note_field') or '备注'
+            break
+    cur = status[chosen['flow']]
+    payload.update({
+        'schema': 'flow_tpl/1',
+        'entry': '',
+        'flow_sheet': chosen['flow'],
+        # 下拉列表只带路由信息；values/meta 留在本题流程上，避免每个选项都背一份填报数据
+        'flow_list': [{k: v for k, v in status[r['flow']].items()
+                       if not k.startswith('_')} for r in routes],
+        'flow_locked': not cur['available'],
+        'flow_prereq': chosen['prereq'],
+        'flow_repeat': bool(chosen['repeat']),
+        'flow_trigger': chosen['trigger'],
+        'values': cur['_values'],
+        'meta': cur['_meta'],
+        'rec_no': cur['_rec_no'],
+        'note_step_no': note_no,
+        'note_field': note_field,
+    })
+    return payload
+
+
+def _flow_hit(flows, headers, rows, ridx, file_name='', entry='', flow_sheet='', wid=None):
     """该行/该项目命中的流程（含各环节 + 每个因子的标准值），未命中返回 None。
 
     `entry` 给定（验收/巡视/材料）时只在带该入口后缀的流程里匹配；
@@ -944,6 +1193,9 @@ def _flow_hit(flows, headers, rows, ridx, file_name='', entry=''):
     **ridx < 0 = 项目级**（v0.37 材料检验按批次，不挂小班档案）：
     不走行条件匹配，按入口认领「独立入口」流程，标准值只给项目级常量列。
     """
+    # v0.38：v2 模板（设计值 / 流程路由 / 流程-XXX）是另一套 schema，先分流
+    if (flows or {}).get('schema') == 'flow_tpl/1':
+        return _tpl_hit(flows, headers, rows, ridx, flow_sheet, wid)
     if not flows or not flows.get('registry') or not flows.get('flows'):
         return None
     reg, fmap = flows['registry'], flows['flows']
@@ -1053,8 +1305,9 @@ def api_flow(wid):
     rows = json.loads(r['rows'])
     flows = _wb_flows(r)
     entry = _s(request.args.get('entry'))[:16]
+    flow_req = _s(request.args.get('flow'))[:64]
     entries = _entries_of(flows, headers, rows, ridx, r['name'])
-    hit = _flow_hit(flows, headers, rows, ridx, r['name'], entry)
+    hit = _flow_hit(flows, headers, rows, ridx, r['name'], entry, flow_req, wid)
     if not hit:
         return jsonify(ok=False, reason='该工作簿未配置验收流程，或本行未命中任何流程',
                        entry=entry, entries=entries,
@@ -1094,7 +1347,18 @@ def api_flow(wid):
                    cond_field=hit['cond_field'],
                    cond_val=hit['cond_val'], steps=hit['steps'],
                    std=hit['std'], std_cols=hit['std_cols'],
-                   records=by_step, multi=multi, warn=hit['warn'])
+                   records=by_step, multi=multi, warn=hit['warn'],
+                   schema=hit.get('schema', ''),
+                   flow_list=hit.get('flow_list') or [],
+                   flow_locked=bool(hit.get('flow_locked')),
+                   flow_repeat=bool(hit.get('flow_repeat')),
+                   flow_prereq=hit.get('flow_prereq') or [],
+                   flow_trigger=hit.get('flow_trigger') or '',
+                   values=hit.get('values') or {},
+                   meta=hit.get('meta') or {},
+                   flow_rec_no=hit.get('rec_no') or 0,
+                   note_step_no=hit.get('note_step_no') or 0,
+                   note_field=hit.get('note_field') or '')
 
 
 @bp.route('/api/workbooks/<int:wid>/flow', methods=['POST'])
@@ -1126,11 +1390,16 @@ def api_flow_save(wid):
         con.close()
         _applog('flow', f'wid={wid} 拒绝(400 row/step_no 非整数) body={str(request.get_data(as_text=True))[:200]}')
         return jsonify(error='row 与 step_no 必须是整数'), 400
-    hit = _flow_hit(flows, headers, rows, ridx, r['name'], _s(request.json.get('entry'))[:16])
+    hit = _flow_hit(flows, headers, rows, ridx, r['name'],
+                    _s(request.json.get('entry'))[:16],
+                    _s(request.json.get('flow'))[:64], wid)
     if not hit:
         con.close()
         _applog('flow', f'wid={wid} 拒绝(400 未命中流程) row={ridx} user={auth_user()[0]}')
         return jsonify(error='该行未命中任何验收流程，无法保存'), 400
+    if hit.get('schema') == 'flow_tpl/1':
+        con.close()
+        return jsonify(error='v2 模板流程需整条提交，请走 /flow/batch'), 400
     step = next((s for s in hit['steps'] if int(s['no']) == step_no), None)
     if not step:
         con.close()
@@ -1397,6 +1666,212 @@ def api_flow_save(wid):
                     f'factors={len(values)} att={len(att)} geo={geo_s or "-"} ip={ip} user={operator}')
     return jsonify(ok=True, row_idx=ridx, step_no=step_no, rec_no=rec_no,
                    flow_sheet=hit['sheet'], factors=len(values), operator=operator)
+
+
+@bp.route('/api/workbooks/<int:wid>/flow/batch', methods=['POST'])
+@login_required
+def api_flow_batch(wid):
+    """v2 模板：**整条流程一次提交**（一条流程 = 一个表单 + 一个提交按钮）。
+
+    请求：{row, flow, rec_no?, geo?, steps:[{no, values:{因子:值}, att:[...]}]}
+
+    为什么不分环节提交：模板的「备注」是整条流程共用的一行（隐藏，结论=不通过
+    或任一项选了「→备注」的选项时展开），分环节提交会出现"后面的环节还没填，
+    前面的环节已经写库"的半成品状态；整条提交天然原子。
+    落库时所有环节写同一个 rec_no（可重复流程 = 新一次记录），与老格式的多条记录一致。
+    """
+    con = db()
+    r = con.execute('SELECT * FROM workbooks WHERE id=?', (wid,)).fetchone()
+    inactive = _inactive_for(con, wid)
+    if not r:
+        con.close()
+        abort(404)
+    if inactive:
+        con.close()
+        _applog('flow', f'wid={wid} 拒绝(403 下架) user={auth_user()[0]}')
+        return jsonify(error=INACTIVE_MSG), 403
+    flows = _wb_flows(r)
+    if (flows or {}).get('schema') != 'flow_tpl/1':
+        con.close()
+        return jsonify(error='该工作簿不是 v2 流程模板，请走 /flow'), 400
+    headers = json.loads(r['headers'])
+    rows = json.loads(r['rows'])
+    body = request.json or {}
+    try:
+        ridx = int(body.get('row', 0))
+    except (TypeError, ValueError):
+        con.close()
+        return jsonify(error='row 必须是整数'), 400
+    flow = _s(body.get('flow'))
+    hit = _flow_hit(flows, headers, rows, ridx, r['name'], '', flow, wid)
+    if not hit:
+        con.close()
+        _applog('flow', f'wid={wid} 拒绝(400 流程未命中) row={ridx} flow={flow} user={auth_user()[0]}')
+        return jsonify(error=f'该小班的项目类型下没有流程「{flow}」'), 400
+    if hit.get('flow_locked'):
+        con.close()
+        pre = '、'.join(hit.get('flow_prereq') or []) or '前置流程'
+        return jsonify(error=f'按流程路由，需先完成「{pre}」并结论通过，才能提交「{flow}」'), 409
+
+    in_steps = body.get('steps')
+    if not isinstance(in_steps, list):
+        con.close()
+        return jsonify(error='steps 必须是数组'), 400
+    by_no = {}
+    for x in in_steps:
+        if not isinstance(x, dict):
+            continue
+        try:
+            no = int(x.get('no'))
+        except (TypeError, ValueError):
+            continue
+        by_no[no] = x
+    values_by_step, att_by_step = {}, {}
+    for s in hit['steps']:
+        no = int(s['no'])
+        one = by_no.get(no) or {}
+        vals = one.get('values') or {}
+        values_by_step[no] = vals if isinstance(vals, dict) else {}
+        att = one.get('att') or []
+        att_by_step[no] = att if isinstance(att, list) else []
+
+    # 结论：v2 每条流程恰好一个「是否通过」按钮环节
+    verdict = ''
+    for s in hit['steps']:
+        for c in s['controls']:
+            if c.get('verdict'):
+                verdict = _s(values_by_step[int(s['no'])].get(c['name']))[:64]
+    note_step = next((s for s in hit['steps']
+                      if s['step'] == '备注'
+                      or any(c.get('hidden') for c in s['controls'])), None)
+    note_txt = _s(values_by_step.get(int(note_step['no']), {}).get(note_step['step'])) if note_step else ''
+    need_note = verdict == '不通过'
+    if not need_note:
+        for s in hit['steps']:
+            for c in s['controls']:
+                if c.get('note_on') and _s(values_by_step[int(s['no'])].get(c['name'])) in c['note_on']:
+                    need_note = True
+                    break
+            if need_note:
+                break
+    if need_note and len(re.findall(r'[\u4e00-\u9fff]', note_txt)) < 2:
+        con.close()
+        _applog('flow', f'wid={wid} row={ridx} 拒绝(400 备注) flow={flow} user={auth_user()[0]}')
+        return jsonify(error='结论为「不通过」或选了备注项时，备注必须写 ≥2 个汉字'), 400
+
+    # 逐环节必填 / 数值规则 / 自动公式
+    # 公式变量可能来自别的环节（成活株数在第 13 行、公式在第 15 行）→ 铺平整条流程再算
+    all_vals = {}
+    for _vals in values_by_step.values():
+        all_vals.update(_vals)
+    missing = []
+    for s in hit['steps']:
+        no = int(s['no'])
+        vals = values_by_step[no]
+        for c in s['controls']:
+            nm = c['name']
+            if c.get('hidden'):
+                continue
+            if c['type'] == '自动':
+                v = _tpl_formula(c.get('formula') or '', all_vals)
+                if v is not None:
+                    vals[nm] = v
+                    all_vals[nm] = v
+                continue
+            v = vals.get(nm)
+            # v2 的控件名默认就是环节名（`核实施工面积`），拼成「环节·控件」会重复一遍
+            label = nm if nm == s['step'] else f'{s["step"]}·{nm}'
+            if c['type'] == '多选':
+                if not (isinstance(v, list) and [x for x in v if _s(x)]):
+                    missing.append(f'{label}（至少选一项）')
+                continue
+            if _s(v) == '':
+                missing.append(label)
+                continue
+            if c.get('rule'):
+                e = flow_config.check_rule(c['rule'], v, nm)
+                if e:
+                    missing.append(e)
+    if missing:
+        con.close()
+        _applog('flow', f'wid={wid} row={ridx} 拒绝(400 必填) flow={flow} '
+                        f'缺={missing} user={auth_user()[0]}')
+        return jsonify(error='还有未完成的项目：' + '、'.join(missing[:8])
+                       + (f' 等 {len(missing)} 项' if len(missing) > 8 else ''),
+                       missing=missing), 400
+
+    # 可重复流程：不传 rec_no = 新增一次；传了 = 改那一次（现场纠错）
+    rec_no = 0
+    if hit.get('flow_repeat'):
+        try:
+            want = int(body.get('rec_no') or 0)
+        except (TypeError, ValueError):
+            want = 0
+        if want > 0:
+            rec_no = want
+        else:
+            m = con.execute(
+                'SELECT COALESCE(MAX(rec_no),0) AS m FROM flow_records'
+                ' WHERE workbook_id=? AND row_idx=? AND flow_sheet=?',
+                (wid, ridx, flow)).fetchone()['m']
+            rec_no = int(m) + 1
+
+    operator = auth_user()[0]
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    geo_in = body.get('geo') or {}
+    geo_s = ''
+    if isinstance(geo_in, dict) and geo_in.get('lat') and geo_in.get('lon'):
+        geo_s = json.dumps({'lat': str(geo_in.get('lat'))[:16],
+                            'lon': str(geo_in.get('lon'))[:16],
+                            'acc': str(geo_in.get('acc') or '')[:8],
+                            't': str(geo_in.get('t') or '')[:24]},
+                           ensure_ascii=False)[:200]
+    fwd = (request.headers.get('X-Forwarded-For') or '').split(',')[0].strip()
+    ip = (fwd or request.remote_addr or '')[:64]
+
+    for s in hit['steps']:
+        no = int(s['no'])
+        vals = values_by_step[no]
+        att_json = json.dumps(att_by_step[no], ensure_ascii=False)
+        for factor, val in vals.items():
+            sval = (json.dumps(val, ensure_ascii=False)
+                    if isinstance(val, (list, dict)) else _s(val))[:2000]
+            ex = con.execute(
+                'SELECT id FROM flow_records WHERE workbook_id=? AND row_idx=? AND flow_sheet=?'
+                ' AND step_no=? AND factor=? AND rec_no=?',
+                (wid, ridx, flow, no, str(factor)[:64], rec_no)).fetchone()
+            if ex:
+                con.execute('UPDATE flow_records SET value=?,att_json=?,result=?,operator=?,'
+                            'updated_at=? WHERE id=?',
+                            (sval, att_json, verdict, operator, now, ex['id']))
+            else:
+                con.execute(
+                    'INSERT INTO flow_records(workbook_id,row_idx,flow_sheet,step_no,factor,value,'
+                    ' att_json,result,operator,created_at,updated_at,rec_no)'
+                    ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+                    (wid, ridx, flow, no, str(factor)[:64], sval, att_json, verdict,
+                     operator, now, now, rec_no))
+        ex = con.execute(
+            'SELECT id FROM flow_records WHERE workbook_id=? AND row_idx=? AND flow_sheet=?'
+            ' AND step_no=? AND factor=? AND rec_no=?',
+            (wid, ridx, flow, no, '', rec_no)).fetchone()
+        if ex:
+            con.execute('UPDATE flow_records SET value=?,att_json=?,result=?,operator=?,'
+                        'updated_at=?,geo=?,ip=? WHERE id=?',
+                        (now, att_json, verdict, operator, now, geo_s, ip, ex['id']))
+        else:
+            con.execute(
+                'INSERT INTO flow_records(workbook_id,row_idx,flow_sheet,step_no,factor,value,'
+                ' att_json,result,operator,created_at,updated_at,geo,ip,rec_no)'
+                ' VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (wid, ridx, flow, no, '', now, att_json, verdict, operator, now, now,
+                 geo_s, ip, rec_no))
+    con.commit()
+    con.close()
+    _applog('flow', f'wid={wid} row={ridx} v2整条提交 flow={flow} steps={len(hit["steps"])} '
+                    f'result={verdict} rec_no={rec_no} geo={geo_s or "-"} ip={ip} user={operator}')
+    return jsonify(ok=True, row_idx=ridx, flow_sheet=flow, rec_no=rec_no,
+                   steps=len(hit['steps']), result=verdict, operator=operator)
 
 
 @bp.route('/api/workbooks/<int:wid>', methods=['DELETE'])

@@ -30,6 +30,9 @@
     val: {},            // 当前环节的输入值 {因子: 值}
     att: [],            // 当前环节的附件 [{kind,label,min,count,names:[]}]
     busy: false,
+    /* v0.38：v2 模板（schema=flow_tpl/1）—— 整条流程一张表单，状态按环节分桶 */
+    v2val: {},          // {环节序号: {因子: 值}}
+    v2att: {},          // {环节序号: [{kind,label,min,count,names:[]}]}
   };
 
   /* 只有这些结论算"这一关过了"（与后端 flow_config.PASS_RESULTS 同一份口径）。
@@ -62,6 +65,8 @@
       localStorage.setItem(DRAFT_KEY, JSON.stringify({
         ts: Date.now(), wid: F.wid, rowIdx: F.rowIdx, entry: F.entry,
         cur: F.cur, recNo: F.recNo, val: F.val, att: F.att,
+        flow: (F.data && F.data.schema === 'flow_tpl/1') ? F.data.flow_sheet : '',
+        v2val: F.v2val, v2att: F.v2att,
       }));
     } catch (e) { /* 配额满等一律不阻断填写 */ }
   }
@@ -70,12 +75,16 @@
   /* ── 进入某行流程 ──
      entry 留空 = 让后端挑优先级最高的那条（老行为）；
      指定「验收 / 巡视 / 材料」= 只在这个入口的流程里匹配。
-     同一个小班可以既有验收流程又有巡视流程，两条都得能进 —— 靠顶部 tab 切。 */
-  async function open(wid, rowIdx, entry) {
+     同一个小班可以既有验收流程又有巡视流程，两条都得能进 —— 靠顶部 tab 切。
+     v0.38：flowSel = v2 模板下拉框里选的那条流程（`流程-回塘底肥`），
+     留空 = 后端按「流程路由」挑当前该做的那条。 */
+  async function open(wid, rowIdx, entry, flowSel) {
     F.wid = wid; F.rowIdx = rowIdx; F.cur = 0; F.recNo = 0; F.val = {}; F.att = [];
+    F.v2val = {}; F.v2att = {};
     let j;
     const qs = `/api/workbooks/${wid}/flow?row=${rowIdx}`
-      + (entry ? `&entry=${encodeURIComponent(entry)}` : '');
+      + (entry ? `&entry=${encodeURIComponent(entry)}` : '')
+      + (flowSel ? `&flow=${encodeURIComponent(flowSel)}` : '');
     try { j = await api(qs); }
     catch (e) { toast('读取验收流程失败：' + e.message, true); return false; }
     if (!j || j.ok === false) {
@@ -90,10 +99,32 @@
     }
     F.data = j;
     F.entry = j.entry || '';
+    const d = loadDraft();
+
+    // v2 模板：整条流程一张表，值按环节分桶（j.values = {环节序号: {因子: 值}}）
+    if (j.schema === 'flow_tpl/1') {
+      const same = d && d.wid === wid && d.rowIdx === rowIdx
+        && (d.flow || '') === j.flow_sheet;
+      if (!same) clearDraft();
+      if (!j.flow_repeat) {          // 可重复流程（日常巡护）= 新一次记录，不带上一次的值
+        const vals = j.values || {};
+        Object.keys(vals).forEach((k) => {
+          F.v2val[k] = {};
+          const one = vals[k] || {};
+          Object.keys(one).forEach((f) => { F.v2val[k][f] = decodeVal(one[f]); });
+        });
+      }
+      if (same) {
+        F.v2val = Object.assign(F.v2val, d.v2val || {});
+        F.v2att = d.v2att || {};
+      }
+      render();
+      return true;
+    }
+
     // 回填已填记录（第 1 环节）
     loadStepRecords(j.steps[0].no);
     // 本地草稿（同 wid + 同行 + 同入口）优先，覆盖服务器值 —— 进程被杀也不丢（C17）
-    const d = loadDraft();
     if (d && d.wid === wid && d.rowIdx === rowIdx && (d.entry || '') === F.entry) {
       F.cur = Math.min(d.cur || 0, j.steps.length - 1);
       F.recNo = d.recNo || 0;
@@ -316,6 +347,7 @@
     if (!host) return;
     if (!F.data) { host.innerHTML = ''; host.classList.add('hidden'); return; }
     host.classList.remove('hidden');
+    if (F.data.schema === 'flow_tpl/1') { renderV2(host); return; }
 
     let h = '<div class="flow-head">'
       + `<div class="flow-title">${esc(F.data.entry || '验收')} · `
@@ -495,6 +527,409 @@
     });
     bind(s);
     on($('#flowSubmit'), 'click', () => submit(s));
+  }
+
+  /* ══ v2 模板：选流程 → 整条流程一张表单（v0.38，tpl-人工造林-验收流程模板）══
+     与老格式的"环节向导"不同，v2 一条流程只有一个提交按钮：
+     模板里的「备注」是整条流程共用的一行，按环节提交会出现半成品数据（见 doc/029）。
+     所有控件、选项、设计值仍由 Excel 推导，这里不写死任何环节名。 */
+  const flowName = (s) => String(s || '').replace(/^流程-/, '');
+  const cjkCount = (s) => (String(s || '').match(/[\u4e00-\u9fff]/g) || []).length;
+
+  function v2Step(no) {
+    return (F.data && (F.data.steps || []).find((x) => x.no === +no)) || null;
+  }
+  function v2Vals(no) {
+    if (!F.v2val[no]) F.v2val[no] = {};
+    return F.v2val[no];
+  }
+
+  /** 整条流程的值摊平成一层（公式跨环节取值用） */
+  function v2Flat() {
+    const out = {};
+    (F.data.steps || []).forEach((s) => Object.assign(out, F.v2val[s.no] || {}));
+    return out;
+  }
+
+  /** 「自动(公式)」求值：变量按"精确 → 后缀唯一 → 包含"解析（公式用短名，环节用长名）。
+   *  只允许数字与 + - * / 括号，不 eval 任意文本。 */
+  function evalFormula(expr, vals) {
+    let s = String(expr || '');
+    if (!s) return null;
+    s = s.replace(/×/g, '*').replace(/÷/g, '/')
+      .replace(/（/g, '(').replace(/）/g, ')').replace(/%\s*$/, '');
+    const toks = s.match(/[\u4e00-\u9fff]+/g) || [];
+    const keys = Object.keys(vals);
+    const bad = [];
+    toks.forEach((tok) => {
+      if (bad.indexOf(tok) >= 0) return;
+      const k = keys.find((x) => x === tok) || keys.find((x) => x.endsWith(tok))
+        || keys.find((x) => x.indexOf(tok) >= 0);
+      const n = k ? num(vals[k]) : null;
+      if (n == null) { bad.push(tok); return; }
+      s = s.split(tok).join(String(n));
+    });
+    if (bad.length) return null;
+    if (!/^[0-9+\-*/().\s]+$/.test(s)) return null;
+    try {
+      const v = Function('return (' + s + ')')();    // 已限定为纯数字表达式
+      return isFinite(v) ? Math.round(v * 100) / 100 : null;
+    } catch (e) { return null; }
+  }
+
+  /** 备注何时必须填：结论=不通过，或任一项选中了带「→备注」的选项。 */
+  function v2NoteNeed() {
+    const steps = F.data.steps || [];
+    for (let i = 0; i < steps.length; i++) {
+      const vals = F.v2val[steps[i].no] || {};
+      const ctrls = steps[i].controls || [];
+      for (let j = 0; j < ctrls.length; j++) {
+        const on = ctrls[j].note_on || [];
+        if (on.indexOf(String(vals[ctrls[j].name] || '')) >= 0) return true;
+      }
+    }
+    return false;
+  }
+
+  function v2Gate() {
+    const miss = [];
+    const noteNeed = v2NoteNeed();
+    const noteNo = F.data.note_step_no || 0;
+    (F.data.steps || []).forEach((s) => {
+      const vals = F.v2val[s.no] || {};
+      (s.controls || []).forEach((c) => {
+        if (c.hidden) {
+          if (noteNeed && s.no === noteNo && cjkCount(vals[c.name]) < 2) {
+            miss.push('备注（≥2 个汉字）');
+          }
+          return;
+        }
+        if (c.type === '自动') return;
+        const v = vals[c.name];
+        const label = c.name === s.step ? c.name : s.step + '·' + c.name;
+        if (c.type === '多选') {
+          if (!Array.isArray(v) || !v.length) miss.push(label);
+          return;
+        }
+        if (String(v == null ? '' : v).trim() === '') { miss.push(label); return; }
+        const e = ruleBad(c.rule, v, c.name);
+        if (e) miss.push(e);
+      });
+    });
+    return miss;
+  }
+
+  /** 进表单前把 Excel 的缺省值 / 自动值铺进状态，保证"看到的 = 要提交的" */
+  function v2Normalize() {
+    (F.data.steps || []).forEach((s) => {
+      const vals = v2Vals(s.no);
+      (s.controls || []).forEach((c) => {
+        if (c.default && String(vals[c.name] || '') === '') vals[c.name] = c.default;
+      });
+    });
+    // 公式变量可能来自别的环节（成活株数在第 13 行、公式在第 15 行）→ 铺平整条流程再求值
+    const flat = v2Flat();
+    (F.data.steps || []).forEach((s) => {
+      const vals = v2Vals(s.no);
+      (s.controls || []).forEach((c) => {
+        if (c.type !== '自动') return;
+        const v = evalFormula(c.formula, flat);
+        if (v != null) { vals[c.name] = v; flat[c.name] = v; }
+      });
+    });
+  }
+
+  function renderV2(host) {
+    v2Normalize();
+    const d = F.data, steps = d.steps || [];
+    const locked = !!d.flow_locked;
+    const noteNeed = v2NoteNeed();
+    const curName = flowName(d.flow_sheet);
+    const list = (d.flow_list || []).slice().sort((a, b) => (a.no || 0) - (b.no || 0));
+
+    let h = '<div class="flow-head">'
+      + `<div class="flow-title">${esc(curName)}</div>`
+      + `<div class="flow-meta">项目类型：${esc(d.cond_val || '')}`
+      + (d.flow_repeat ? ' · 可重复填报（每次提交新增一次记录）' : '')
+      + (d.flow_trigger ? ` · ${esc(d.flow_trigger)}` : '')
+      + '</div></div>';
+
+    // 流程下拉：路由里的全部流程按序号列出（未解锁的也能点开预览，只是不能提交）
+    h += '<div class="flow-pick"><label for="flowSel">流程</label>'
+      + '<select id="flowSel">';
+    list.forEach((f) => {
+      const tag = f.done ? (f.repeat ? '　可继续填报' : '　✓ 已完成')
+        : (f.available ? '' : '　🔒 需先完成前置');
+      h += `<option value="${esc(f.sheet)}"${f.sheet === d.flow_sheet ? ' selected' : ''}>`
+        + `${f.no}. ${esc(flowName(f.sheet))}${tag}</option>`;
+    });
+    h += '</select>';
+    if (d.flow_repeat) {
+      h += `<span class="fs-hint">已填报 ${d.flow_rec_no || 0} 次，本次为第 ${(d.flow_rec_no || 0) + 1} 次</span>`;
+    } else {
+      h += (d.flow_rec_no ? '<span class="fs-hint">已有一次填报，提交将覆盖为本表单内容</span>' : '');
+    }
+    h += '</div>';
+
+    (d.warn || []).forEach((w) => {
+      h += `<div class="flow-warn"><b>配置提示</b>${esc(w.text || w)}</div>`;
+    });
+
+    if (locked) {
+      h += `<div class="flow-lock">🔒 按「流程路由」，需先完成前置流程：`
+        + esc((d.flow_prereq || []).map(flowName).join('、'))
+        + '（结论通过后自动解锁）。下方为只读预览。</div>';
+    }
+
+    steps.forEach((s) => {
+      const vals = v2Vals(s.no);
+      const c = (s.controls || [])[0] || {};
+      // 隐藏备注：不通过 / 选了备注项时才出现；其余情况不占版面
+      if (c.hidden && !noteNeed) return;
+      h += '<div class="flow-card' + (locked ? ' locked' : '') + '">';
+      h += '<div class="flow-card-head">'
+        + `<span class="flow-card-title">${esc(s.step)}</span>`
+        + `<span class="flow-no">${s.no} / ${steps.length}</span></div>`;
+      if (s.memo) h += `<div class="flow-note">${esc(s.memo)}</div>`;
+      h += '<div class="flow-ctrls' + (c.design ? ' v2-big' : '') + '">'
+        + v2CtrlHtml(s, c, vals) + '</div>';
+      if ((s.attachments || []).length) h += attHtmlV2(s);
+      h += '</div>';
+    });
+
+    const miss = locked ? [] : v2Gate();
+    h += '<div class="flow-submit"><span class="prog">'
+      + (locked ? '🔒 流程未解锁'
+        : miss.length ? '还差 ' + miss.length + ' 项：' + esc(miss.join('、')) : '可以提交')
+      + '</span>'
+      + (locked ? '<span class="why">未解锁，提交置灰</span>'
+        : miss.length ? '<span class="why">未完成，提交置灰</span>' : '')
+      + `<button id="flowSubmitV2" class="btn primary"${locked || miss.length || F.busy ? ' disabled' : ''}>`
+      + `提交「${esc(curName)}」</button></div>`;
+
+    host.innerHTML = h;
+
+    if (locked) {
+      Array.prototype.forEach.call(
+        host.querySelectorAll('.flow-card.locked input, .flow-card.locked select,'
+          + ' .flow-card.locked textarea, .flow-card.locked button'),
+        (el) => { el.disabled = true; });
+    }
+    bindV2(host);
+  }
+
+  function v2CtrlHtml(s, c, vals) {
+    const nm = esc(c.name);
+    const stdV = (F.data.std || {})[c.name];
+    const hasStd = stdV !== undefined && stdV !== null && stdV !== '';
+    let h = '';
+    // 设计值提示放在输入组**之前**并放大 —— 现场先看设计值，再填实测值
+    if (c.design) {
+      // 「常量：1.5kg/株」把值单独放大显示，标签只留「常量」，避免同一串字出现两遍
+      const lbl = c.design_const ? '常量' : c.design;
+      h += '<div class="fs-design"><span class="k">设计值 · '
+        + `${esc(lbl)}</span><b>${hasStd ? esc(stdV) : '—'}</b>`
+        + (c.unit ? `<span class="u">${esc(c.unit)}</span>` : '')
+        + '</div>';
+    }
+    if (c.verdict) {
+      const cur = String(vals[c.name] || '');
+      h += '<div class="flow-pass">'
+        + `<button class="ps ok${cur === '通过' ? ' cur' : ''}" data-s="${s.no}" data-pass="通过">✓ 通过</button>`
+        + `<button class="ps bad${cur === '不通过' ? ' cur' : ''}" data-s="${s.no}" data-pass="不通过">✗ 不通过</button>`
+        + '</div>';
+      return h;
+    }
+    if (c.type === '自动') {
+      const v = vals[c.name];
+      h += `<div class="fs-item auto"><div class="fs-auto-v" data-auto="${s.no}" data-f="${nm}">`
+        + `${v == null || v === '' ? '—' : esc(v) + (c.unit || (String(c.formula || '').indexOf('%') >= 0 ? '%' : ''))}</div>`
+        + `<div class="fs-hint">系统自动算：${esc(c.formula || c.arg || '')}</div></div>`;
+      return h;
+    }
+    if (c.type === '下拉') {
+      const opts = splitList(c.arg);
+      const cur = String(vals[c.name] == null ? '' : vals[c.name]);
+      h += `<div class="fs-item"><div class="fs-label">${nm} <span class="req">*</span></div>
+        <select data-s="${s.no}" data-f="${nm}">`;
+      if (!cur) h += '<option value="" selected>请选择</option>';
+      opts.forEach((o) => {
+        h += `<option${cur === o ? ' selected' : ''}>${esc(o)}</option>`;
+      });
+      h += '</select></div>';
+      return h;
+    }
+    if (c.type === '多选') {
+      const opts = splitList(c.arg);
+      const sel = Array.isArray(vals[c.name]) ? vals[c.name] : [];
+      h += `<div class="fs-item"><div class="fs-label">${nm} <span class="req">*</span>
+        <span class="fs-hint">可多选</span></div><div class="fs-multi">`;
+      opts.forEach((o) => {
+        h += `<label class="fs-chk"><input type="checkbox" data-s="${s.no}" data-m="${nm}"`
+          + ` data-v="${esc(o)}"${sel.indexOf(o) >= 0 ? ' checked' : ''}>${esc(o)}</label>`;
+      });
+      h += `</div><div class="fs-verdict hint" data-mcount="${s.no}">已选 ${sel.length} 项</div></div>`;
+      return h;
+    }
+    if (c.type === '多行纯文本') {
+      const need = c.required && !c.hidden ? '<span class="req">*</span>' : '';
+      h += `<div class="fs-item"><div class="fs-label">${nm} ${c.hidden ? `<span class="req">*</span>
+        <span class="fs-hint">结论=不通过 或 选了带备注的项时必填，≥2 个汉字</span>` : need}</div>
+        <textarea data-s="${s.no}" data-f="${nm}" maxlength="500" rows="3"
+          placeholder="按现场实际情况填写">${esc(vals[c.name] || '')}</textarea></div>`;
+      return h;
+    }
+    if (c.type === '数值') {
+      h += `<div class="fs-item"><div class="fs-label">${nm} <span class="req">*</span>
+        ${c.unit ? `<span class="fs-hint">单位：${esc(c.unit)}</span>` : ''}</div>
+        <input type="number" inputmode="decimal" data-s="${s.no}" data-f="${nm}"
+          placeholder="实测" value="${esc(vals[c.name] || '')}"></div>`;
+      return h;
+    }
+    // 单行文本（含"文本"）
+    h += `<div class="fs-item"><div class="fs-label">${nm} <span class="req">*</span></div>
+      <input type="text" data-s="${s.no}" data-f="${nm}" maxlength="60"
+        placeholder="按实际测量填写" value="${esc(vals[c.name] || '')}"></div>`;
+    return h;
+  }
+
+  function attHtmlV2(s) {
+    const list = s.attachments || [];
+    const got0 = F.v2att[s.no] || [];
+    let h = '<div class="fs-att"><div class="fs-label">附件要求'
+      + `<span class="fs-hint">Excel 原文「${esc(s.att_raw || '')}」</span></div><div class="fs-att-btns">`;
+    list.forEach((a, i) => {
+      const got = got0.find((x) => attKey(x.kind, x.label) === attKey(a.kind, a.label));
+      const cnt = got ? (got.count || 0) : 0;
+      const ico = a.kind === 'photo' ? '📷' : (a.kind === 'upload' ? '📎' : '📍');
+      const verb = a.kind === 'photo' ? '拍照' : (a.kind === 'upload' ? '上传' : '打卡');
+      h += `<button class="fs-att-btn${cnt >= (a.min || 0) ? ' ok' : ''}" data-s="${s.no}" data-att2="${i}">`
+        + `${ico} ${verb} · ${esc(a.label)}`
+        + (a.min ? ` <span class="fs-hint">至少 ${a.min} 份</span>` : '')
+        + (cnt ? ` <span class="cnt">${cnt}</span>` : '') + '</button>';
+    });
+    h += '</div></div>';
+    return h;
+  }
+
+  function bindV2(host) {
+    on($('#flowSel'), 'change', () => {
+      const v = $('#flowSel').value;
+      if (!v || v === F.data.flow_sheet) return;
+      saveDraft();
+      open(F.wid, F.rowIdx, '', v);
+    });
+
+    Array.prototype.forEach.call(host.querySelectorAll('[data-s][data-f]'), (el) => {
+      const no = +el.dataset.s, k = el.dataset.f;
+      const s = v2Step(no);
+      const c = s && (s.controls || []).find((x) => x.name === k);
+      if (!c) return;
+      const ev = (el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') ? 'change' : 'input';
+      on(el, ev, () => {
+        v2Vals(no)[k] = el.value;
+        if ((c.note_on || []).length) { saveDraft(); render(); return; }   // 备注区跟着出现/消失
+        v2AutoRefresh(no);
+        saveDraft();
+        refreshV2Submit();
+      });
+    });
+
+    Array.prototype.forEach.call(host.querySelectorAll('[data-s][data-m]'), (el) => {
+      on(el, 'change', () => {
+        const no = +el.dataset.s, f = el.dataset.m, v = el.dataset.v;
+        const vals = v2Vals(no);
+        const arr = Array.isArray(vals[f]) ? vals[f] : (vals[f] = []);
+        const i = arr.indexOf(v);
+        if (el.checked && i < 0) arr.push(v);
+        else if (!el.checked && i >= 0) arr.splice(i, 1);
+        const cnt = host.querySelector(`[data-mcount="${no}"]`);
+        if (cnt) cnt.textContent = '已选 ' + arr.length + ' 项';
+        saveDraft();
+        refreshV2Submit();
+      });
+    });
+
+    Array.prototype.forEach.call(host.querySelectorAll('[data-s][data-pass]'), (el) => {
+      on(el, 'click', () => {
+        v2Vals(+el.dataset.s)['是否通过'] = el.dataset.pass;
+        saveDraft();
+        render();          // 重新画：按钮高亮 + 备注区出现/消失
+      });
+    });
+
+    Array.prototype.forEach.call(host.querySelectorAll('[data-s][data-att2]'), (el) => {
+      on(el, 'click', () => {
+        const no = +el.dataset.s, s = v2Step(no);
+        const a = s && (s.attachments || [])[+el.dataset.att2];
+        if (!a) return;
+        if (!F.v2att[no]) F.v2att[no] = [];
+        shootAtt(a, F.v2att[no], () => { saveDraft(); render(); });
+      });
+    });
+
+    on($('#flowSubmitV2'), 'click', submitV2);
+  }
+
+  /** 自动字段重算（只改那一格，不整块重画，避免输入框失焦）。
+   *  公式变量可能来自别的环节，所以任一处输入变化都要重算**全部**自动字段。 */
+  function v2AutoRefresh() {
+    const host = $('#flowPanel');
+    if (!host) return;
+    const flat = v2Flat();
+    (F.data.steps || []).forEach((s) => {
+      const vals = v2Vals(s.no);
+      (s.controls || []).forEach((c) => {
+        if (c.type !== '自动') return;
+        const v = evalFormula(c.formula, flat);
+        if (v != null) { vals[c.name] = v; flat[c.name] = v; }
+        const box = host.querySelector(`[data-auto="${s.no}"][data-f="${c.name}"]`);
+        if (box) {
+          box.textContent = (v == null || v === '')
+            ? '—' : v + (c.unit || (String(c.formula || '').indexOf('%') >= 0 ? '%' : ''));
+        }
+      });
+    });
+  }
+
+  function refreshV2Submit() {
+    const host = $('#flowPanel');
+    if (!host) return;
+    const bar = host.querySelector('.flow-submit');
+    const btn = host.querySelector('#flowSubmitV2');
+    if (!bar || !btn) return;
+    const locked = !!F.data.flow_locked;
+    const miss = locked ? [] : v2Gate();
+    bar.querySelector('.prog').textContent = locked
+      ? '🔒 流程未解锁'
+      : miss.length ? '还差 ' + miss.length + ' 项：' + miss.join('、') : '可以提交';
+    btn.disabled = locked || miss.length > 0 || F.busy;
+  }
+
+  async function submitV2() {
+    if (F.busy) return;
+    if (F.data.flow_locked) { toast('该流程尚未解锁，请先完成前置流程', true); return; }
+    const miss = v2Gate();
+    if (miss.length) { toast('还有 ' + miss.length + ' 项未完成：' + miss.slice(0, 3).join('、'), true); return; }
+    const sheet = F.data.flow_sheet;
+    F.busy = true;
+    refreshV2Submit();
+    try {
+      const geo = await submitGeo();
+      const steps = (F.data.steps || []).map((s) => ({
+        no: s.no, values: F.v2val[s.no] || {}, att: F.v2att[s.no] || [],
+      }));
+      await api(`/api/workbooks/${F.wid}/flow/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row: F.rowIdx, flow: sheet, steps: steps, geo: geo }),
+      });
+      clearDraft();
+      toast('已提交「' + flowName(sheet) + '」');
+      await open(F.wid, F.rowIdx, '', sheet);
+    } catch (e) {
+      toast('提交失败：' + e.message, true);
+    } finally { F.busy = false; refreshV2Submit(); }
   }
 
   function ctrlsHtml(s) {
@@ -902,8 +1337,13 @@
   async function shoot(i) {
     const s = step(), a = (s.attachments || [])[i];
     if (!a) return;
+    return shootAtt(a, F.att, () => { saveDraft(); render(); });
+  }
+
+  /** 附件采集（老格式/ v2 共用）：list 是这一层的附件数组，done 由调用方决定怎么刷新 */
+  async function shootAtt(a, list, done) {
     const key = attKey(a.kind, a.label);
-    const rec = F.att.find((x) => attKey(x.kind, x.label) === key)
+    const rec = list.find((x) => attKey(x.kind, x.label) === key)
       || { kind: a.kind, label: a.label, min: a.min, count: 0, names: [], operator: '' };
 
     if (a.kind === 'upload') {
@@ -917,8 +1357,10 @@
         rec.count = (rec.count || 0) + 1;
         rec.names = (rec.names || []).concat(f.name);
         rec.operator = window.__supUser || '';
-        F.att = F.att.filter((x) => attKey(x.kind, x.label) !== key).concat([rec]);
-        saveDraft(); render();
+        const i = list.findIndex((x) => attKey(x.kind, x.label) === key);
+        if (i >= 0) list.splice(i, 1);
+        list.push(rec);
+        done();
         toast('已附 ' + f.name);
       };
       inp.click();
@@ -936,8 +1378,10 @@
       rec.count = (rec.count || 0) + 1;
       rec.names = (rec.names || []).concat('打卡 ' + geo + ' · ' + new Date().toLocaleString('zh-CN'));
       rec.operator = window.__supUser || '';
-      F.att = F.att.filter((x) => attKey(x.kind, x.label) !== key).concat([rec]);
-      saveDraft(); render();
+      const i = list.findIndex((x) => attKey(x.kind, x.label) === key);
+      if (i >= 0) list.splice(i, 1);
+      list.push(rec);
+      done();
       toast('已打卡：' + geo);
       return;
     }
@@ -949,8 +1393,10 @@
       rec.count = (rec.count || 0) + 1;
       rec.names = (rec.names || []).concat(res.path);
       rec.operator = window.__supUser || '';
-      F.att = F.att.filter((x) => attKey(x.kind, x.label) !== key).concat([rec]);
-      saveDraft(); render();
+      const i = list.findIndex((x) => attKey(x.kind, x.label) === key);
+      if (i >= 0) list.splice(i, 1);
+      list.push(rec);
+      done();
       toast((res.saved || '已拍照') + (res.sync || ''));
     };
     const pi = $('#photoInput');

@@ -412,6 +412,8 @@ function openFlowView(wid, idx, entry) {
   } catch (e) {
     console.warn('验收流程面板加载失败，已退回网格填表', e);
     if (panel) panel.classList.add('hidden');
+    // v2 模板的唯一界面就是流程面板；它挂了必须把网格放回来，否则整页空白
+    if (cur && cur.flows && cur.flows.schema === 'flow_tpl/1') renderForm();
   }
   // 材料检验按钮激活态：正在看项目级材料面板时高亮，点任一小班即退回行级流程
   const bm = $('#btnMaterial');
@@ -639,9 +641,25 @@ document.addEventListener('focusout', captureCellEvent, true);
 
 function renderForm() {
   const editable = new Set(cfgList('可编辑列'));
+  const el0 = $('#formEl');
+  /* v0.38：v2 模板（设计值 / 流程路由）的填报表单整块由 flow.js 渲染，
+     数据网格（jexcel_container）在这里完全不建 —— 用户明确要求去掉它。 */
+  if (cur.flows && cur.flows.schema === 'flow_tpl/1' && window.supFlow) {
+    if (formGrid) { try { jspreadsheet.destroy(el0); } catch (e) {} formGrid = null; }
+    el0.innerHTML = '';
+    el0.classList.add('hidden');
+    $('#photoHint').classList.add('hidden');
+    // 没有拍照/视频功能时，「还没有拍摄记录」那行对本模板只是噪音
+    const feats = cfgList('功能');
+    $('#rowPhotos').classList.toggle('hidden',
+      !(feats.includes('拍照') || feats.includes('视频')));
+    return;
+  }
+  el0.classList.remove('hidden');
+  $('#photoHint').classList.remove('hidden');
+  $('#rowPhotos').classList.remove('hidden');
 
   const data = cur.headers.map((h, i) => [h, allRows[curIdx][i] || '']);
-  const el0 = $('#formEl');
   el0.innerHTML = '';
   if (formGrid) { try { jspreadsheet.destroy(el0); } catch (e) {} formGrid = null; }
 
