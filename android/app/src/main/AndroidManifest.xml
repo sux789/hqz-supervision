@@ -34,7 +34,7 @@
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
 
-        <!-- 后台轨迹记录：location 型前台服务（灭屏/后台持续采集 GPS） -->
+        <!-- 卫星持续跟踪：location 型前台服务（灭屏/后台保持 GPS 跟踪，记录轨迹时落点） -->
         <service
             android:name=".BgLocationService"
             android:exported="false"

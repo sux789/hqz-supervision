@@ -45,15 +45,16 @@ import java.util.concurrent.Executors;
  * 宁可 GPS 无 fix 期间轨迹空白，不记偏点（2026-08-25 用户决策，v0.32 全链路闭环：
  * 网页侧 watchPosition 回退已删，本插件是唯一定位来源）。
  *
- * v0.33「点击开始，按小班归属」（v0.32 是授权即持续采，2026-10-16 用户反转）：
- *   · 采集开关 = **原生侧持久化**（SharedPreferences track_on，默认关）——网页按钮只是遥控器，
- *     页面重载/切后台/息屏都**不丢开关状态**（C21 精神保留：开关不随页面生死）；
- *     点「开始」记录到当时的小班（网页负责归属快照），点「结束」结算上传。
- *   · 权限仍是前置条件：没权限时 setTracking(on) 直接拒绝；权限被撤（resume 检测）停采、缓冲保留。
+ * v0.46「卫星跟踪常开，轨迹记录手动」（v0.33 是记录开关同时启停卫星采集，2026-10-28 用户修订）：
+ *   · 卫星跟踪 = **权限决定**：授权即注册 GPS_PROVIDER 并常驻前台服务，保持星历/钟差热态，
+ *     后续打卡/水印/拍照的一次性定位更快更准；不再随记录开关启停。
+ *   · 记录开关 = SharedPreferences track_on（默认关）——**只决定卫星点是否落缓冲/推网页**，
+ *     网页按钮只是遥控器，页面重载/切后台/息屏都不丢开关状态；点「结束」结算上传。
+ *   · 权限仍是前置条件：没权限时 setTracking(on) 直接拒绝；权限被撤（resume 检测）停跟踪、缓冲保留。
  *   · 采样不变：GPS_PROVIDER 1s/2m（纯 GNSS，无网络源）。
  *   · 点先进内存缓冲 + files/track_buffer.csv（进程被杀也不丢），网页 attach 后按水位线消费
- * 网页侧契约（static/app.js 轨迹段）：startWatcher=附着（幂等，仅观察不触发开采）/
- * setTracking=开关（持久化）/ drain=取回未消费点 / status=状态（含 trackOn）/
+ * 网页侧契约（static/app.js 轨迹段）：startWatcher=附着（幂等，仅观察）/
+ * setTracking=记录开关（持久化）/ drain=取回未消费点 / status=状态（含 trackOn）/
  * clearBuffer=上传成功后清缓冲 / gpsState 事件=GPS 开关变化。
  */
 @CapacitorPlugin(
@@ -68,7 +69,7 @@ import java.util.concurrent.Executors;
 public class BgLocationPlugin extends Plugin {
     private static final String BUFFER_FILE = "track_buffer.csv";
     private static final String PREFS = "track";
-    private static final String KEY_ON = "track_on";   // v0.33：手动开关，持久化（页面重载不丢）
+    private static final String KEY_ON = "track_on";   // 记录开关，持久化（v0.46 起不控制卫星跟踪）
     private static final int MEM_CAP = 50000;        // 内存缓冲上限（约 14h @1Hz，超出丢最旧）
     private static final int FILE_CAP = 100000;      // 文件行数上限，超出压缩回内存尾 MEM_CAP 条
     private static final long NOTIFY_INTERVAL_MS = 10000;
@@ -90,7 +91,7 @@ public class BgLocationPlugin extends Plugin {
     public void load() {
         if (io == null || io.isShutdown()) io = Executors.newSingleThreadExecutor();
         loadBufferFileSync();
-        if (trackOnPref()) ensureTrackingIfPermitted();   // 冷启动：开关开着且已授权才恢复采集
+        ensureTrackingIfPermitted();   // v0.46：已授权即恢复卫星跟踪（与记录开关无关）
     }
 
     @Override
@@ -99,7 +100,7 @@ public class BgLocationPlugin extends Plugin {
             if (tracking) stopGps();      // 权限被撤 → 停采（缓冲文件保留，数据不丢）
             return;
         }
-        if (trackOnPref()) ensureTrackingIfPermitted();   // 回前台自愈：开关开着才恢复
+        ensureTrackingIfPermitted();   // v0.46：回前台自愈，已授权即恢复卫星跟踪
     }
 
     @Override
@@ -116,7 +117,7 @@ public class BgLocationPlugin extends Plugin {
 
     /* ── 网页侧 API ─────────────────────────────────────────────────── */
 
-    /** 附着：幂等。已在采=只换回调；没采=顺带开采。权限没给 → reject（弹窗归 ensurePermissionsUpfront，C18） */
+    /** 附着：幂等。已在跟踪=只换回调；没跟踪=顺带开跟踪。权限没给 → reject（弹窗归 ensurePermissionsUpfront，C18） */
     @PluginMethod(returnType = PluginMethod.RETURN_CALLBACK)
     public void startWatcher(PluginCall call) {
         if (!hasLocationPermission()) {
@@ -135,7 +136,7 @@ public class BgLocationPlugin extends Plugin {
         call.resolve(ok);
     }
 
-    /** 彻底停止采集（权限撤销/退出场景）。开关一并关闭；缓冲文件保留，数据可续传。 */
+    /** 老页面兼容：彻底停止（释放回调 + 关记录 + 停卫星跟踪）。缓冲保留；下次回前台按权限自愈。 */
     @PluginMethod
     public void stopWatcher(PluginCall call) {
         releaseWatcher();
@@ -144,13 +145,14 @@ public class BgLocationPlugin extends Plugin {
         call.resolve();
     }
 
-    /** v0.33：手动开关（持久化）。on=true 需已授权 + GPS 开；off 停采但缓冲保留。 */
+    /** 记录开关（持久化）：只决定卫星点是否落缓冲，不控制卫星跟踪（v0.46）。
+        on=true 需已授权 + GPS 开；off 仅暂停记点/上传，卫星跟踪继续。 */
     @PluginMethod
     public void setTracking(PluginCall call) {
         boolean on = Boolean.TRUE.equals(call.getBoolean("on", Boolean.FALSE));
         setTrackOnPref(on);
         if (!on) {
-            stopGps();
+            if (tracking) updateNotificationThrottled(true);   // 跟踪没跑就别留常驻通知
             JSObject off = new JSObject();
             off.put("trackOn", false);
             call.resolve(off);
@@ -164,7 +166,7 @@ public class BgLocationPlugin extends Plugin {
             call.reject("GPS 已关闭，请先打开系统定位", "GPS_OFF");
             return;
         }
-        startGps();
+        ensureTrackingIfPermitted();
         JSObject ok = new JSObject();
         ok.put("trackOn", true);
         ok.put("tracking", tracking);
@@ -200,7 +202,7 @@ public class BgLocationPlugin extends Plugin {
         call.resolve();
     }
 
-    /** 状态：tracking/缓冲点数/provider/权限/GPS 开关/持久化开关 */
+    /** 状态：tracking/缓冲点数/provider/权限/GPS 开关/记录开关 */
     @PluginMethod
     public void status(PluginCall call) {
         JSObject ret = new JSObject();
@@ -248,15 +250,15 @@ public class BgLocationPlugin extends Plugin {
         } catch (Exception ignore) {}
     }
 
-    /** 幂等自启：**开关开着**且已授权且没在采 → 注册 GPS 监听 + 拉起前台服务 */
+    /** 幂等自启：已授权且没在跟踪 → 注册 GPS 监听 + 拉起前台服务（v0.46：与记录开关无关） */
     private void ensureTrackingIfPermitted() {
         if (tracking) return;
         if (!hasLocationPermission()) return;
-        if (!trackOnPref()) return;       // v0.33：手动开关关着就不采（页面附着只观察）
         startGps();
     }
 
     private void startGps() {
+        if (tracking) return;
         Context ctx = getContext();
         if (ctx == null) return;
         if (locationManager == null) {
@@ -267,6 +269,7 @@ public class BgLocationPlugin extends Plugin {
             @Override
             public void onLocationChanged(Location location) {
                 if (!tracking || location == null) return;
+                if (!trackOnPref()) return;   // v0.46：跟踪常开，只有记录开关 ON 才落点/推网页
                 double[] p = {
                         location.getLatitude(),
                         location.getLongitude(),
@@ -341,11 +344,17 @@ public class BgLocationPlugin extends Plugin {
         lastNotifyAt = now;
         int n;
         boolean gpsOn = isGpsEnabled();
+        boolean recording = trackOnPref();
         synchronized (lock) { n = buffer.size(); }
-        String msg = gpsOn
-                ? "仅 GPS · 息屏/后台持续采集" + (n > 0 ? " · 已录 " + n + " 点" : "")
-                : "GPS 已关闭，轨迹暂不更新（请打开系统定位）";
-        BgLocationService.updateNotification(getContext(), "轨迹持续记录中", msg);
+        String msg;
+        if (!gpsOn) {
+            msg = "GPS 已关闭，卫星跟踪暂停（请打开系统定位）";
+        } else if (recording) {
+            msg = "仅 GPS · 保持卫星定位 · 记录轨迹中" + (n > 0 ? " · 已录 " + n + " 点" : "");
+        } else {
+            msg = "仅 GPS · 保持卫星定位，后续打卡/拍照坐标更准";
+        }
+        BgLocationService.updateNotification(getContext(), "卫星持续跟踪中", msg);
     }
 
     /* ── 点 ↔ JSON/CSV ──────────────────────────────────────────────── */

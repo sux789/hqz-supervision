@@ -20,6 +20,7 @@
 控件用统一 DSL，例如：
   选项(正确;不正确)    第一项为默认，Excel / App 都允许手填实际值
   数值(株)             非负数，自动与「设计值」列对照
+  数值(株→≥设计值)     通过判断：实测 ≥ 设计值 → 正确；也可 ≥85 / ≥设计值×0.95
   百分数(0-100)
   多选(甲;乙;丙)
   文本 / 长文本(隐藏)
@@ -43,6 +44,9 @@ from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.pagebreak import Break
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+import flow_judge  # noqa: E402  （模板校验与运行时共用同一套规则语法）
 
 # ---------- 默认路径 ----------
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -426,6 +430,18 @@ def design_concept(header):
     return None
 
 
+def with_judge(control, design):
+    """数值类控件 + 有设计值表头 → 自动接 `→≥设计值`（通过判断，默认正确）。
+
+    模板里已手写 `→规则` 的不覆盖；设计值是「常量：…」的不接（无法比大小）。
+    """
+    if not control.startswith('数值(') or '→' in control:
+        return control
+    if not design or str(design).startswith('常量'):
+        return control
+    return control[:-1] + '→≥设计值)'
+
+
 def numeric_control(name):
     n = nkey(name)
     if '面积' in n:
@@ -453,7 +469,8 @@ def is_negative_option(text):
 def option_control(options):
     """正向项统一为「正确」；错误项保留源表说法，多个错误项时逐个列出。
 
-    只有「不正确」一个错误项时，附带 →备注≥2：选中它必须填 ≥2 汉字小备注。
+    每个错误项都带 →备注≥2：选中它必须就地填 ≥2 汉字小备注。
+    只有「不正确」一个错误项时归一成同一个词（现场更好读）。
     """
     cleaned = []
     for o in options:
@@ -462,7 +479,8 @@ def option_control(options):
             cleaned.append(s)
     wrong = [o for o in cleaned if is_negative_option(o)]
     if len(wrong) >= 2:
-        return '选项(正确;' + ';'.join(wrong) + ')'
+        rest = [o + '→备注≥2' if o in wrong else o for o in cleaned[1:]]
+        return '选项(正确;' + ';'.join(rest) + ')'
     if len(wrong) == 1:
         return '选项(正确;不正确→备注≥2)'
     rest = cleaned[1:]
@@ -601,7 +619,7 @@ def flow_rows_for_sheet(sh):
                     f'这里拆成「{name}（数值）+ {label}（选项）」两行。')
             out.append({
                 'step': FIELD_RENAME.get(name, name), 'design': design,
-                'control': numeric_control(name), 'note': note,
+                'control': with_judge(numeric_control(name), design), 'note': note,
             })
             out.append({
                 'step': label,
@@ -612,7 +630,7 @@ def flow_rows_for_sheet(sh):
             return out
 
         design = design_for(name, col['col'], sheet_design, used, occurrence)
-        control = infer_control(name, arg, options, names)
+        control = with_judge(infer_control(name, arg, options, names), design)
 
         step = name
         note = build_note(raw, control, design)
@@ -863,7 +881,15 @@ PARAM_HEADER = ['key', 'value', '类型', '默认值', '说明', '示例']
 # 程序消费的 key。以后程序新增配置项时，往这里加一行，运行 `params` 命令即补进模板。
 PARAM_SPECS = [
     ('可编辑列', '列表', 'v2 界面不显示数据网格，留空；以后若要开网格再填列名。', ''),
-    ('功能', '列表', '拍照 / 视频 / 轨迹 / 打卡；开了拍照/视频还要补三条拍摄模板 key。', ''),
+    ('功能', '列表', '拍照 / 视频 / 轨迹 / 打卡；开了拍照/视频还要补三条拍摄模板 key。',
+     '拍照;轨迹'),
+    ('相片备注', '模板', '照片水印正文（首行时间戳固定，C06 不参数化）；{{列名}}取当前小班行。',
+     ''),
+    ('相片文件名', '模板', '照片文件名（不含扩展名）；{{时间}}=YYYYMMDD_HHMMSS。',
+     ''),
+    ('目录', '模板', '照片在本机相册的子目录：Pictures/{目录}/；半角 / 分层。', ''),
+    ('压缩最长边', '数值', '手机端压缩最长边(px)，300-8000，仅影响新拍照片。', '1440'),
+    ('压缩质量', '数值', 'JPEG 质量 0.1-1，仅影响新拍照片；建议 0.75-0.82。', '0.8'),
     ('搜索选项', '控件映射',
      '选择栏字段|控件类型；顺序即级联顺序，前面的选择过滤后面的候选，小班放最后。',
      '项目类型|select;标段|select;乡（镇）|select;村（社区）|select;小班号|search'),
@@ -871,6 +897,24 @@ PARAM_SPECS = [
     ('导出筛选', '控件映射', '后台下载 Excel 的筛选弹框字段（只筛行）。',
      '项目类型|select;标段|select'),
 ]
+
+
+def _ph(headers, names):
+    """把存在的数据表头拼成占位符片段（缺列自动跳过，避免模板写死列名）。"""
+    return ''.join('{{%s}}' % h for h in names if h in headers)
+
+
+def photo_remark_value(headers):
+    return _ph(headers, ('项目类型', '标段', '乡（镇）', '村（社区）', '小班号')) + '小班'
+
+
+def photo_filename_value(headers):
+    parts = [h for h in ('标段', '小班号') if h in headers]
+    return '_'.join(['{{%s}}' % h for h in parts] + ['{{时间}}'])
+
+
+def photo_dir_value(headers):
+    return '/'.join('{{%s}}' % h for h in ('项目类型', '标段', '小班号') if h in headers)
 
 
 def search_option_value(headers):
@@ -900,6 +944,12 @@ def write_params(wb, headers, routes=None, keep_existing=True):
 
     hs = [str(h).strip() for h in headers if h not in (None, '')]
     defaults = {
+        '功能': '拍照;轨迹',
+        '相片备注': photo_remark_value(hs),
+        '相片文件名': photo_filename_value(hs),
+        '目录': photo_dir_value(hs),
+        '压缩最长边': '1440',
+        '压缩质量': '0.8',
         '搜索选项': search_option_value(headers),
         'unique-key': '小班号' if '小班号' in hs else '',
         '导出筛选': ';'.join(f'{h}|select' for h in ('项目类型', '标段') if h in hs),
@@ -1079,7 +1129,7 @@ def write_doc(wb, src_name, flow_names):
 
     r = 1
     r = title('tpl-人工造林-验收流程模板 · 说明', r)
-    r = para(f'版本 v2.4 ｜ 2026-10-27 ｜ 来源：{src_name}', r)
+    r = para(f'版本 v2.7 ｜ 2026-10-28 ｜ 来源：{src_name}', r)
     r = para('口径：模板由 tools/tpl_tool.py 从源表头自动解析生成；新增项目 / 流程只改源表或加 sheet，不改解析代码。', r, 30)
     r += 1
 
@@ -1125,11 +1175,13 @@ def write_doc(wb, src_name, flow_names):
         ['控件写法', '示例', '含义'],
         [
             ('选项(正确;错误项)', '选项(正确;未实施施肥;未达到每株1.5kg)', '单选；第一项为默认；错误项可多个'),
-            ('选项(正确;不正确→备注≥2)', '选项(正确;不正确→备注≥2)', '只有「不正确」一个错误项时，选中须填 ≥2 汉字小备注'),
-            ('按钮(通过;不通过→备注≥2)', '按钮(通过;不通过→备注≥2)', '操作按钮；不通过时校验前一行备注 ≥2 汉字'),
+            ('选项(正确;错误项→备注≥2)', '选项(正确;不正确→备注≥2)', '选中带 →备注 的错误项，就在该环节下方展开「备注」文本框，须 ≥2 汉字'),
+            ('按钮(通过;不通过→备注≥2)', '按钮(通过;不通过→备注≥2)', '操作按钮；不通过时校验流程备注 ≥2 汉字'),
             ('多选(甲;乙;丙)', '多选(林地清理;底肥放置;…)', '多选勾选'),
             ('数值(单位)', '数值(株) / 数值(亩)', '非负数；与设计值自动对照'),
-            ('百分数(0-100)', '百分数(0-100)', '百分数，0–100'),
+            ('数值(单位→判断规则)', '数值(株→≥设计值) / 数值(株→≥设计值×0.95)',
+             '通过判断：实测满足规则显示「正确」（默认），不满足显示「不正确」并拦住「通过」'),
+            ('百分数(0-100)', '百分数(0-100) / 百分数(0-100→≥85)', '百分数，0–100；可接 →规则 自动判断'),
             ('文本', '文本', '单行文本'),
             ('长文本', '长文本', '多行文本'),
             ('自动(公式)', '自动(成活株数/(成活株数+死亡株数)×100%)', '自动计算，不手填'),
@@ -1138,9 +1190,20 @@ def write_doc(wb, src_name, flow_names):
         ], r)
     r += 1
 
-    r = section('五、选项、按钮与必填', r)
+    r = section('五、通过判断（→规则）', r)
+    r = para('1. 数值 / 百分数 / 自动 控件后面可以接 →规则，例如 数值(株→≥设计值)、百分数(0-100→≥85)。', r, 30)
+    r = para('2. 规则写法：比较符（≥ > ≤ < =）+ 阈值；阈值可以是「设计值」或数字，'
+             '后面可乘系数（×0.95）或加减偏移（-5）。', r, 34)
+    r = para('3. 默认「正确」：没填实测值时显示正确；填了以后按规则实时重算。'
+             '判为「不正确」时不能提交「通过」，现场确实不达标请选「不通过」并写明备注。', r, 40)
+    r = para('4. 不写 →规则 = 不自动判断（与旧模板一致）；规则引用「设计值」但该行没有设计值表头时，'
+             '提交「通过」会被拦下并提示无法判定。', r, 36)
+    r += 1
+
+    r = section('六、选项、按钮与必填', r)
     r = para('1. 选项第一项固定为正向词「正确」，其后为错误项；错误项可以有多个。', r, 24)
-    r = para('2. 只有「不正确」一个错误项时写成 选项(正确;不正确→备注≥2)：选中它必须填 ≥2 汉字小备注。', r, 30)
+    r = para('2. 错误项可以多个，**每个错误项都写 →备注≥2**（如 选项(正确;未实施施肥→备注≥2;未达到每株1.5kg→备注≥2)）：'
+             '选中它就在本环节下方展开「备注」文本框，≥2 汉字才能提交。', r, 36)
     r = para('3. 可见环节默认必填；「自动」与带「隐藏」的控件不必填，带条件的隐藏项按条件必填。', r, 26)
     r = para('4. 每个流程最后一行固定为「是否通过」，其前一行固定为「备注」；'
              'App 不单独渲染这两行，统一在表单底部显示「通过 / 不通过」两个按钮。', r, 36)
@@ -1149,7 +1212,7 @@ def write_doc(wb, src_name, flow_names):
     r += 1
     break_row = r
 
-    r = section('六、设计值表头来源', r)
+    r = section('七、设计值表头来源', r)
     r = para('• 自动匹配：核实密度 → 设计密度（株/亩）、核实株行距 → 设计株行距（米）、'
              '核实总株数 → 设计总株数（株）等；按概念匹配，不写死列号。', r, 30)
     r = para('• 常量：有机肥 1.5kg/株、普钙 0.2kg/株、撑杆规格、覆膜质量、回塘质量。', r, 24)
@@ -1157,20 +1220,21 @@ def write_doc(wb, src_name, flow_names):
     r = para('• 源表重复表头「核实栽植总株数」按位置区分：栽植总株数 / 树种1 / 树种2。', r, 26)
     r += 1
 
-    r = section('七、数据口径', r)
+    r = section('八、数据口径', r)
     r = para('• 5 个源 sheet 均 149 行，小班号集合一致；合并为 149 行，无重复行。', r, 24)
     r = para('• 语义重复列合并：设计面积 / 小班面积 → 设计面积（亩）；设计总株数 / 栽植总株数 → 设计总株数（株）。', r, 26)
     r = para('• 单位上移表头；株行距 / 整地规格去掉尾部单位；混交比例全角冒号 → 半角。', r, 26)
     r = para('• 撑杆 / 覆膜原表把数量与规格 / 质量合在一列，流程里拆成「数量（数值）+ 规格 / 质量（选项）」两行。', r, 30)
-    r = para('• 选项正向统一为「正确」，源表错误项保留；只有「不正确」时要求 ≥2 汉字小备注。', r, 24)
+    r = para('• 选项正向统一为「正确」，源表错误项保留；每个错误项须写 →备注≥2，选中时就地展开文本框。', r, 30)
     r = para('• 原始表头完整保留在流程表「备注」列；未删除任何源数据列。', r, 24)
     r += 1
 
-    r = section('八、解析约定（后续代码）', r)
+    r = section('九、解析约定（后续代码）', r)
     r = kv('设计值', '第 1 行表头，第 2 行起数据；按「小班号」关联。', r, 24)
     r = kv('流程路由', '第 1 行表头；按「项目类型」分组、按「序号」排序；前置流程支持 ; 分隔与环检测。', r, 30)
     r = kv('流程-*', '第 1 行表头，第 2 行起为环节定义；按「序号」排序。', r, 24)
-    r = kv('控件', '取「(」前的类型；选项 / 按钮用半角分号分隔，「→」后是选中该项的附加规则（如 备注≥2）。', r, 30)
+    r = kv('控件', '取「(」前的类型；选项 / 按钮用半角分号分隔，「→」后是附加规则：'
+                    '选项 → 备注≥2（就地展开备注），数值 → ≥设计值 / ≥85（通过判断）。', r, 36)
     r = kv('结论行', '最后一行「是否通过」= 按钮(通过;不通过→备注≥2)；其前一行「备注」必填 ≥2 汉字；'
                       'App 底部统一渲染「通过 / 不通过」提交，不重复显示这两行。', r, 40)
     r = kv('设计值表头引用', '命中「设计值」sheet 表头 → 取当前小班值；以「常量：」开头 → 原样展示；空 → 无。', r, 30)
@@ -1416,11 +1480,25 @@ def show_workbook(path):
             if (c['type'] in ('选项', '按钮') and c['options']
                     and c['options'][0] not in ('正确', '通过')):
                 errors.append(f'{name} 第 {no} 行「{step}」第一个选项不是正向词：{c["options"][0]}')
-            if (c['type'] == '选项' and c['options'] == ['正确', '不正确']
-                    and '备注≥2' not in str(control)):
-                errors.append(f'{name} 第 {no} 行「{step}」只有「不正确」时须带 →备注≥2')
+            if c['type'] == '选项':
+                for o in c['options'][1:]:
+                    if is_negative_option(o) and '备注' not in str(c['rules'].get(o, '')):
+                        warnings.append(
+                            f'{name} 第 {no} 行「{step}」错误项「{o}」没写 →备注≥N，'
+                            f'选中时不会展开文本框')
             if c['type'] == '按钮' and c['options'] != ['通过', '不通过']:
                 errors.append(f'{name} 第 {no} 行「{step}」按钮必须是 通过 / 不通过')
+            if c['type'] in ('数值', '百分数', '自动') and '→' in str(c['arg']):
+                rule_txt = str(c['arg']).split('→', 1)[1].strip()
+                rule = flow_judge.parse(rule_txt)
+                if not rule:
+                    errors.append(
+                        f'{name} 第 {no} 行「{step}」通过判断规则「{rule_txt}」看不懂；'
+                        f'示例：≥设计值 / ≥设计值×0.95 / ≥85')
+                elif rule['is_design'] and (not design or str(design).startswith('常量')):
+                    warnings.append(
+                        f'{name} 第 {no} 行「{step}」通过判断引用「设计值」，'
+                        f'但本行没有设计值表头 → 提交「通过」时会被拦下（无法判定）')
 
         if len(rows) < 2 or rows[-1][1] != '是否通过':
             errors.append(f'{name} 最后一行必须固定为「是否通过」')
@@ -1441,6 +1519,28 @@ def show_workbook(path):
     return True
 
 
+def rewrite_doc(path):
+    """按当前流程表重写「说明」页（只动说明，不碰数据 / 流程 / 参数）。
+
+    为什么单独一条命令：说明页是给业务员和 AI 看的约定，改 DSL 后必须同步；
+    手工改单元格容易漏行、串行，重生成一次就对。
+    """
+    wb = load_workbook(path)
+    names = [n for n in wb.sheetnames if n.startswith('流程-')]
+    if not names:
+        raise SystemExit('没有「流程-」sheet，不是 v2 模板')
+    if '说明' in wb.sheetnames:
+        wb.remove(wb['说明'])
+    write_doc(wb, os.path.basename(path), names)
+    if '参数' in wb.sheetnames:
+        wb.move_sheet('说明',
+                      offset=wb.sheetnames.index('参数') - wb.sheetnames.index('说明'))
+    tmp = path + '.tmp.xlsx'
+    wb.save(tmp)
+    os.replace(tmp, path)
+    return names
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description='人工造林验收模板：生成 / 回读')
     sub = ap.add_subparsers(dest='cmd')
@@ -1456,10 +1556,17 @@ def main(argv=None):
     p.add_argument('--file', default=TPL_DEFAULT)
     p.add_argument('--force', action='store_true', help='所有 key 重置为程序默认值')
 
+    d = sub.add_parser('doc', help='按当前流程表重写「说明」页（只动说明）')
+    d.add_argument('--file', default=TPL_DEFAULT)
+
     args = ap.parse_args(argv)
     if args.cmd == 'show':
         ok = show_workbook(args.file)
         return 0 if ok else 1
+    if args.cmd == 'doc':
+        names = rewrite_doc(args.file)
+        print(f'已重写「说明」页（{len(names)} 个流程）→ {args.file}')
+        return 0
     if args.cmd == 'params':
         wb = load_workbook(args.file)
         if '设计值' not in wb.sheetnames:

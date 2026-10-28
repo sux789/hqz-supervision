@@ -167,11 +167,31 @@ def _tidy_label(p):
     return s.strip() or p
 
 
-def parse_att(text):
-    """`拍照:整地现场照片@2` 或 `回塘、放肥、覆土各 1 张照片` → [{kind,label,min}, ...]
+_ATT_TYPE_RX = re.compile(r'^(图片|照片|pdf|PDF|Pdf)\s*[≥>=]+\s*(\d+)$')
 
-    第一层是正式语法（`拍照:` / `上传:` / `打卡:` + 半角分号组合 + `@N` 张数下限）；
-    第二层是自然语言兜底（当前 Excel 里就是这么写的），按规则表逐片匹配。
+
+def _att_types(arg):
+    """`图片≥1;PDF≥1` → ({'image': 1, 'pdf': 1}, warn)。"""
+    types, warn = {}, ''
+    for rule in re.split(r'[;；]', arg or ''):
+        rule = rule.strip()
+        if not rule:
+            continue
+        m = _ATT_TYPE_RX.match(rule)
+        if not m:
+            warn = f'无法识别的附件规则「{rule}」，已忽略'
+            continue
+        key = 'pdf' if m.group(1).lower() == 'pdf' else 'image'
+        types[key] = _to_int(m.group(2))
+    return types, warn
+
+
+def parse_att(text):
+    """`拍照:整地现场照片@2` 或 `上传:巡护资料@3(图片≥1;PDF≥1)` → [{kind,label,min,types}, ...]
+
+    第一层是正式语法（`拍照:` / `上传:` / `打卡:` + 半角分号组合 + `@N` 张数下限
+    + 可选类型下限 `(图片≥A;PDF≥B)`）；第二层是自然语言兜底（当前 Excel 里就是这么写的），
+    按规则表逐片匹配。`types` 只对上传有意义，拍照/打卡恒为空。
     """
     t = _s(text)
     if not t:
@@ -184,11 +204,14 @@ def parse_att(text):
             seg = seg.strip()
             if not seg:
                 continue
-            m = re.match(r'^(拍照|上传|打卡):(.+?)(?:@(\d+))?$', seg)
+            m = re.match(r'^(拍照|上传|打卡):(.+?)(?:@(\d+))?'
+                         r'(?:[（(]([^()（）]*)[)）])?$', seg)
             if not m:
                 continue
+            types, warn = _att_types(m.group(4))
             out.append({'kind': ATT_KIND[m.group(1)], 'label': m.group(2).strip(),
-                        'min': _to_int(m.group(3)), 'raw': seg, 'warn': ''})
+                        'min': _to_int(m.group(3)), 'types': types,
+                        'raw': seg, 'warn': warn})
         return out
 
     # ── 自然语言兜底（铁律 2）──
@@ -231,7 +254,8 @@ def parse_att(text):
         if key in seen:                          # 同名按钮只出一个
             continue
         seen.add(key)
-        out.append({'kind': kind, 'label': label, 'min': min_, 'raw': p, 'warn': warn})
+        out.append({'kind': kind, 'label': label, 'min': min_, 'types': {},
+                    'raw': p, 'warn': warn})
     return out
 
 

@@ -427,6 +427,13 @@ passes('K7 省略写法并入上一片（撑杆、覆膜照片 → 2 个按钮�
        lambda r: r == ['撑杆', '覆膜'])
 passes('K8 空附件要求 → 无按钮',
        lambda: fp.parse_att(''), lambda r: r == [])
+passes('K9 上传类型下限：@3(图片≥1;PDF≥1) → types 两条',
+       lambda: fp.parse_att('上传:巡护资料@3(图片≥1;PDF≥1)')[0],
+       lambda r: r['kind'] == 'upload' and r['label'] == '巡护资料'
+       and r['min'] == 3 and r['types'] == {'image': 1, 'pdf': 1})
+passes('K10 未知类型规则不丢按钮，只记 warn',
+       lambda: fp.parse_att('上传:资料@2(图片≥1;附件≥2)')[0],
+       lambda r: r['min'] == 2 and r['types'] == {'image': 1} and bool(r['warn']))
 
 print('\n=== L. 流程解析：标准值 trim 取值 + 流程匹配 ===')
 passes('L1 「总株数  」尾随 2 空格，trim 后仍能取到（铁律 3）',
@@ -498,6 +505,140 @@ passes('M5 真日期仍走 date 分支（不被 time 分支抢走）',
 passes('M6 datetime 带时分仍完整输出',
        lambda: _norm_cell(__import__('datetime').datetime(2026, 10, 14, 9, 30, 15)),
        lambda r: r == '2026-10-14 09:30:15')
+
+
+# ── 通过判断（v0.45，B32）：模板写规则，代码只解释 ──────────────
+print('=== J. 通过判断：规则语法与比较 ===')
+
+
+def _j_parse(t):
+    import flow_judge
+    return flow_judge.parse(t)
+
+
+def _j_eval(rule, actual, design):
+    import flow_judge
+    return flow_judge.evaluate(flow_judge.parse(rule), actual, design)
+
+
+ok('J1 规则解析：≥设计值 / ≥设计值×0.95 / ≥85（空格无关）',
+   _j_parse('≥ 设计值')['op'] == '≥' and _j_parse('≥ 设计值')['is_design'] is True
+   and _j_parse('>=设计值 × 0.95')['factor'] == 0.95
+   and _j_parse('≥85')['value'] == 85.0
+   and _j_parse('≥设计值-5')['delta'] == -5.0,
+   str([_j_parse(x) for x in ('≥ 设计值', '>=设计值 × 0.95', '≥85', '≥设计值-5')])[:120])
+ok('J2 看不懂的规则返回 None（配置期由模板工具报错，不静默放过）',
+   all(_j_parse(x) is None for x in ('设计值', '≥', '≥设计值/2', '约等于设计值', '')))
+ok('J3 株数判定：等号算通过，差 1 株不算',
+   _j_eval('≥设计值', 6076, 6076)[0] is True
+   and _j_eval('≥设计值', 6075, 6076)[0] is False
+   and '不满足' in _j_eval('≥设计值', 6000, 6076)[1])
+ok('J4 系数/偏移：×0.95 / -5 按模板写的算',
+   _j_eval('≥设计值×0.95', 5773, 6076)[0] is True
+   and _j_eval('≥设计值×0.95', 5771, 6076)[0] is False
+   and _j_eval('≥设计值-5', 6071, 6076)[0] is True)
+ok('J5 百分数：85 通过、84.9 不通过',
+   _j_eval('≥85', 85, None)[0] is True and _j_eval('≥85', 84.9, None)[0] is False)
+ok('J6 设计值缺失 / 实测未填 → 判不了（None），不是默认通过',
+   _j_eval('≥设计值', 500, None) == (None, '设计值缺失，无法判定')
+   and _j_eval('≥设计值', '', 6076) == (None, '实测值未填'))
+
+
+def _j_fields_roundtrip():
+    """模板解析出的 judge_* 字段 → 服务端判定，不再二次解析规则文本。"""
+    import flow_judge
+    f = flow_judge.fields(flow_judge.parse('≥设计值×0.95'))
+    c = dict(f)
+    return [flow_judge.evaluate_control(c, x, 6076)[0] for x in (5800, 5700)]
+
+
+ok('J7 控件 judge_* 字段可直接判定（服务端与前端共用一份解析结果）',
+   _j_fields_roundtrip() == [True, False], str(_j_fields_roundtrip()))
+
+
+def _j_tpl_bad_rule():
+    from flow_tpl import _judge_fields
+    _judge_fields('≥设计值/2', '流程-完工验收', 8, '栽植成活率')
+
+
+def raises_tpl(name, fn, must_contain=''):
+    from flow_tpl import TplError
+    try:
+        fn()
+        ok(name, False, '未报错（预期应报错）')
+    except TplError as e:
+        ok(name, must_contain in str(e) if must_contain else True, str(e))
+
+
+raises_tpl('J8 模板规则写错 → 解析期报错并带表名/行号', _j_tpl_bad_rule, '流程-完工验收')
+
+# ── 单流程 / 无项目类型路由（v0.47，B30）──────────────────────
+print('=== K. 模板路由：单流程与无项目类型 ===')
+
+
+def _mini_tpl(route_types, with_type_col=False, first_repeat=False):
+    """最小 v2 模板：设计值 + 流程路由 + 若干 流程-*（每个流程 3 行）。"""
+    import openpyxl
+    wb = openpyxl.Workbook()
+    d = wb.active
+    d.title = '设计值'
+    head = (['项目类型'] if with_type_col else []) + ['小班号', '设计面积（亩）']
+    d.append(head)
+    d.append((['人工造林'] if with_type_col else []) + ['A-1', 10])
+    r = wb.create_sheet('流程路由')
+    r.append(['序号', '项目类型', '流程', '前置流程', '可重复', '触发方式', '说明'])
+    for i, (rt, flow) in enumerate(route_types, 1):
+        r.append([i, rt, flow, '', '是' if (first_repeat and i == 1) else '否', '', ''])
+    for flow in {f for _t, f in route_types}:
+        ws = wb.create_sheet(flow)
+        ws.append(['序号', '环节', '设计值表头', '控件', '附件', '备注'])
+        ws.append([1, '核实面积', '设计面积（亩）', '数值(亩→≥设计值×0.95)', '', ''])
+        ws.append([2, '备注', '', '长文本(隐藏;不通过必填≥2汉字)', '', ''])
+        ws.append([3, '是否通过', '', '按钮(通过;不通过→备注≥2)', '', ''])
+    return wb, head
+
+
+def _mini_hit(route_types, with_type_col=False, first_repeat=False):
+    import flow_hit
+    import flow_tpl
+    wb, head = _mini_tpl(route_types, with_type_col, first_repeat)
+    flows = flow_tpl.parse(wb, head)
+    row = (['人工造林'] if with_type_col else []) + ['A-1', 10]
+    return flow_hit._tpl_hit(flows, head, [row], 0, wid=None)
+
+
+_h1 = _mini_hit([('', '流程-单流程')])
+ok('K1 单流程 + 数据表无「项目类型」→ 命中唯一流程（不改模板也能跑）',
+   _h1 and _h1['flow_sheet'] == '流程-单流程' and len(_h1['steps']) == 3,
+   str((_h1 or {}).get('flow_sheet')))
+_h2 = _mini_hit([('人工造林', '流程-单流程')])
+ok('K2 路由写了类型但数据表没有该列 → 回退全部路由（不再 0 命中）',
+   _h2 and _h2['flow_sheet'] == '流程-单流程', str((_h2 or {}).get('flow_sheet')))
+ok('K2b 回退时 cond_val 为空串（界面不出现「项目类型：」空标题）',
+   _h2 and _h2.get('cond_val') == '', str((_h2 or {}).get('cond_val')))
+_h3 = _mini_hit([('', '流程-单流程')], with_type_col=True)
+ok('K3 有类型列但路由类型不匹配 → 仍不命中（多类型模板行为不变）',
+   _h3 is None, str(_h3))
+_h4 = _mini_hit([('', '流程-甲'), ('', '流程-乙')], first_repeat=True)
+ok('K4 多流程 + 无类型 → 全部可用；独立流程排最后且不当默认',
+   _h4 and _h4['flow_sheet'] == '流程-乙'
+   and [x['sheet'] for x in _h4['flow_list']] == ['流程-乙', '流程-甲'],
+   str([x['sheet'] for x in (_h4 or {}).get('flow_list') or []]))
+
+
+def _dup_add_col():
+    """多 worker 并发启动：后到者 ADD COLUMN 报 duplicate 必须被吞掉（2026-10-27 部署实测）。"""
+    import sqlite3
+    from main import _add_col
+    con = sqlite3.connect(':memory:')
+    con.execute('CREATE TABLE t(a TEXT)')
+    _add_col(con, 't', 'rec_no', 'INTEGER NOT NULL DEFAULT 0')
+    _add_col(con, 't', 'rec_no', 'INTEGER NOT NULL DEFAULT 0')  # 第二次不得抛异常
+    return {r[1] for r in con.execute('PRAGMA table_info(t)')}
+
+
+passes('M7 加列迁移幂等（并发启动不崩 worker）',
+       _dup_add_col, lambda r: r == {'a', 'rec_no'})
 
 print('\n' + '=' * 62)
 print(f'通过 {_pass} / 失败 {_fail}')

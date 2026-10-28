@@ -113,6 +113,9 @@
           const one = vals[k] || {};
           Object.keys(one).forEach((f) => { F.v2val[k][f] = decodeVal(one[f]); });
         });
+        // v0.42：已提交的附件清单（上传件带 id，可回看/下载）
+        const atts = j.atts || {};
+        Object.keys(atts).forEach((k) => { F.v2att[k] = atts[k] || []; });
       }
       if (same) {
         F.v2val = Object.assign(F.v2val, d.v2val || {});
@@ -577,37 +580,50 @@
     } catch (e) { return null; }
   }
 
-  /** 备注何时必须填：结论=不通过，或任一项选中了带「→备注」的选项。 */
-  function v2NoteNeed() {
-    const steps = F.data.steps || [];
-    for (let i = 0; i < steps.length; i++) {
-      const vals = F.v2val[steps[i].no] || {};
-      const ctrls = steps[i].controls || [];
-      for (let j = 0; j < ctrls.length; j++) {
-        const on = ctrls[j].note_on || [];
-        if (on.indexOf(String(vals[ctrls[j].name] || '')) >= 0) return true;
-      }
-    }
-    return false;
+  /** 隐藏控件何时出现：`show_on` 声明的字段命中任一选项（模板显式写 →备注 才生成）。
+   *  老模板的隐藏备注没有 show_on → 退回「结论=不通过才显示」。 */
+  function v2CtrlShown(c) {
+    if (!c.hidden) return true;
+    const so = c.show_on || {};
+    const keys = Object.keys(so);
+    const flat = v2Flat();
+    if (!keys.length) return String(flat['是否通过'] || '') === '不通过';
+    return keys.some((k) => {
+      const cur = flat[k];
+      const opts = (so[k] || []).map(String);
+      return Array.isArray(cur)
+        ? cur.some((x) => opts.indexOf(String(x)) >= 0)
+        : opts.indexOf(String(cur == null ? '' : cur)) >= 0;
+    });
+  }
+
+  /** 某环节就地备注的汉字下限：按当前选中的选项取（模板里每项可写不同 →备注≥N）。 */
+  function v2NoteMin(c, s, vals) {
+    let need = c.min_chars || 2;
+    if (!c.note_for) return need;
+    const t = (s.controls || []).find((x) => x.name === c.note_for);
+    const rules = (t && t.note_rules) || {};
+    const cur = vals[c.note_for];
+    const sel = Array.isArray(cur) ? cur : [cur];
+    const mins = sel.map((x) => rules[String(x)]).filter((n) => n);
+    return mins.length ? Math.max.apply(null, mins) : need;
   }
 
   function v2Gate() {
     const miss = [];
-    const noteNeed = v2NoteNeed();
-    const noteNo = F.data.note_step_no || 0;
     (F.data.steps || []).forEach((s) => {
       const vals = F.v2val[s.no] || {};
       (s.controls || []).forEach((c) => {
-        if (c.hidden) {
-          if (noteNeed && s.no === noteNo && cjkCount(vals[c.name]) < 2) {
-            miss.push('备注（≥2 个汉字）');
-          }
-          return;
-        }
         if (c.verdict) return;      // 结论由底部「通过 / 不通过」按钮给出，不在表单里校验
         if (c.type === '自动') return;
+        if (!v2CtrlShown(c)) return;   // 隐藏备注：条件没触发就不校验
         const v = vals[c.name];
         const label = c.name === s.step ? c.name : s.step + '·' + c.name;
+        if (c.hidden) {
+          const need = v2NoteMin(c, s, vals);
+          if (cjkCount(v) < need) miss.push(`${label}（≥${need} 个汉字）`);
+          return;
+        }
         if (c.type === '多选') {
           if (!Array.isArray(v) || !v.length) miss.push(label);
           return;
@@ -615,6 +631,22 @@
         if (String(v == null ? '' : v).trim() === '') { miss.push(label); return; }
         const e = ruleBad(c.rule, v, c.name);
         if (e) miss.push(e);
+      });
+      // v0.42：附件下限 / 类型下限（服务端按实际文件再校验一次，这里只做即时提示）
+      (s.attachments || []).forEach((a) => {
+        const got = attRec(s, a);
+        const cnt = got ? (got.count || 0) : 0;
+        if ((a.min || 0) > cnt) miss.push(`附件「${a.label}」需 ${a.min} 份`);
+        const ty = a.types || {};
+        const kinds = (got && got.types) || [];
+        if (ty.image) {
+          const n = kinds.filter((x) => x === 'image').length;
+          if (n < ty.image) miss.push(`附件「${a.label}」图片需 ≥${ty.image} 份`);
+        }
+        if (ty.pdf) {
+          const n = kinds.filter((x) => x === 'pdf').length;
+          if (n < ty.pdf) miss.push(`附件「${a.label}」PDF 需 ≥${ty.pdf} 份`);
+        }
       });
     });
     return miss;
@@ -684,37 +716,42 @@
     v2Normalize();
     const d = F.data, steps = d.steps || [];
     const locked = !!d.flow_locked;
-    const noteNeed = v2NoteNeed();
     const curName = flowName(d.flow_sheet);
     // 主线按序号在前；独立流程（巡护）排最后，且不参与默认选择
     const list = (d.flow_list || []).slice().sort((a, b) =>
       ((a.independent ? 1 : 0) - (b.independent ? 1 : 0)) || ((a.no || 0) - (b.no || 0)));
 
+    // 无「项目类型」列的单流程模板：标题只留流程名，不显示空的类型
+    const meta = [];
+    if (d.cond_val) meta.push('项目类型：' + esc(d.cond_val));
+    if (d.flow_independent) meta.push('独立流程（可多次，不参与主线先后）');
+    else if (d.flow_repeat) meta.push('可重复填报（每次提交新增一次记录）');
+    if (d.flow_trigger) meta.push(esc(d.flow_trigger));
+
     let h = '<div class="flow-head">'
       + `<div class="flow-title">${esc(curName)}</div>`
-      + `<div class="flow-meta">项目类型：${esc(d.cond_val || '')}`
-      + (d.flow_independent ? ' · 独立流程（可多次，不参与主线先后）'
-        : d.flow_repeat ? ' · 可重复填报（每次提交新增一次记录）' : '')
-      + (d.flow_trigger ? ` · ${esc(d.flow_trigger)}` : '')
-      + '</div></div>';
+      + (meta.length ? `<div class="flow-meta">${meta.join(' · ')}</div>` : '')
+      + '</div>';
 
-    // 流程下拉：路由里的全部流程按序号列出（未解锁的也能点开预览，只是不能提交）
-    h += '<div class="flow-pick"><label for="flowSel">流程</label>'
-      + '<select id="flowSel">';
-    list.forEach((f) => {
-      const tag = f.done ? (f.repeat ? '　可继续填报' : '　✓ 已完成')
-        : (f.available ? '' : '　🔒 需先完成前置');
-      const noTag = f.independent ? '独立' : `${f.no}. `;
-      h += `<option value="${esc(f.sheet)}"${f.sheet === d.flow_sheet ? ' selected' : ''}>`
-        + `${noTag}${esc(flowName(f.sheet))}${tag}</option>`;
-    });
-    h += '</select>';
-    if (d.flow_repeat) {
-      h += `<span class="fs-hint">已填报 ${d.flow_rec_no || 0} 次，本次为第 ${(d.flow_rec_no || 0) + 1} 次</span>`;
-    } else {
-      h += (d.flow_rec_no ? '<span class="fs-hint">已有一次填报，提交将覆盖为本表单内容</span>' : '');
+    // 流程下拉：只有一条流程时不必给选择器（标题已显示流程名）
+    let pick = '';
+    if (list.length > 1) {
+      pick += '<label for="flowSel">流程</label><select id="flowSel">';
+      list.forEach((f) => {
+        const tag = f.done ? (f.repeat ? '　可继续填报' : '　✓ 已完成')
+          : (f.available ? '' : '　🔒 需先完成前置');
+        const noTag = f.independent ? '独立' : `${f.no}. `;
+        pick += `<option value="${esc(f.sheet)}"${f.sheet === d.flow_sheet ? ' selected' : ''}>`
+          + `${noTag}${esc(flowName(f.sheet))}${tag}</option>`;
+      });
+      pick += '</select>';
     }
-    h += '</div>';
+    if (d.flow_repeat) {
+      pick += `<span class="fs-hint">已填报 ${d.flow_rec_no || 0} 次，本次为第 ${(d.flow_rec_no || 0) + 1} 次</span>`;
+    } else if (d.flow_rec_no) {
+      pick += '<span class="fs-hint">已有一次填报，提交将覆盖为本表单内容</span>';
+    }
+    if (pick) h += '<div class="flow-pick">' + pick + '</div>';
 
     (d.warn || []).forEach((w) => {
       h += `<div class="flow-warn"><b>配置提示</b>${esc(w.text || w)}</div>`;
@@ -728,23 +765,25 @@
 
     steps.forEach((s) => {
       const vals = v2Vals(s.no);
-      const c = (s.controls || [])[0] || {};
+      const ctrls = s.controls || [];
       // 结论行不单独渲染：底部「通过 / 不通过」就是提交按钮
-      if (c.verdict) return;
-      // 隐藏备注：不通过 / 选了备注项时才出现；其余情况不占版面
-      if (c.hidden && !noteNeed) return;
+      if (ctrls.some((c) => c.verdict)) return;
+      // 隐藏备注：条件命中才出现（环节内选错就地展开；流程备注=结论不通过）；
+      // 其余情况不占版面。一个环节可有多个控件（选项 + 就地备注）。
+      const shown = ctrls.filter(v2CtrlShown);
+      if (!shown.length) return;
       h += '<div class="flow-card' + (locked ? ' locked' : '') + '">';
       h += '<div class="flow-card-head">'
         + `<span class="flow-card-title">${esc(s.step)}</span>`
         + `<span class="flow-no">${s.no} / ${steps.length}</span></div>`;
       if (s.memo) h += `<div class="flow-note">${esc(s.memo)}</div>`;
-      h += '<div class="flow-ctrls' + (c.design ? ' v2-big' : '') + '">'
-        + v2CtrlHtml(s, c, vals) + '</div>';
+      h += '<div class="flow-ctrls' + (ctrls[0].design ? ' v2-big' : '') + '">'
+        + shown.map((c) => v2CtrlHtml(s, c, vals)).join('') + '</div>';
       if ((s.attachments || []).length) h += attHtmlV2(s);
       h += '</div>';
     });
 
-    const miss = locked ? [] : v2Gate();
+    const miss = locked ? [] : v2Gate().concat(v2JudgeFails());
     h += '<div class="flow-submit"><span class="prog">'
       + (locked ? '🔒 流程未解锁'
         : miss.length ? '还差 ' + miss.length + ' 项：' + esc(miss.join('、'))
@@ -771,7 +810,8 @@
   }
 
   function v2CtrlHtml(s, c, vals) {
-    const nm = esc(c.name);
+    const nm = esc(c.label || c.name);     // 显示用（就地备注显示「备注」）
+    const field = esc(c.name);             // 提交用字段名（{环节}说明）
     const stdV = (F.data.std || {})[c.name];
     const hasStd = stdV !== undefined && stdV !== null && stdV !== '';
     let h = '';
@@ -786,16 +826,17 @@
     }
     if (c.type === '自动') {
       const v = vals[c.name];
-      h += `<div class="fs-item auto"><div class="fs-auto-v" data-auto="${s.no}" data-f="${nm}">`
+      h += `<div class="fs-item auto"><div class="fs-auto-v" data-auto="${s.no}" data-f="${field}">`
         + `${v == null || v === '' ? '—' : esc(v) + (c.unit || (String(c.formula || '').indexOf('%') >= 0 ? '%' : ''))}</div>`
-        + `<div class="fs-hint">系统自动算：${esc(c.formula || c.arg || '')}</div></div>`;
+        + `<div class="fs-hint">系统自动算：${esc(c.formula || c.arg || '')}</div>`
+        + v2JudgeHtml(s, c, vals) + '</div>';
       return h;
     }
     if (c.type === '下拉') {
       const opts = splitList(c.arg);
       const cur = String(vals[c.name] == null ? '' : vals[c.name]);
       h += `<div class="fs-item"><div class="fs-label">${nm} <span class="req">*</span></div>
-        <select data-s="${s.no}" data-f="${nm}">`;
+        <select data-s="${s.no}" data-f="${field}">`;
       if (!cur) h += '<option value="" selected>请选择</option>';
       opts.forEach((o) => {
         h += `<option${cur === o ? ' selected' : ''}>${esc(o)}</option>`;
@@ -809,50 +850,84 @@
       h += `<div class="fs-item"><div class="fs-label">${nm} <span class="req">*</span>
         <span class="fs-hint">可多选</span></div><div class="fs-multi">`;
       opts.forEach((o) => {
-        h += `<label class="fs-chk"><input type="checkbox" data-s="${s.no}" data-m="${nm}"`
+        h += `<label class="fs-chk"><input type="checkbox" data-s="${s.no}" data-m="${field}"`
           + ` data-v="${esc(o)}"${sel.indexOf(o) >= 0 ? ' checked' : ''}>${esc(o)}</label>`;
       });
       h += `</div><div class="fs-verdict hint" data-mcount="${s.no}">已选 ${sel.length} 项</div></div>`;
       return h;
     }
     if (c.type === '多行纯文本') {
-      const need = c.required && !c.hidden ? '<span class="req">*</span>' : '';
-      h += `<div class="fs-item"><div class="fs-label">${nm} ${c.hidden ? `<span class="req">*</span>
-        <span class="fs-hint">结论=不通过 或 选了带备注的项时必填，≥2 个汉字</span>` : need}</div>
-        <textarea data-s="${s.no}" data-f="${nm}" maxlength="500" rows="3"
+      const need = c.required ? '<span class="req">*</span>' : '';
+      const hint = c.hidden
+        ? `<span class="fs-hint">${esc(c.hint || '条件满足时必填，≥2 个汉字')}</span>` : '';
+      h += `<div class="fs-item"><div class="fs-label">${nm} ${need}${hint}</div>
+        <textarea data-s="${s.no}" data-f="${field}" maxlength="500" rows="3"
           placeholder="按现场实际情况填写">${esc(vals[c.name] || '')}</textarea></div>`;
       return h;
     }
     if (c.type === '数值') {
       h += `<div class="fs-item"><div class="fs-label">${nm} <span class="req">*</span>
         ${c.unit ? `<span class="fs-hint">单位：${esc(c.unit)}</span>` : ''}</div>
-        <input type="number" inputmode="decimal" data-s="${s.no}" data-f="${nm}"
-          placeholder="实测" value="${esc(vals[c.name] || '')}"></div>`;
+        <input type="number" inputmode="decimal" data-s="${s.no}" data-f="${field}"
+          placeholder="实测" value="${esc(vals[c.name] || '')}">`
+        + v2JudgeHtml(s, c, vals) + '</div>';
       return h;
     }
     // 单行文本（含"文本"）
     h += `<div class="fs-item"><div class="fs-label">${nm} <span class="req">*</span></div>
-      <input type="text" data-s="${s.no}" data-f="${nm}" maxlength="60"
+      <input type="text" data-s="${s.no}" data-f="${field}" maxlength="60"
         placeholder="按实际测量填写" value="${esc(vals[c.name] || '')}"></div>`;
     return h;
   }
 
+  /** 附件下限文案：`至少 3 份（图片≥1 / PDF≥1）`，没有下限返回空串。 */
+  function attNeedText(a) {
+    const ty = a.types || {};
+    const t = [];
+    if (ty.image) t.push('图片≥' + ty.image);
+    if (ty.pdf) t.push('PDF≥' + ty.pdf);
+    let s = a.min ? '至少 ' + a.min + ' 份' : '';
+    if (t.length) s += (s ? '（' : '') + t.join(' / ') + (s ? '）' : '');
+    return s;
+  }
+
+  function attRec(s, a) {
+    const list = F.v2att[s.no] || [];
+    return list.find((x) => attKey(x.kind, x.label) === attKey(a.kind, a.label)) || null;
+  }
+
   function attHtmlV2(s) {
     const list = s.attachments || [];
-    const got0 = F.v2att[s.no] || [];
     let h = '<div class="fs-att"><div class="fs-label">附件要求'
       + `<span class="fs-hint">Excel 原文「${esc(s.att_raw || '')}」</span></div><div class="fs-att-btns">`;
     list.forEach((a, i) => {
-      const got = got0.find((x) => attKey(x.kind, x.label) === attKey(a.kind, a.label));
+      const got = attRec(s, a);
       const cnt = got ? (got.count || 0) : 0;
       const ico = a.kind === 'photo' ? '📷' : (a.kind === 'upload' ? '📎' : '📍');
       const verb = a.kind === 'photo' ? '拍照' : (a.kind === 'upload' ? '上传' : '打卡');
       h += `<button class="fs-att-btn${cnt >= (a.min || 0) ? ' ok' : ''}" data-s="${s.no}" data-att2="${i}">`
         + `${ico} ${verb} · ${esc(a.label)}`
-        + (a.min ? ` <span class="fs-hint">至少 ${a.min} 份</span>` : '')
+        + (attNeedText(a) ? ` <span class="fs-hint">${esc(attNeedText(a))}</span>` : '')
         + (cnt ? ` <span class="cnt">${cnt}</span>` : '') + '</button>';
     });
-    h += '</div></div>';
+    h += '</div>';
+    // 已传文件清单：图片/PDF 可点开；上传件可移除（服务端文件留存，提交时按 id 认领）
+    list.forEach((a, i) => {
+      const got = attRec(s, a);
+      if (!got || !(got.names || []).length) return;
+      h += '<div class="att-files">';
+      (got.names || []).forEach((n, j) => {
+        const id = (got.ids || [])[j];
+        const url = id ? withToken((window.SUP_BASE || '') + '/api/attachments/' + id) : '';
+        const ty = (got.types || [])[j] === 'pdf' ? '📄' : '🖼';
+        h += '<span class="att-file">'
+          + (url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${ty} ${esc(n)}</a>`
+            : `${ty} ${esc(n)}`)
+          + `<button type="button" class="att-del" data-rm="${s.no}:${i}:${j}" title="移除">×</button></span>`;
+      });
+      h += '</div>';
+    });
+    h += '</div>';
     return h;
   }
 
@@ -869,11 +944,19 @@
       const s = v2Step(no);
       const c = s && (s.controls || []).find((x) => x.name === k);
       if (!c) return;
-      const ev = (el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') ? 'change' : 'input';
+      // 环节内备注跟着输入实时判定，否则要点到别处（blur）才更新底部缺项提示
+      const ev = el.tagName === 'SELECT' ? 'change' : 'input';
       on(el, ev, () => {
         v2Vals(no)[k] = el.value;
-        if ((c.note_on || []).length) { saveDraft(); render(); return; }   // 备注区跟着出现/消失
+        if ((c.note_on || []).length) {
+          // 改回正向项就把就地备注清掉，避免隐藏着的旧文字被一起提交
+          if (c.note_name && c.note_on.indexOf(String(el.value)) < 0) {
+            v2Vals(no)[c.note_name] = '';
+          }
+          saveDraft(); render(); return;   // 备注区跟着出现/消失
+        }
         v2AutoRefresh(no);
+        if (c.judge) refreshV2Judge(no, c);
         saveDraft();
         refreshV2Submit();
       });
@@ -900,7 +983,25 @@
         const a = s && (s.attachments || [])[+el.dataset.att2];
         if (!a) return;
         if (!F.v2att[no]) F.v2att[no] = [];
-        shootAtt(a, F.v2att[no], () => { saveDraft(); render(); });
+        shootAtt(a, F.v2att[no], () => { saveDraft(); render(); }, { step: no });
+      });
+    });
+
+    Array.prototype.forEach.call(host.querySelectorAll('[data-rm]'), (el) => {
+      on(el, 'click', (ev) => {
+        ev.preventDefault();
+        const p = String(el.dataset.rm || '').split(':');
+        const no = +p[0], ai = +p[1], fi = +p[2];
+        const s = v2Step(no);
+        const a = s && (s.attachments || [])[ai];
+        const got = a && attRec(s, a);
+        if (!got) return;
+        got.ids = (got.ids || []).filter((_, k) => k !== fi);
+        got.names = (got.names || []).filter((_, k) => k !== fi);
+        got.types = (got.types || []).filter((_, k) => k !== fi);
+        got.count = (got.ids || []).length;
+        saveDraft();
+        render();
       });
     });
 
@@ -929,6 +1030,88 @@
     });
   }
 
+  /** 模板 `→规则` 的通过判断：服务端已把规则拆成 op / 阈值 / 系数，这里只做算术。
+   *  默认「正确」——没填实测值时先按模板要求显示正确，填了再实时重算。 */
+  function v2JudgeOf(c, actual) {
+    if (!c.judge) return null;
+    const raw = actual == null ? '' : String(actual).trim();
+    let t;
+    if (c.judge_ref === '设计值') {
+      const dsg = (F.data.std || {})[c.name];
+      if (dsg === undefined || dsg === null || String(dsg).trim() === '') {
+        return raw === '' ? { ok: true, why: '待填实测（默认正确）', empty: true }
+          : { ok: null, why: '设计值缺失，无法判定' };
+      }
+      t = parseFloat(dsg);
+    } else {
+      t = Number(c.judge_value);
+    }
+    if (isNaN(t)) return { ok: null, why: '规则阈值不是数字' };
+    if (c.judge_factor != null) t *= c.judge_factor;
+    if (c.judge_delta != null) t += c.judge_delta;
+    if (raw === '') return { ok: true, why: '待填实测（默认正确）', t: t, empty: true };
+    const a = parseFloat(raw);
+    if (isNaN(a)) return { ok: null, why: '实测值不是数字', t: t };
+    const op = c.judge_op || '≥';
+    const ok = op === '≥' ? a >= t : op === '>' ? a > t
+      : op === '≤' ? a <= t : op === '<' ? a < t : Math.abs(a - t) < 1e-9;
+    return {
+      ok: ok, t: t,
+      why: ok ? '实测 ' + fmtNum(a) + ' ' + op + ' ' + fmtNum(t)
+        : '实测 ' + fmtNum(a) + ' 不满足「' + op + ' ' + fmtNum(t) + '」',
+    };
+  }
+
+  function fmtNum(x) {
+    const v = Number(x);
+    return Number.isInteger(v) ? String(v) : String(Math.round(v * 10000) / 10000);
+  }
+
+  function v2JudgeHtml(s, c, vals) {
+    if (!c.judge) return '';
+    const j = v2JudgeOf(c, vals[c.name]);
+    const cls = j.ok === false ? 'bad' : (j.ok === null ? 'warn' : (j.empty ? 'ok idle' : 'ok'));
+    const word = j.ok === false ? '✗ 不正确' : (j.ok === null ? '? 无法判定' : '✓ 正确');
+    return `<div class="fs-judge ${cls}" data-judge="${s.no}:${esc(c.name)}">`
+      + `<span class="k">通过判断</span><b>${word}</b>`
+      + `<span class="why">${esc(j.why)}</span>`
+      + `<span class="r">规则 ${esc(c.judge)}</span></div>`;
+  }
+
+  /** 只改一条判断的 DOM，不重画整页（数值输入时保焦点） */
+  function refreshV2Judge(no, c) {
+    const key = no + ':' + c.name;
+    const all = document.querySelectorAll('#flowPanel [data-judge]');
+    for (let i = 0; i < all.length; i++) {
+      if (all[i].getAttribute('data-judge') !== key) continue;
+      const vals = F.v2val[no] || {};
+      const tmp = document.createElement('div');
+      tmp.innerHTML = v2JudgeHtml({ no: no }, c, vals);
+      if (tmp.firstChild) all[i].replaceWith(tmp.firstChild);
+      return;
+    }
+  }
+
+  /** 判断不通过的项（默认正确、未填实测都不算） */
+  function v2JudgeFails() {
+    const out = [];
+    (F.data.steps || []).forEach((s) => {
+      const vals = F.v2val[s.no] || {};
+      (s.controls || []).forEach((c) => {
+        if (!c.judge) return;
+        const raw = vals[c.name];
+        if (raw == null || String(raw).trim() === '') return;
+        const j = v2JudgeOf(c, raw);
+        if (j && (j.ok === false || j.ok === null)) {
+          const lb = c.label || c.name;
+          out.push((lb === s.step ? lb : s.step + '·' + lb)
+            + '·通过判断（' + j.why + '）');
+        }
+      });
+    });
+    return out;
+  }
+
   function refreshV2Submit() {
     const host = $('#flowPanel');
     if (!host) return;
@@ -937,7 +1120,7 @@
     const reject = host.querySelector('#flowReject');
     if (!bar || !pass || !reject) return;
     const locked = !!F.data.flow_locked;
-    const miss = locked ? [] : v2Gate();
+    const miss = locked ? [] : v2Gate().concat(v2JudgeFails());
     bar.querySelector('.prog').textContent = locked
       ? '🔒 流程未解锁'
       : miss.length ? '还差 ' + miss.length + ' 项：' + miss.join('、') : '填完了，选择结论提交';
@@ -955,8 +1138,10 @@
       const vc = (vs.controls || []).find((c) => c.verdict);
       if (vc) v2Vals(vs.no)[vc.name] = verdict;
     }
+    // 通过判断只拦「通过」：现场确实不达标时选「不通过」+ 写备注仍可提交
     const miss = v2Gate();
-    if (miss.length) {
+    const jf = verdict === '不通过' ? [] : v2JudgeFails();
+    if (miss.length || jf.length) {
       saveDraft();
       render();          // 选「不通过」后把隐藏的备注框画出来
       if (verdict === '不通过') {
@@ -965,6 +1150,8 @@
           const el2 = document.querySelector('#flowPanel .flow-card textarea');
           if (el2) el2.focus();
         }, 0);
+      } else if (jf.length) {
+        toast('通过判断不通过：' + jf[0] + '；如现场特殊请选「不通过」并写备注', true);
       } else {
         toast('还有 ' + miss.length + ' 项未完成：' + miss.slice(0, 3).join('、'), true);
       }
@@ -1396,42 +1583,75 @@
   async function shoot(i) {
     const s = step(), a = (s.attachments || [])[i];
     if (!a) return;
-    return shootAtt(a, F.att, () => { saveDraft(); render(); });
+    return shootAtt(a, F.att, () => { saveDraft(); render(); }, { step: s.no });
   }
 
   /** 附件采集（老格式/ v2 共用）：list 是这一层的附件数组，done 由调用方决定怎么刷新 */
-  async function shootAtt(a, list, done) {
+  async function shootAtt(a, list, done, ctx) {
     const key = attKey(a.kind, a.label);
     const rec = list.find((x) => attKey(x.kind, x.label) === key)
-      || { kind: a.kind, label: a.label, min: a.min, count: 0, names: [], operator: '' };
+      || { kind: a.kind, label: a.label, min: a.min, count: 0, names: [],
+           types: [], ids: [], operator: '' };
 
     if (a.kind === 'upload') {
-      // 上传：可选照片或 PDF（原生长流程会压缩；这里只做留痕 + 云同步）
+      // v0.42：真实上传（JPG/PNG/WebP/PDF，≤10MB；服务端按魔数校验）
+      const ty = a.types || {};
       const inp = document.createElement('input');
       inp.type = 'file';
-      inp.accept = a.label.indexOf('证件') >= 0 ? 'image/*,application/pdf' : 'image/*,application/pdf';
+      inp.accept = ty.pdf && !ty.image ? 'application/pdf'
+        : (ty.image && !ty.pdf ? 'image/jpeg,image/png,image/webp'
+          : 'image/jpeg,image/png,image/webp,application/pdf');
+      inp.multiple = true;
       inp.onchange = async () => {
-        const f = inp.files && inp.files[0];
-        if (!f) return;
-        rec.count = (rec.count || 0) + 1;
-        rec.names = (rec.names || []).concat(f.name);
-        rec.operator = window.__supUser || '';
-        const i = list.findIndex((x) => attKey(x.kind, x.label) === key);
-        if (i >= 0) list.splice(i, 1);
-        list.push(rec);
-        done();
-        toast('已附 ' + f.name);
+        const files = Array.prototype.slice.call(inp.files || []);
+        if (!files.length) return;
+        const stepNo = ctx && ctx.step;
+        if (stepNo == null) { toast('上传缺少环节信息，请刷新后重试', true); return; }
+        let okn = 0;
+        for (let k = 0; k < files.length; k++) {
+          const f = files[k];
+          if (f.size > 10 * 1024 * 1024) {
+            toast(f.name + ' 超过 10MB，已跳过', true);
+            continue;
+          }
+          const fd = new FormData();
+          fd.append('row', String(F.rowIdx));
+          fd.append('flow', (F.data && F.data.flow_sheet) || '');
+          fd.append('entry', F.entry || '');
+          fd.append('step', String(stepNo));
+          fd.append('label', a.label);
+          fd.append('file', f);
+          try {
+            const jj = await api('/api/workbooks/' + F.wid + '/flow/att',
+                                 { method: 'POST', body: fd });
+            rec.count = (rec.count || 0) + 1;
+            rec.names = (rec.names || []).concat(jj.name || f.name);
+            rec.ids = (rec.ids || []).concat(jj.id);
+            rec.types = (rec.types || []).concat(jj.kind || 'image');
+            rec.operator = window.__supUser || '';
+            const i = list.findIndex((x) => attKey(x.kind, x.label) === key);
+            if (i >= 0) list.splice(i, 1);
+            list.push(rec);
+            done();
+            okn++;
+          } catch (e) {
+            toast('上传失败：' + (e.message || e), true);
+            break;
+          }
+        }
+        if (okn) toast('已上传 ' + okn + ' 个文件');
       };
       inp.click();
       return;
     }
 
     if (a.kind === 'punch') {
-      // 定位打卡：取一次定位存进附件留痕（与轨迹不同，这是单点标记）
+      // 定位打卡：取一次定位存进附件留痕（与轨迹不同，这是单点标记）。
+      // enableHighAccuracy：优先用常开的卫星跟踪拿最新 fix（v0.46）。
       const geo = navigator.geolocation
         ? await new Promise((res) => navigator.geolocation.getCurrentPosition(
           (p) => res(p.coords.latitude.toFixed(6) + ',' + p.coords.longitude.toFixed(6)),
-          () => res(''), { timeout: 8000 }))
+          () => res(''), { enableHighAccuracy: true, timeout: 8000 }))
         : '';
       if (!geo) { toast('定位失败，请检查定位权限后重试', true); return; }
       rec.count = (rec.count || 0) + 1;

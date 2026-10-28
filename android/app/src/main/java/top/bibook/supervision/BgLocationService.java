@@ -20,7 +20,8 @@ import androidx.core.app.ServiceCompat;
  * 通知点击回到应用主界面。
  *
  * v0.32：通知构建抽成静态助手（ensureChannel/buildNotification/updateNotification），
- * 插件在采集过程中按 10s 节流更新同 ID 通知（点数/GPS 开关状态）。
+ * 插件在跟踪过程中按 10s 节流更新同 ID 通知（记录点数/GPS 开关状态）。
+ * v0.46：通知语义改为「卫星持续跟踪中」——跟踪由权限决定常开，记录轨迹只是其中一种用途。
  */
 public class BgLocationService extends Service {
     static final String CHANNEL_ID = "bg_location";
@@ -29,9 +30,9 @@ public class BgLocationService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String title = (intent != null && intent.getStringExtra("title") != null)
-                ? intent.getStringExtra("title") : "轨迹持续记录中";
+                ? intent.getStringExtra("title") : "卫星持续跟踪中";
         String message = (intent != null && intent.getStringExtra("message") != null)
-                ? intent.getStringExtra("message") : "正在后台记录调查轨迹（仅 GPS）";
+                ? intent.getStringExtra("message") : "正在保持卫星定位（仅 GPS），后续定位更准";
         ensureChannel(this);
         Notification n = buildNotification(this, title, message);
         try {
@@ -50,7 +51,7 @@ public class BgLocationService extends Service {
             NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm != null && nm.getNotificationChannel(CHANNEL_ID) == null) {
                 nm.createNotificationChannel(new NotificationChannel(
-                        CHANNEL_ID, "轨迹持续记录（仅 GPS）", NotificationManager.IMPORTANCE_HIGH));
+                        CHANNEL_ID, "卫星持续跟踪（仅 GPS）", NotificationManager.IMPORTANCE_HIGH));
             }
         }
     }

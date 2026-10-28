@@ -6,9 +6,12 @@ REMOTE=${REMOTE:-www@forest.bibook.top}
 DEST=${DEST:-/home/www/bibook_deploy/apps/supervision}
 APPSPEC=${APPSPEC:-./deploy/supervision.appspec}
 
-# 1. 同步应用代码（main.py / param_parser.py / sync_cloud.py / templates / static；数据目录不覆盖）
+# 1. 同步应用代码（路由 + 解析/判定积木；数据目录不覆盖）
+# 注意：v0.35 起新增 flow_config/flow_tpl，v0.43 起新增 wb_parse/flow_hit，
+# v0.45 起新增 flow_judge——漏同步即 ModuleNotFoundError
 rsync -avz --exclude '__pycache__/' --exclude '*.pyc' --exclude '.DS_Store' \
-  ./main.py ./param_parser.py ./sync_cloud.py ./track_export.py ./flow_parser.py "$REMOTE:$DEST/"
+  ./main.py ./param_parser.py ./flow_parser.py ./flow_config.py ./flow_tpl.py \
+  ./flow_judge.py ./wb_parse.py ./flow_hit.py ./sync_cloud.py ./track_export.py "$REMOTE:$DEST/"
 rsync -avz --exclude '__pycache__/' --exclude '.DS_Store' ./templates/ "$REMOTE:$DEST/templates/"
 rsync -avz --exclude '__pycache__/' --exclude '.DS_Store' ./static/ "$REMOTE:$DEST/static/"
 

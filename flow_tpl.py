@@ -12,19 +12,23 @@
 
 控件 DSL（取自模板「说明」页，本模块只解释不发明）：
 
-    选项(正确;不正确→备注≥2)   单选，第一项是正向词；→ 后可带备注下限
+    选项(正确;不正确→备注≥2)   单选，第一项是正向词；→ 后标了备注的选项，
+                               选中时在同一环节就地展开「备注」文本框（≥2 汉字）
     按钮(通过;不通过→备注≥2)   结论按钮
     多选(甲;乙;丙)             多选
     数值(株) / 百分数(0-100)   数字；数值非负，百分数 0-100
+    数值(株→≥设计值)           通过判断：实测 ≥ 当前小班设计值 → 正确；
+    百分数(0-100→≥85)          `→` 后可写 ≥/</>≤/</=/设计值/数字/×系数/±偏移
     文本 / 长文本              单行 / 多行
     长文本(隐藏;不通过必填≥2汉字)  默认隐藏，结论=不通过时展开
-    自动(公式)                 自动计算，不手填
+    自动(公式)                 自动计算，不手填；也可接 `→规则`（如 →≥85）
 
 设计值表头：命中「设计值」列 → 按当前小班取值；「常量：xxx」→ 固定提示；留空 = 无。
 """
 
 import re
 
+import flow_judge
 from flow_parser import parse_att, split_top
 
 DESIGN_SHEET = '设计值'
@@ -50,6 +54,34 @@ def _to_int(v, default=0):
         return int(float(_s(v)))
     except (TypeError, ValueError):
         return default
+
+
+def _note_min(rule, default=2):
+    """`备注≥2` / `不通过必填≥3汉字` → 3；没有数字时取 default。"""
+    m = re.search(r'[≥>=]+\s*(\d+)', rule or '')
+    return int(m.group(1)) if m else default
+
+
+_EMPTY_JUDGE = {'judge': '', 'judge_op': '', 'judge_ref': '',
+                'judge_value': None, 'judge_factor': None, 'judge_delta': None}
+
+
+def _split_judge(arg):
+    """`株→≥设计值` → (`株`, `≥设计值`)；没有 `→` 时规则为空（不自动判断）。"""
+    unit, sep, rule = str(arg or '').partition('→')
+    return unit.strip(), (rule.strip() if sep else '')
+
+
+def _judge_fields(rule_text, sheet, no, step):
+    """数值类控件的 `→规则` → 控件字段；规则看不懂直接报错（配置期暴露）。"""
+    if not rule_text:
+        return dict(_EMPTY_JUDGE)
+    rule = flow_judge.parse(rule_text)
+    if not rule:
+        raise TplError(
+            f'「{sheet}」第 {no} 行「{step}」通过判断规则「{rule_text}」看不懂；'
+            f'写法示例：≥设计值 / ≥设计值×0.95 / ≥85')
+    return flow_judge.fields(rule)
 
 
 def is_tpl_doc(wb):
@@ -112,42 +144,84 @@ def _control(step, ctl_text, design, sheet, no):
     d = parse_dsl(ctl_text)
     t = d['type']
     c = {
-        'name': step, 'type': '单行文本', 'arg': '', 'sub': [],
+        'name': step, 'label': '', 'type': '单行文本', 'arg': '', 'sub': [],
         'std_col': design['std_col'], 'hint': '', 'unit': '',
         'required': True, 'verdict': False, 'drop': [], 'rule': '',
         'design': design['design'], 'design_const': design['const'],
         'design_value': design['const_value'],
-        'options': d['options'], 'note_on': [], 'hidden': d['hidden'],
+        'options': [], 'note_on': [], 'note_rules': {}, 'note_name': '',
+        'hidden': d['hidden'], 'show_on': {}, 'note_for': '', 'min_chars': 0,
+        'judge': '', 'judge_op': '', 'judge_ref': '',
+        'judge_value': None, 'judge_factor': None, 'judge_delta': None,
     }
     if t == '选项':
         opts = d['options']
-        c.update(type='下拉', arg=';'.join(opts), default=opts[0] if opts else '')
-        c['note_on'] = [o for o, r in d['rules'].items() if '备注' in r]
+        notes = {o: _note_min(r) for o, r in d['rules'].items() if '备注' in r}
+        c.update(type='下拉', arg=';'.join(opts), options=opts,
+                 default=opts[0] if opts else '')
+        c['note_on'] = list(notes)
+        c['note_rules'] = notes
+        c['note_name'] = f'{step}说明' if notes else ''
     elif t == '按钮':
         c.update(name='是否通过', type='下拉', arg='通过;不通过',
                  required=True, default='', verdict=True,
                  options=['通过', '不通过'], note_on=['不通过'])
     elif t == '多选':
-        c.update(type='多选', arg=';'.join(d['options']))
+        c.update(type='多选', arg=';'.join(d['options']), options=d['options'])
     elif t == '数值':
-        c.update(type='数值', arg=d['arg'], unit=d['arg'], rule='≥0')
+        unit, rule = _split_judge(d['arg'])
+        c.update(type='数值', arg=unit, unit=unit, rule='≥0')
+        c.update(_judge_fields(rule, sheet, no, step))
     elif t == '百分数':
-        c.update(type='数值', arg=d['arg'], unit='%', rule='0-100')
+        unit, rule = _split_judge(d['arg'])
+        c.update(type='数值', arg=unit, unit='%', rule='0-100')
+        c.update(_judge_fields(rule, sheet, no, step))
     elif t == '文本':
         c.update(type='单行文本', arg=d['arg'])
     elif t == '长文本':
         hidden = d['hidden']
-        c.update(type='多行纯文本', arg=d['arg'], required=not hidden,
-                 hidden=hidden,
-                 rule='≥2汉字' if ('≥2' in d['arg'] or '不通过必填' in d['arg']) else '')
+        # 隐藏备注只在条件满足时展开；展开后就是必填，汉字下限来自模板（≥N）
+        min_chars = _note_min(d['arg'], 2) if hidden else 0
+        c.update(type='多行纯文本', arg=d['arg'], required=True,
+                 hidden=hidden, min_chars=min_chars,
+                 hint=(f'结论=不通过时必填，≥{min_chars} 个汉字'
+                       if hidden and '不通过' in d['arg'] else ''),
+                 show_on={'是否通过': ['不通过']}
+                 if hidden and '不通过' in d['arg'] else {})
     elif t == '自动':
-        c.update(type='自动', arg='系统自动算: ' + d['arg'], formula=d['arg'],
+        formula, rule = _split_judge(d['arg'])
+        c.update(type='自动', arg='系统自动算: ' + formula, formula=formula,
                  required=False)
+        c.update(_judge_fields(rule, sheet, no, step))
     else:
         # 白名单之外的类型不猜：按单行文本落地，同时在 flow 警告里说清表 + 行号
         c['type'] = '单行文本'
         c['arg'] = d['arg']
     return c
+
+
+def _note_control(step, notes):
+    """选项带 `→备注≥N` 时，在同一环节挂一个隐藏多行文本，选中错误项才展开。
+
+    字段名固定为「{环节}说明」：服务端按环节存值，导出/排查时能看出是哪一项的说明。
+    `show_on` 引用同一环节的选项字段，前端只负责按条件显示，不再另写字样判断。
+    """
+    opts = list(notes)
+    mins = sorted(set(notes.values()))
+    min_c = mins[0]
+    cond = (f'选「{opts[0]}」时' if len(opts) == 1
+            else '选「' + '」「'.join(opts) + '」任一项时')
+    return {
+        'name': f'{step}说明', 'label': '备注', 'type': '多行纯文本', 'arg': '',
+        'sub': [], 'std_col': '', 'hint': f'{cond}必填，≥{min_c} 个汉字', 'unit': '',
+        'required': True, 'verdict': False, 'drop': [], 'rule': '',
+        'design': '', 'design_const': False, 'design_value': '',
+        'options': [], 'note_on': [], 'note_rules': {}, 'note_name': '',
+        'hidden': True, 'show_on': {step: opts}, 'note_for': step,
+        'min_chars': min_c,
+        'judge': '', 'judge_op': '', 'judge_ref': '',
+        'judge_value': None, 'judge_factor': None, 'judge_delta': None,
+    }
 
 
 # ── sheet 读取 ──────────────────────────────────────────────────────
@@ -211,6 +285,9 @@ def parse_flow_sheet(ws, data_headers):
             continue
         design = _design_of(d['设计值表头'], data_headers)
         ctl = _control(step, d['控件'], design, ws.title, ln)
+        ctrls = [ctl]
+        if ctl.get('note_rules'):
+            ctrls.append(_note_control(step, ctl['note_rules']))
         out.append({
             'no': _to_int(d['序号'], len(out) + 1),
             'step': step,
@@ -224,7 +301,7 @@ def parse_flow_sheet(ws, data_headers):
             'memo': d['备注'],
             'att_raw': d['附件'],
             'attachments': parse_att(d['附件']),
-            'controls': [ctl],
+            'controls': ctrls,
             'controls_raw': d['控件'],
             'expert': False,
             'subject': '小班',
@@ -255,9 +332,12 @@ def _attach_note(flows):
     是否必填由前端/服务端在提交时按条件判定。
     """
     for steps in flows.values():
+        # 流程共用备注：独立成行的「备注」，或本环节自带的隐藏控件；
+        # 选项旁的就地备注（note_for）不算，否则第一个带 →备注 的环节会被误当成流程备注。
         note = next((s for s in steps
                      if s['step'] == '备注'
-                     or (s['controls'] and s['controls'][0].get('hidden'))), None)
+                     or any(c.get('hidden') and not c.get('note_for')
+                            for c in (s['controls'] or []))), None)
         if not note:
             continue
         for s in steps:
@@ -302,11 +382,16 @@ def parse(wb, data_headers=None):
 
 
 def routes_for(flows, project_type):
-    """某项目类型的流程：主线按「序号」在前，独立流程（巡护）排最后。"""
-    return sorted([r for r in (flows.get('routes') or [])
-                   if _s(r.get('type')) == _s(project_type)],
-                  key=lambda r: (1 if r.get('independent') else 0,
-                                 r.get('no') or 0, r.get('line') or 0))
+    """某项目类型的流程：主线按「序号」在前，独立流程（巡护）排最后。
+
+    project_type=None 表示数据表没有「项目类型」列（单流程/全量验收模板）：
+    不按类型过滤，全部路由都可用。有列但值为空仍按空类型严格匹配。
+    """
+    allr = flows.get('routes') or []
+    picked = allr if project_type is None else [
+        r for r in allr if _s(r.get('type')) == _s(project_type)]
+    return sorted(picked, key=lambda r: (1 if r.get('independent') else 0,
+                                         r.get('no') or 0, r.get('line') or 0))
 
 
 def steps_of(flows, sheet):

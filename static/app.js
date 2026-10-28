@@ -1615,22 +1615,21 @@ async function saveVideoLocal(blob, fname, subdir) {
   return `已下载：${fname}（${(blob.size / 1048576).toFixed(1)} MB）`;
 }
 
-/* ── 轨迹（v0.33）：**点击开始，记录到当前小班**（原生 BgLocation 插件，仅 GPS_PROVIDER）──
-   v0.32 曾是"授权即持续采集"，2026-10-16 用户反转：自动采集不合理 → 手动开关（原生侧
-   持久化 track_on，页面按钮只是遥控器，重载/息屏不丢状态）。
-   · 点「▶ 记录轨迹」→ setTracking(on) + 归属快照 trackCls=当前小班；数据源仍只有卫星。
-   · 点「⏹ 结束轨迹」→ 上传 GPX（文件名 轨迹_{小班}_{时间}.gpx，"按小班导出 SHP"的数据基础），
-     成功才停采清点；失败点保留可重试。
-   · 切小班/返回列表/开始录像 → 自动结算原小班并停止（归属不跟丢）。
+/* ── 轨迹（v0.46）：**卫星跟踪常开，记录仍手动**（原生 BgLocation 插件，仅 GPS_PROVIDER）──
+   v0.33 起记录按小班手动开关；v0.46 用户修订：卫星跟踪不随记录开关启停——授权即常开，
+   保持星历/钟差热态，后续打卡/水印/拍照的一次性定位更快更准（通知文案「卫星持续跟踪中」）。
+   · 「▶ 记录轨迹」→ setTracking(on) 只打开记录：卫星点落原生缓冲/推网页，归属快照 trackCls。
+   · 「⏹ 结束轨迹」→ 上传 GPX（文件名 轨迹_{小班}_{时间}.gpx），成功才清点；失败点保留可重试。
+   · 切小班/返回列表/开始录像 → 自动结算原小班并停止记录（卫星跟踪继续，归属不跟丢）。
    · 「🗺 轨迹图」→ 纯 SVG 示意路径（无底图，离线可用）。
    · 采样：GPS 1s/2m（静止不记点防抖动毛团，行走 1~2 秒一个真实位移点）。
    点先落原生 files/track_buffer.csv（进程死了也不丢），网页只是观察者 + 上传者：
      · attachTrack()：drain() 回填未消费点 + startWatcher() 接实时流（按 GPS 时间戳去重）
      · 水位线 hqz_sup_track_upto（localStorage 单数字）：已上传到的最大时间戳，防跨段/跨重载重复
-   打卡/水印坐标仍走 Web getCurrentPosition（一次性，非轨迹链路） ── */
+   打卡/水印坐标仍走 Web getCurrentPosition（一次性，非轨迹链路；卫星常开让 fix 更快更准） ── */
 let trackBgPlugin = null;
 let trackAttached = false;     // 网页是否接上了实时回调（= 插件可用且权限已给）
-let trackOn = false;           // v0.33：原生持久化开关（点开始/结束；页面重载从 status 恢复）
+let trackOn = false;           // 原生持久化记录开关（只管是否落点；卫星跟踪由权限决定，v0.46）
 let trackCls = '';             // v0.33：正在记录时归属的小班（开始时快照，切换/重载不跟丢）
 let trackPts = [];             // 当前段（未上传）
 let trackSeenT = new Set();    // 已在会话里的 GPS 时间戳（毫秒，去重）
@@ -1669,11 +1668,11 @@ function refreshTrackBtn() {
   if (trackAttached && trackOn) {
     b.classList.add('recording');
     b.textContent = `⏹ 结束轨迹 ${trackPts.length} 点`;
-    b.title = `正在记录：${trackCls || keyVal() || '当前小班'}（仅卫星 GPS）；点击结束并上传该小班轨迹`;
+    b.title = `正在记录：${trackCls || keyVal() || '当前小班'}（卫星持续跟踪中，仅 GPS）；点击结束并上传该小班轨迹`;
   } else {
     b.classList.remove('recording');
     b.textContent = '▶ 记录轨迹';
-    b.title = '开始记录当前小班的卫星轨迹（仅 GPS；点击开始，再次点击结束并上传）';
+    b.title = '卫星持续跟踪中；点击开始记录当前小班轨迹（仅 GPS；再次点击结束并上传）';
   }
 }
 
@@ -1691,7 +1690,7 @@ function trackPush(lat, lng, ele, t) {
   refreshTrackBtn();
 }
 
-/* 附着：boot / 回前台各调一次（幂等）。网页只观察 + 上传，采集生死由原生管 */
+/* 附着：boot / 回前台各调一次（幂等）。卫星跟踪常开由原生+权限管；网页只观察记录开关 + 上传 */
 async function attachTrack() {
   try { localStorage.removeItem('hqz_sup_track_pts'); } catch (e) {}   // v0.31 旧键，一次性清理
   const plugin = bgLocationPlugin();
@@ -1707,7 +1706,7 @@ async function attachTrack() {
   if (!st || st.permission !== 'granted') {
     trackAttached = false; refreshTrackBtn(); return;           // 不弹窗：申请归 ensurePermissionsUpfront（C18）
   }
-  if (st.gpsEnabled === false) toast('GPS 已关闭，轨迹暂不更新，请先在系统设置打开定位', true);
+  if (st.gpsEnabled === false) toast('GPS 已关闭，卫星跟踪暂停，请先在系统设置打开定位', true);
   try {
     const d = await nativeTimeout(plugin.drain(), 2000);          // ① 回填：原生缓冲里还没进过会话的点
     (d && d.points || []).forEach((p) => trackPush(p.latitude, p.longitude, p.altitude, p.time));
@@ -1725,7 +1724,7 @@ async function attachTrack() {
     trackGpsBound = true;
     try {
       plugin.addListener('gpsState', ({ enabled }) => {
-        toast(enabled ? 'GPS 已打开，轨迹持续采集中' : 'GPS 已关闭，轨迹暂不更新', !enabled);
+        toast(enabled ? 'GPS 已打开，卫星持续跟踪中' : 'GPS 已关闭，卫星跟踪暂停', !enabled);
       });
     } catch (e) {}
   }
@@ -1767,7 +1766,7 @@ $('#btnTrack').addEventListener('click', async () => {
   else toast('轨迹启动失败，请回前台重试', true);
 });
 
-/* 开关遥控（v0.33）：真正的开关持久化在原生侧；网页只记账 + 刷新按钮 */
+/* 记录开关遥控：持久化在原生侧；网页只记账 + 刷新按钮（v0.46 关记录不停卫星跟踪） */
 async function setNativeTracking(on) {
   const plugin = trackBgPlugin || bgLocationPlugin();
   if (plugin && typeof plugin.setTracking === 'function') {
@@ -1793,7 +1792,7 @@ async function startRecording() {
   trackCls = keyVal() || '无小班';
   try { localStorage.setItem(TRACK_CLS_KEY, trackCls); } catch (e) {}
   refreshTrackBtn();
-  toast(`开始记录：${trackCls}（仅卫星 GPS · 行走时约 1~2 秒/点）`);
+  toast(`开始记录：${trackCls}（卫星持续跟踪中 · 仅 GPS · 行走时约 1~2 秒/点）`);
 }
 
 /* 结算上传（v0.33：cls 参数 = 轨迹归属小班——开始记录时快照，不随界面切换变；
@@ -1829,8 +1828,8 @@ async function flushTrack(reason, silent, cls) {
   return true;
 }
 
-/* 互斥钩子（v0.33 口径）：切小班 / 返回列表 / 开始录像 → **结算原小班轨迹并停止记录**。
-   （v0.32 是"结算并续采"；用户要求记录按小班归属——换小班即结束，新小班要重新点开始。）
+/* 互斥钩子（v0.33 口径）：切小班 / 返回列表 / 开始录像 → **结算原小班轨迹并停止记录**
+   （卫星跟踪不停，v0.46；换小班即结束记录，新小班要重新点开始）。
    记录中的归属用 trackCls（开始时快照），不用切换后的当前小班。 */
 async function flushTrackIfAny(reason) {
   if (!trackOn) return false;
@@ -1918,7 +1917,7 @@ async function boot() {
     ensurePermissionsUpfront();           // 登录后一次性申请权限（见函数注释）
     await submitDraftIfAny();             // v0.28：补交上次没送出去的草稿（进程被杀/切后台丢包）
     await recoverPendingVideo();          // 相机返回导致页面重载时，补记录像结果
-    await attachTrack();                 // 轨迹：附着原生持续采集（drain 回填 + 实时流）
+    await attachTrack();                 // 轨迹：附着原生卫星跟踪（drain 回填 + 实时流）
   } catch (e) {
     setToken('');
     show('login');
