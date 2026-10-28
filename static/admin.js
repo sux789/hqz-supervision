@@ -48,13 +48,21 @@ async function loadWorkbooks() {
   }
 
   for (const w of list) {
-    const param = w.editable_cols.length
+    const param = (w.editable_cols.length
       ? `<b>可编辑列：</b>${w.editable_cols.join('、')}`
         + (w.unique_key ? `<br><b>唯一键：</b>${escape(w.unique_key)}` : '')
         + (w.hidden_cols.length ? `<br><b>隐藏列：</b>${w.hidden_cols.join('、')}` : '')
         + (w.result_options.length ? `<br><b>验收结果：</b>${w.result_options.join(' / ')}` : '')
         + (w.features.length ? `<br><b>功能：</b>${w.features.join('、')}` : '')
-      : '<span class="muted">参数表未配置可编辑列</span>';
+      : '<span class="muted">参数表未配置可编辑列</span>')
+      + (w.tpl_schema === 'flow_tpl/1'
+        ? '<br><b>流程模板：</b>v2'
+          + (w.tpl_judge ? ` · 判断 ${w.tpl_judge} 项` : '')
+          + (w.tpl_note ? ` · 备注 ${w.tpl_note} 项` : '')
+          + (w.tpl_judge || w.tpl_note ? ''
+             : '<span class="tpl-old"> · 未配置判断/备注，如需启用请「更新 Excel」</span>')
+          + (w.tpl_warn ? `<span class="tpl-old"> · ${w.tpl_warn} 条配置告警</span>` : '')
+        : '<br><b>流程模板：</b><span class="tpl-old">旧版 / 无流程，建议「更新 Excel」</span>');
 
     const actions = w.is_active
       ? `<button class="btn" data-off="${w.id}">下架</button>`
@@ -602,7 +610,141 @@ $('#btnLogout').addEventListener('click', async () => {
   location.href = (window.SUP_BASE || '') + '/';
 });
 
+/* ── v0.48 填报进度（只读）────────────────────────────────────────
+   管理端不必逐个打开 App：按小班 × 流程看通过/不通过/未填，点单元格看实测值、
+   备注、附件清单与提交日志。数据全部来自 flow_records / flow_audit，不写库。 */
+const PRG = { data: null, flow: '', q: '' };
+
+function prgBadge(c, repeat) {
+  const txt = c.state === 'pass' ? (c.result || '通过')
+    : c.state === 'reject' ? (c.result || '不通过') : '未填';
+  const cls = c.state === 'pass' ? 'pass' : c.state === 'reject' ? 'reject' : 'none';
+  return `<span class="prg-badge ${cls}">${escape(txt)}</span>`
+    + (repeat && c.count ? `<span class="prg-sub">已填 ${c.count} 次</span>` : '');
+}
+
+function renderProgress() {
+  const d = PRG.data;
+  if (!d) return;
+  const flows = (d.flows || []).filter((f) => !PRG.flow || f.sheet === PRG.flow);
+  $('#prgTotals').innerHTML = flows.map((f) => {
+    const t = (d.totals || {})[f.sheet] || {};
+    return `<span class="cnt"><b>${escape(f.name)}</b> 通过 ${t.pass || 0} / 不通过 ${t.reject || 0}`
+      + ` / 未填 ${t.none || 0}`
+      + (f.repeat ? ` · 提交 ${t.submissions || 0} 次` : '') + '</span>';
+  }).join('');
+
+  const tbl = $('#tblPrg');
+  if (!flows.length) {
+    tbl.querySelector('thead').innerHTML = '';
+    tbl.querySelector('tbody').innerHTML = '<tr><td class="muted">该工作簿没有流程配置（旧模板可在「模板管理」里更新 Excel）</td></tr>';
+    return;
+  }
+  tbl.querySelector('thead').innerHTML = '<tr><th>小班号</th>'
+    + flows.map((f) => `<th>${escape(f.name)}</th>`).join('') + '</tr>';
+  const q = PRG.q.trim().toLowerCase();
+  const rows = (d.rows || []).filter((r) => !q || String(r.key || '').toLowerCase().includes(q));
+  const tb = tbl.querySelector('tbody');
+  tb.innerHTML = rows.length ? '' : '<tr><td class="muted" colspan="' + (flows.length + 1) + '">无匹配小班</td></tr>';
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    const td0 = document.createElement('td');
+    td0.textContent = r.key;
+    tr.appendChild(td0);
+    for (const f of flows) {
+      const c = (r.cells || []).find((x) => x.flow === f.sheet)
+        || { state: 'none', result: '', count: 0 };
+      const td = document.createElement('td');
+      td.className = 'prg-cell';
+      td.dataset.row = r.idx;
+      td.dataset.flow = f.sheet;
+      const meta = c.operator
+        ? `<span class="prg-sub">${escape(c.operator)} · ${escape(String(c.at || '').slice(5, 16))}`
+          + (c.geo && c.geo.lat ? ' · 📍' : '') + '</span>'
+        : '';
+      td.innerHTML = prgBadge(c, f.repeat) + meta;
+      if (c.state !== 'none') {
+        td.addEventListener('click', () => openProgressDetail(Number(td.dataset.row), td.dataset.flow)
+          .catch((e) => toast(e.message, true)));
+      } else {
+        td.style.cursor = 'default';
+      }
+      tr.appendChild(td);
+    }
+    tb.appendChild(tr);
+  }
+}
+
+async function loadProgress() {
+  if (!$('#prgWb') || !$('#prgWb').value) return;
+  $('#prgMsg').textContent = '';
+  const d = await api('/admin/api/progress?wid=' + encodeURIComponent($('#prgWb').value));
+  PRG.data = d;
+  const sel = $('#prgFlow');
+  sel.innerHTML = '<option value="">全部</option>'
+    + (d.flows || []).map((f) => `<option value="${escape(f.sheet)}">${escape(f.name)}</option>`).join('');
+  sel.value = (d.flows || []).some((f) => f.sheet === PRG.flow) ? PRG.flow : '';
+  PRG.flow = sel.value;
+  renderProgress();
+}
+
+async function openProgressDetail(row, flow) {
+  const wid = $('#prgWb').value;
+  const d = await api(`/admin/api/progress/detail?wid=${encodeURIComponent(wid)}`
+    + `&row=${encodeURIComponent(row)}&flow=${encodeURIComponent(flow)}`);
+  $('#prgTitle').textContent = `${d.key || ''} · ${String(flow).replace(/^流程-/, '')}`;
+  const body = $('#prgBody');
+  let h = '';
+  if (!(d.rows || []).length) {
+    h = '<p class="muted">该小班还没有填报记录。</p>';
+  } else {
+    h = d.rows.map((rec) => {
+      const title = rec.rec_no ? `第 ${rec.rec_no} 次` : '当前填报';
+      return `<div class="prg-rec"><b>${escape(title)}</b>` + (rec.steps || []).map((s) => {
+        const cls = s.result === '通过' ? 'pass' : (s.result ? 'reject' : 'none');
+        const badge = s.result ? `<span class="prg-badge ${cls}">${escape(s.result)}</span>` : '';
+        const meta = [s.operator, String(s.at || '').slice(0, 16), s.geo]
+          .filter(Boolean).map(escape).join(' · ');
+        const vals = (s.values || []).map((v) =>
+          `<div class="prg-val"><b>${escape(v.label)}：</b>${escape(v.value)}</div>`).join('');
+        const att = s.att ? `<div class="prg-att">📎 ${escape(s.att)}</div>` : '';
+        return `<div class="prg-step"><h4>${escape(s.step)} ${badge}</h4>`
+          + (meta ? `<div class="prg-sub">${meta}</div>` : '') + vals + att + '</div>';
+      }).join('') + '</div>';
+    }).join('');
+  }
+  const au = d.audits || [];
+  if (au.length) {
+    h += '<div class="prg-rec"><b>提交日志</b>' + au.slice().reverse().map((a) => {
+      const g = a.geo && a.geo.lat ? ` · 📍 ${a.geo.lat}, ${a.geo.lon}` : '';
+      return `<div class="prg-val">${escape(a.at || '')} · ${escape(a.operator || '')}`
+        + ` · ${escape(a.result || '')}${escape(g)}</div>`;
+    }).join('') + '</div>';
+  }
+  body.innerHTML = h;
+  $('#prgModal').classList.remove('hidden');
+}
+
+async function initProgress() {
+  if (!$('#prgWb')) return;
+  const data = await api('/admin/api/workbooks');
+  const list = (data.workbooks || []).filter((w) => w.is_active);
+  PRG.wbs = list;
+  $('#prgWb').innerHTML = list.length
+    ? list.map((w) => `<option value="${w.id}">${escape(w.name)}</option>`).join('')
+    : '<option value="">（没有在用模板）</option>';
+  if (list.length) await loadProgress();
+  else $('#prgMsg').textContent = '暂无在用模板：请先上传或恢复一个工作簿。';
+}
+
+on('#prgWb', 'change', () => { PRG.flow = ''; loadProgress().catch((e) => toast(e.message, true)); });
+on('#prgFlow', 'change', () => { PRG.flow = $('#prgFlow').value; renderProgress(); });
+on('#prgQ', 'input', () => { PRG.q = $('#prgQ').value; renderProgress(); });
+on('#prgClose', 'click', () => $('#prgModal').classList.add('hidden'));
+on('#prgModal', 'click', (e) => { if (e.target === $('#prgModal')) $('#prgModal').classList.add('hidden'); });
+
 loadWorkbooks().catch((e) => toast(e.message, true));
+initProgress().catch((e) => { $('#prgMsg').textContent = '进度加载失败：' + e.message; });
 loadTracks().catch(() => {});
 loadLogs().catch(() => {});
 if ($('#syncQiniuAk')) loadSyncSettings().catch(() => {});     // 云同步卡片被注释则跳过

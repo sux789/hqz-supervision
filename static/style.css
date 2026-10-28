@@ -490,3 +490,34 @@ textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size
 @media (max-width: 420px) {
   .flow-basic .fb-grid { grid-template-columns: 1fr; }
 }
+
+/* ── v0.48 后台填报进度（只读矩阵 + 明细）──────────────────────── */
+.prg-scroll { overflow: auto; max-height: 520px; border: 1px solid #eceff2; border-radius: 8px; }
+#tblPrg th, #tblPrg td { white-space: nowrap; }
+.prg-cell { cursor: pointer; }
+.prg-cell:hover { background: #f5f8fb; }
+.prg-badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+.prg-badge.pass { background: #e7f7ec; color: #1a7f37; }
+.prg-badge.reject { background: #fdecec; color: #c62828; }
+.prg-badge.none { background: #f2f3f5; color: #8a9099; }
+.prg-sub { display: block; font-size: 11px; color: #8a9099; margin-top: 2px; }
+.prg-body { max-height: 60vh; overflow: auto; }
+.prg-rec { border-top: 1px dashed #dfe3e8; padding: 10px 0; }
+.prg-rec:first-child { border-top: 0; }
+.prg-step { background: #f8fafc; border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+.prg-step h4 { margin: 0 0 4px; font-size: 14px; }
+.prg-val { margin: 3px 0; white-space: pre-wrap; word-break: break-all; }
+.prg-val b { color: #3b4652; }
+.prg-att { color: #5b6570; font-size: 12px; margin-top: 4px; word-break: break-all; }
+
+/* v0.48 旧模板提示（后台模板列表） */
+.tpl-old { color: #b26a00; font-size: 12px; }
+
+/* v0.48 流程草稿恢复提示 */
+.flow-draft { background: #eef6ff; border-color: #b9d8f7; color: #1d5a96; }
+.flow-draft button { margin-top: 6px; padding: 2px 8px; font-size: 12px; }
+
+/* v0.48 App 工作簿列表：旧模板标记 */
+.tpl-old-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px;
+               background: #fff4e0; color: #b26a00; font-size: 11px; font-weight: 600;
+               vertical-align: middle; }

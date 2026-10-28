@@ -38,3 +38,4 @@
 | B30 | v2 流程模板 | `flow_tpl.py` + `tools/tpl/tpl_tool.py` + `flow_hit.py::_tpl_hit` + `main.py::api_flow_batch` + `static/flow.js::renderV2/submitV2` | `设计值` + `流程路由` + `参数` + `流程-*` + `flow_audit` | `flows`（flow_tpl/1）/ 级联搜索 / 整条提交 / 日志 | B18、B20 |
 | B31 | 流程附件上传通道 | `flow_hit.py::_att_sig/_att_gate/_att_sig_cls` + `main.py::api_flow_att/api_attachment_get` + `static/flow.js::shootAtt(上传分支)/attHtmlV2/v2Gate` + `flow_parser.py::_att_types` | 模板「附件」列 `上传:标签@N(图片≥A;PDF≥B)` + 上传文件 | `flow_att`（id 认领/绑 rec_no）+ 数量/类型闸门 + 登录下载 | B18、B30 |
 | B32 | 通过判断（v0.45） | `flow_judge.py` + `flow_tpl.py::_judge_fields` + `main.py` 闸门 + `static/flow.js::v2JudgeOf/v2JudgeFails` | `数值(株→≥设计值)` / `百分数(0-100→≥85)` / `自动(公式→≥85)` | `judge_*` 字段 / 拦「通过」/ 特殊可「不通过」+备注 | B30 |
+| B33 | 数据出口与进度（v0.48） | `main.py::_add_flow_sheet/admin_progress*` + `static/admin.js::renderProgress/openProgressDetail` + `static/flow.js` 草稿 | `flow_records`+`flow_audit`+筛选 | 流程填报长表/进度矩阵/多份草稿 | B13、B20、B30 |

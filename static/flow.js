@@ -18,7 +18,13 @@
 
   const $ = (s) => document.querySelector(s);
   const on = (el, ev, fn) => { if (el) el.addEventListener(ev, fn); };
-  const DRAFT_KEY = 'hqz_sup_flow_draft_v1';
+  /* v0.48：草稿按「工作簿 + 小班 + 流程」分开存。原来的单键草稿在切小班时会被
+     `clearDraft()` 连带清掉（v2 整条提交，未提交=没落库）；现在各存各的，
+     回到原小班自动恢复，超过 7 天或超过 30 份才清理。 */
+  const DRAFT_PREFIX = 'hqz_sup_flow_draft_v2:';
+  const DRAFT_LEGACY = 'hqz_sup_flow_draft_v1';
+  const DRAFT_TTL = 7 * 24 * 3600 * 1000;
+  const DRAFT_MAX = 30;
 
   const F = {
     wid: null,          // 工作簿 id
@@ -30,6 +36,8 @@
     val: {},            // 当前环节的输入值 {因子: 值}
     att: [],            // 当前环节的附件 [{kind,label,min,count,names:[]}]
     busy: false,
+    base: '',           // v0.48：打开时的基线（服务器值+模板默认值），用于判断草稿是否真有改动
+    restoredAt: 0,      // v0.48：本页恢复的未提交草稿时间（0 = 没有）
     /* v0.38：v2 模板（schema=flow_tpl/1）—— 整条流程一张表单，状态按环节分桶 */
     v2val: {},          // {环节序号: {因子: 值}}
     v2att: {},          // {环节序号: [{kind,label,min,count,names:[]}]}
@@ -50,27 +58,97 @@
   /* ── 附件留痕：与 app.js 的拍摄记录分开存，按环节归拢 ── */
   function attKey(kind, label) { return kind + '|' + label; }
 
+  function draftFlow() {
+    return (F.data && (F.data.flow_sheet || F.data.entry)) || '';
+  }
+  function draftKey() {
+    return DRAFT_PREFIX + [F.wid, F.rowIdx, draftFlow()].join('|');
+  }
+  function draftKeys() {
+    const out = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.indexOf(DRAFT_PREFIX) === 0) out.push(k);
+      }
+    } catch (e) { /* 隐私模式等 */ }
+    return out;
+  }
+  function pruneDrafts() {
+    try {
+      const items = draftKeys().map((k) => {
+        let ts = 0;
+        try { ts = JSON.parse(localStorage.getItem(k) || '{}').ts || 0; } catch (e) {}
+        return { k, ts };
+      }).sort((a, b) => b.ts - a.ts);
+      const now = Date.now();
+      items.forEach((x, i) => {
+        if (i >= DRAFT_MAX || now - x.ts > DRAFT_TTL) localStorage.removeItem(x.k);
+      });
+    } catch (e) { /* 清理失败不影响填写 */ }
+  }
   function loadDraft() {
     try {
-      const raw = localStorage.getItem(DRAFT_KEY);
+      let raw = localStorage.getItem(draftKey());
+      if (!raw) {                   // 老版本单键草稿：只在同一小班/流程时迁过来
+        const old = localStorage.getItem(DRAFT_LEGACY);
+        if (old) {
+          const d0 = JSON.parse(old);
+          if (d0 && d0.wid === F.wid && d0.rowIdx === F.rowIdx
+              && (d0.flow || d0.entry || '') === draftFlow()) raw = old;
+        }
+      }
       if (!raw) return null;
       const d = JSON.parse(raw);
-      if (Date.now() - (d.ts || 0) > 12 * 3600 * 1000) { localStorage.removeItem(DRAFT_KEY); return null; }
+      if (Date.now() - (d.ts || 0) > DRAFT_TTL) {
+        localStorage.removeItem(draftKey());
+        return null;
+      }
+      if (raw === localStorage.getItem(DRAFT_LEGACY)) {
+        localStorage.setItem(draftKey(), raw);
+        localStorage.removeItem(DRAFT_LEGACY);
+      }
       return d;
     } catch (e) { return null; }
   }
   function saveDraft() {
     if (!F.data) return;
+    const d = {
+      ts: Date.now(), wid: F.wid, rowIdx: F.rowIdx, entry: F.entry,
+      cur: F.cur, recNo: F.recNo, val: F.val, att: F.att,
+      flow: (F.data && F.data.schema === 'flow_tpl/1') ? F.data.flow_sheet : '',
+      v2val: F.v2val, v2att: F.v2att,
+    };
     try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({
-        ts: Date.now(), wid: F.wid, rowIdx: F.rowIdx, entry: F.entry,
-        cur: F.cur, recNo: F.recNo, val: F.val, att: F.att,
-        flow: (F.data && F.data.schema === 'flow_tpl/1') ? F.data.flow_sheet : '',
-        v2val: F.v2val, v2att: F.v2att,
-      }));
+      // 与打开时的「服务器值 + 模板默认值」一致 → 视为没改过，不留空壳草稿
+      if (F.base && draftState(d) === F.base) { localStorage.removeItem(draftKey()); return; }
+      localStorage.setItem(draftKey(), JSON.stringify(d));
+      pruneDrafts();
     } catch (e) { /* 配额满等一律不阻断填写 */ }
   }
-  function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
+  function draftState(o) {
+    const x = o || F;
+    return JSON.stringify({
+      cur: x.cur, recNo: x.recNo, val: x.val, att: x.att,
+      v2val: x.v2val, v2att: x.v2att,
+    });
+  }
+  function clearDraft() {
+    try { localStorage.removeItem(draftKey()); } catch (e) {}
+  }
+  /** 草稿里是否有真人填过的内容（避免刚打开页面就提示"已恢复草稿"）。 */
+  function draftHasContent(d) {
+    if (!d) return false;
+    const has = (v) => v !== '' && v != null
+      && !(Array.isArray(v) && !v.length)
+      && !(v && typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length);
+    const anyVals = (obj) => Object.keys(obj || {}).some((k) =>
+      Object.keys(obj[k] || {}).some((f) => has(obj[k][f])));
+    const anyAtts = (obj) => Object.keys(obj || {}).some((k) =>
+      (obj[k] || []).some((a) => (a && a.names || []).length));
+    return anyVals(d.v2val) || anyAtts(d.v2att) || anyVals({ v: d.val })
+      || (d.att || []).some((a) => (a && a.names || []).length);
+  }
 
   /* ── 进入某行流程 ──
      entry 留空 = 让后端挑优先级最高的那条（老行为）；
@@ -80,7 +158,7 @@
      留空 = 后端按「流程路由」挑当前该做的那条。 */
   async function open(wid, rowIdx, entry, flowSel) {
     F.wid = wid; F.rowIdx = rowIdx; F.cur = 0; F.recNo = 0; F.val = {}; F.att = [];
-    F.v2val = {}; F.v2att = {};
+    F.v2val = {}; F.v2att = {}; F.base = '';
     let j;
     const qs = `/api/workbooks/${wid}/flow?row=${rowIdx}`
       + (entry ? `&entry=${encodeURIComponent(entry)}` : '')
@@ -117,10 +195,14 @@
         const atts = j.atts || {};
         Object.keys(atts).forEach((k) => { F.v2att[k] = atts[k] || []; });
       }
+      // 先补模板默认值/公式，作为「没改过」的基线；再叠草稿，草稿才不会被误判为空
+      v2Normalize();
+      F.base = draftState();
       if (same) {
         F.v2val = Object.assign(F.v2val, d.v2val || {});
         F.v2att = d.v2att || {};
       }
+      F.restoredAt = same && draftState(d) !== F.base ? (d.ts || Date.now()) : 0;
       render();
       return true;
     }
@@ -128,7 +210,9 @@
     // 回填已填记录（第 1 环节）
     loadStepRecords(j.steps[0].no);
     // 本地草稿（同 wid + 同行 + 同入口）优先，覆盖服务器值 —— 进程被杀也不丢（C17）
-    if (d && d.wid === wid && d.rowIdx === rowIdx && (d.entry || '') === F.entry) {
+    const restored = !!(d && d.wid === wid && d.rowIdx === rowIdx
+                        && (d.entry || '') === F.entry);
+    if (restored) {
       F.cur = Math.min(d.cur || 0, j.steps.length - 1);
       F.recNo = d.recNo || 0;
       F.val = Object.assign(F.val, d.val || {});
@@ -136,6 +220,7 @@
     } else {
       clearDraft();
     }
+    F.restoredAt = restored && draftHasContent(d) ? (d.ts || Date.now()) : 0;
     if (F.cur !== 0) loadStepRecords(step().no, d ? (d.recNo || 0) : 0);
     render();
     return true;
@@ -757,6 +842,13 @@
       h += `<div class="flow-warn"><b>配置提示</b>${esc(w.text || w)}</div>`;
     });
 
+    if (F.restoredAt) {
+      h += '<div class="flow-warn flow-draft"><b>未提交草稿</b>'
+        + `已恢复 ${esc(new Date(F.restoredAt).toLocaleString('zh-CN'))} 的内容，`
+        + '提交成功后自动清除。'
+        + '<button type="button" class="btn ghost" id="flowDropDraft">丢弃草稿</button></div>';
+    }
+
     if (locked) {
       h += `<div class="flow-lock">🔒 按「流程路由」，需先完成前置流程：`
         + esc((d.flow_prereq || []).map(flowName).join('、'))
@@ -932,6 +1024,12 @@
   }
 
   function bindV2(host) {
+    on($('#flowDropDraft'), 'click', () => {
+      clearDraft();
+      F.restoredAt = 0;
+      toast('已丢弃草稿，恢复为已提交内容');
+      open(F.wid, F.rowIdx, F.entry, F.data && F.data.flow_sheet);
+    });
     on($('#flowSel'), 'change', () => {
       const v = $('#flowSel').value;
       if (!v || v === F.data.flow_sheet) return;
@@ -1171,6 +1269,7 @@
         body: JSON.stringify({ row: F.rowIdx, flow: sheet, steps: steps, geo: geo }),
       });
       clearDraft();
+      F.restoredAt = 0;
       toast('已提交「' + flowName(sheet) + '」·' + verdict);
       await open(F.wid, F.rowIdx, '', sheet);
     } catch (e) {

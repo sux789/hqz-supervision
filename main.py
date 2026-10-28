@@ -28,6 +28,7 @@ from functools import wraps
 from pathlib import Path
 
 import openpyxl
+from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from flask import (Blueprint, Flask, abort, jsonify, redirect, render_template,
                    request, send_file, session, url_for)
@@ -42,8 +43,8 @@ from flow_hit import (_ATT_MAX, _att_gate, _att_name, _att_sig, _att_sig_cls,
                       _entries_of, _flow_hit, _flow_log_from_records, _geo_obj,
                       _rule_errors, _tpl_formula, _unique_conflict)
 from param_parser import (ParamError, _s, export_filters_of,
-                          filter_options, filter_rows, log_fields_of, merge_rows,
-                          row_key_column, split_list, unique_key_of)
+                          filter_indexes, filter_options, log_fields_of,
+                          merge_rows, row_key_column, split_list, unique_key_of)
 from wb_parse import _norm_cell, _pick_data_sheet, parse_workbook_storage
 
 BASE = Path(__file__).resolve().parent
@@ -548,13 +549,27 @@ def api_list():
     con = db()
     try:
         rows = con.execute(
-            'SELECT id, name, sheet_name, uploaded_at FROM workbooks'
+            'SELECT id, name, sheet_name, uploaded_at, flows FROM workbooks'
             ' WHERE COALESCE(is_active, 1)=1 ORDER BY id DESC').fetchall()
-    except sqlite3.OperationalError:      # 老库未迁移（无 is_active 列）
+    except sqlite3.OperationalError:      # 老库未迁移（无 is_active / flows 列）
         rows = con.execute(
             'SELECT id, name, sheet_name, uploaded_at FROM workbooks ORDER BY id DESC').fetchall()
     con.close()
-    return jsonify(workbooks=[dict(r) for r in rows])
+    out = []
+    for r in rows:
+        d = {k: r[k] for k in r.keys() if k != 'flows'}
+        # v0.48：旧模板提示 —— 流程快照里没有判断/备注规则时，App 列表直接标出来
+        try:
+            fl = json.loads(r['flows'] or '{}')
+        except (KeyError, TypeError, ValueError):
+            fl = {}
+        controls = [c for steps in (fl.get('flows') or {}).values()
+                    for s in (steps or []) for c in (s.get('controls') or [])]
+        d['tpl_schema'] = fl.get('schema') or ''
+        d['tpl_judge'] = sum(1 for c in controls if c.get('judge'))
+        d['tpl_note'] = sum(1 for c in controls if c.get('note_rules'))
+        out.append(d)
+    return jsonify(workbooks=out)
 
 
 @bp.route('/api/workbooks', methods=['POST'])
@@ -2047,6 +2062,146 @@ def _date_typed(text):
     return None, None
 
 
+_FLOW_OUT_COLS = ['小班号', '流程', '第几次', '环节', '检查项', '填报值',
+                  '结论', '操作人', '提交时间', '定位', '附件', 'IP']
+
+
+def _flow_cell_text(v, limit=2000):
+    """流程值 → 可读文本（多选数组用「、」，对象用「键：值」）。"""
+    if isinstance(v, str) and v[:1] in ('[', '{'):
+        try:
+            v = json.loads(v)
+        except (TypeError, ValueError):
+            pass
+    if isinstance(v, list):
+        s = '、'.join(_flow_cell_text(x, 200) for x in v if _s(x) != '')
+    elif isinstance(v, dict):
+        s = '；'.join(f'{k}：{_flow_cell_text(x, 200)}' for k, x in v.items())
+    else:
+        s = _s(v)
+    return s[:limit]
+
+
+def _flow_att_text(att_json, limit=1000):
+    """附件清单 → 「标签：文件名、文件名」。照片按 C07 只在手机本机，这里只记文件名。"""
+    try:
+        arr = json.loads(att_json or '[]')
+    except (TypeError, ValueError):
+        return ''
+    if not isinstance(arr, list):
+        return ''
+    out = []
+    for a in arr:
+        if not isinstance(a, dict):
+            continue
+        names = [_s(n) for n in (a.get('names') or []) if _s(n)]
+        if names:
+            out.append(f"{_s(a.get('label')) or _s(a.get('kind')) or '附件'}："
+                       + '、'.join(names))
+    return '；'.join(out)[:limit]
+
+
+def _flow_step_meta(flows):
+    """{流程 sheet: {环节序号: (环节名, {检查项名: 显示名})}}；v1/v2 结构同形，读不到留空。"""
+    out = {}
+    for sheet, steps in ((flows or {}).get('flows') or {}).items():
+        m = {}
+        for s in steps or []:
+            labels = {c.get('name'): (c.get('label') or c.get('name'))
+                      for c in (s.get('controls') or []) if c.get('name')}
+            m[str(s.get('no'))] = (s.get('step') or '', labels)
+        out[sheet] = m
+    return out
+
+
+def _add_flow_sheet(wb, wid, r, headers, rows, allowed):
+    """导出追加「流程填报」长表，数据 sheet 原样不动（C08）。
+
+    一行 = 某小班某流程第 N 次的某个填报项；结论/操作人/时间/定位取该环节留痕行。
+    没有任何流程记录时不加这张表，避免导出空壳。
+    """
+    con = db()
+    try:
+        recs = con.execute(
+            'SELECT row_idx, flow_sheet, rec_no, step_no, factor, value, att_json,'
+            ' result, operator, created_at, updated_at, geo, ip'
+            ' FROM flow_records WHERE workbook_id=?'
+            ' ORDER BY row_idx, flow_sheet, rec_no, step_no, id', (wid,)).fetchall()
+    finally:
+        con.close()
+    recs = [x for x in recs if int(x['row_idx']) in allowed]
+    if not recs:
+        return
+    flows = _wb_flows(r)
+    meta_map = _flow_step_meta(flows)
+    flow_order = {x.get('flow'): i for i, x in enumerate(flows.get('routes') or [])}
+    key_col = _wb_key_column(r)
+    key_i = headers.index(key_col) if key_col in headers else -1
+
+    groups = {}
+    for x in recs:
+        steps = groups.setdefault((int(x['row_idx']), x['flow_sheet'],
+                                   int(x['rec_no'] or 0)), {})
+        cur = steps.setdefault(int(x['step_no'] or 0), {'meta': None, 'factors': []})
+        if x['factor'] == '':
+            if cur['meta'] is None or _s(x['updated_at']) >= _s(cur['meta']['updated_at']):
+                cur['meta'] = x
+        else:
+            cur['factors'].append(x)
+
+    name, i = '流程填报', 2
+    while name in wb.sheetnames:
+        name = f'流程填报{i}'
+        i += 1
+    ws = wb.create_sheet(name, 1)
+    ws.append(_FLOW_OUT_COLS)
+    for c in ws[1]:
+        c.font = Font(bold=True)
+
+    def _key_of(ridx):
+        if ridx < 0:
+            return '（项目级）'
+        if 0 <= ridx < len(rows) and 0 <= key_i < len(rows[ridx]):
+            return _s(rows[ridx][key_i]) or f'第 {ridx + 1} 行'
+        return f'第 {ridx + 1} 行'
+
+    order = sorted(groups.items(), key=lambda kv: (
+        kv[0][0], flow_order.get(kv[0][1], 999), kv[0][2]))
+    for (ridx, sheet, rec_no), steps in order:
+        smap = meta_map.get(sheet) or {}
+        for no, s in sorted(steps.items()):
+            step_name, labels = smap.get(str(no), ('', {}))
+            step_name = step_name or f'第 {no} 环节'
+            head = s['meta'] or (s['factors'][0] if s['factors'] else None)
+            result = _s((head or {})['result'])
+            operator = _s((head or {})['operator'])
+            at = _s((head or {})['updated_at']) or _s((head or {})['created_at'])
+            ip = _s((head or {})['ip'])
+            geo = _geo_obj((head or {})['geo'])
+            loc = ''
+            if geo.get('lat') and geo.get('lon'):
+                loc = f"{geo['lat']}, {geo['lon']}"
+                if geo.get('acc'):
+                    loc += f"（±{geo['acc']}m）"
+            att = _flow_att_text((head or {})['att_json'])
+            base = [_key_of(ridx), sheet, rec_no or 1, step_name]
+            factors = [f for f in s['factors'] if _s(f['value']) != '']
+            if not factors:
+                if att:          # 只有附件的环节仍要留一行；纯留痕行由其它环节代表
+                    ws.append(base + ['（附件）', '', result, operator, at, loc, att, ip])
+                continue
+            for f in factors:
+                item = labels.get(f['factor']) or _s(f['factor'])
+                ws.append(base + [item, _flow_cell_text(f['value']),
+                                  result, operator, at, loc, att, ip])
+
+    ws.freeze_panes = 'A2'
+    ws.auto_filter.ref = f'A1:{get_column_letter(len(_FLOW_OUT_COLS))}{ws.max_row}'
+    for col, width in zip('ABCDEFGHIJKL',
+                          (14, 20, 8, 18, 24, 34, 10, 10, 20, 24, 42, 15)):
+        ws.column_dimensions[col].width = width
+
+
 def _export_workbook(wid, filters=None):
     """用上传时留存的原始模板（source.xlsx/xlsm）回填数据行，保留模板全部格式。
     v0.25：filters 为 {字段名: 值}，按「导出筛选」声明只筛行（不筛列）。
@@ -2061,10 +2216,14 @@ def _export_workbook(wid, filters=None):
     if not src.exists():
         abort(404, description='原始模板文件缺失（该工作簿为旧版上传），请重新上传后导出')
     headers = json.loads(r['headers'])
-    rows = json.loads(r['rows'])
+    all_rows = json.loads(r['rows'])
     cfg = json.loads(r['config'])
     # v0.25：按参数「导出筛选」声明的字段筛行（只筛行、不筛列；未声明的字段一律忽略）
-    rows = filter_rows(rows, headers, filters, dict(export_filters_of(headers, cfg)))
+    # v0.48：保留行下标，流程明细表只导出被筛中的小班
+    idx_keep = filter_indexes(all_rows, headers, filters,
+                              dict(export_filters_of(headers, cfg)))
+    rows = all_rows if idx_keep is None else [all_rows[i] for i in idx_keep]
+    allowed = set(range(len(all_rows))) if idx_keep is None else set(idx_keep)
     wb = openpyxl.load_workbook(src, keep_vba=(ext == '.xlsm'))
     if r['sheet_name'] not in wb.sheetnames:
         abort(500, description=f'模板中找不到数据 sheet「{r["sheet_name"]}」')
@@ -2096,6 +2255,8 @@ def _export_workbook(wid, filters=None):
     # 自动筛选范围按**实际数据**重设：
     # 模板自带的范围是上传时的旧值（行数一变就漏），源模板也可能压根没设。
     ws.auto_filter.ref = f'A1:{get_column_letter(ncols)}{ws.max_row}'
+    # v0.48：流程填报内容（实测值/备注/结论/附件清单）另起一张长表，数据 sheet 原样不动
+    _add_flow_sheet(wb, wid, r, headers, all_rows, allowed)
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -2123,7 +2284,7 @@ def api_export(wid):
 def admin_list():
     con = db()
     rows = con.execute(
-        'SELECT id, name, sheet_name, uploaded_at, config, key_column, headers,'
+        'SELECT id, name, sheet_name, uploaded_at, config, key_column, headers, flows,'
         ' COALESCE(is_active, 1) AS is_active FROM workbooks ORDER BY id DESC').fetchall()
     baks = {b['workbook_id']: b['n'] for b in con.execute(
         'SELECT workbook_id, COUNT(*) AS n FROM workbook_backups GROUP BY workbook_id')}
@@ -2131,6 +2292,9 @@ def admin_list():
     out = []
     for r in rows:
         cfg = json.loads(r['config'])
+        fl = _wb_flows(r)
+        controls = [c for steps in (fl.get('flows') or {}).values()
+                    for s in (steps or []) for c in (s.get('controls') or [])]
         out.append({
             'id': r['id'], 'name': r['name'], 'sheet_name': r['sheet_name'],
             'uploaded_at': r['uploaded_at'],
@@ -2147,6 +2311,11 @@ def admin_list():
             'export_filters': [f for f, _k in export_filters_of(json.loads(r['headers']), cfg)],
             # v0.26：是否有「更新前」备份可回滚
             'can_rollback': baks.get(r['id'], 0) > 0,
+            # v0.48：模板能力摘要 —— 旧工作簿（上传时快照）看不到新规则时，后台直接显示
+            'tpl_schema': fl.get('schema') or '',
+            'tpl_warn': len(fl.get('warn') or []),
+            'tpl_judge': sum(1 for c in controls if c.get('judge')),
+            'tpl_note': sum(1 for c in controls if c.get('note_rules')),
         })
     return jsonify(workbooks=out)
 
@@ -2198,6 +2367,201 @@ def admin_filter_options(wid):
             'options': filter_options(rows, headers, field, cfg, users) if kind == 'select' else [],
         })
     return jsonify(fields=fields)
+
+
+# ── v0.48 填报进度（只读矩阵 + 明细）─────────────────────────────
+_PROGRESS_PASS = set(flow_config.PASS_RESULTS)
+
+
+def _progress_flows(flows):
+    """后台进度表的流程列：v2 按路由顺序；老 v1 工作簿按 registry。"""
+    out = []
+    if (flows or {}).get('schema') == 'flow_tpl/1':
+        for x in flows.get('routes') or []:
+            sheet = _s(x.get('flow'))
+            if not sheet:
+                continue
+            out.append({'sheet': sheet, 'name': sheet.replace('流程-', ''),
+                        'no': x.get('no') or 0, 'repeat': bool(x.get('repeat')),
+                        'independent': bool(x.get('independent'))})
+        # 独立流程（巡护）排最后，与 App 的流程下拉一致
+        out.sort(key=lambda f: (1 if f['independent'] else 0, f['no']))
+        return out
+    for i, x in enumerate((flows or {}).get('registry') or []):
+        sheet = _s(x.get('sheet'))
+        if not sheet or x.get('enabled') is False:
+            continue
+        out.append({'sheet': sheet, 'name': _s(x.get('name')) or sheet.replace('流程-', ''),
+                    'no': x.get('prio') or i + 1, 'repeat': False,
+                    'independent': bool(x.get('independent'))})
+    return out
+
+
+def _progress_cells(con, wid):
+    """{(row_idx, flow): 最近结论/操作人/时间/定位 + 记录与审计里的 rec_no 集合}。"""
+    recs = con.execute(
+        'SELECT row_idx, flow_sheet, rec_no, result, operator, updated_at, geo'
+        ' FROM flow_records WHERE workbook_id=? ORDER BY id', (wid,)).fetchall()
+    auds = con.execute(
+        'SELECT row_idx, flow_sheet, rec_no, result, operator, geo, created_at'
+        ' FROM flow_audit WHERE workbook_id=? ORDER BY id', (wid,)).fetchall()
+    stats = {}
+
+    def _e(ridx, sheet):
+        return stats.setdefault((int(ridx), sheet), {
+            'result': '', 'operator': '', 'at': '', 'geo': '',
+            'recs': set(), 'auds': set()})
+
+    for x in recs:
+        e = _e(x['row_idx'], x['flow_sheet'])
+        e['recs'].add(int(x['rec_no'] or 0))
+        if _s(x['updated_at']) >= _s(e['at']):
+            e['at'] = _s(x['updated_at']) or e['at']
+            e['result'] = _s(x['result']) or e['result']
+            e['operator'] = _s(x['operator']) or e['operator']
+            e['geo'] = _s(x['geo']) or e['geo']
+    for x in auds:      # 审计是 append-only：最后一条即最近一次提交
+        e = _e(x['row_idx'], x['flow_sheet'])
+        e['auds'].add(int(x['rec_no'] or 0))
+        e['at'] = _s(x['created_at']) or e['at']
+        e['result'] = _s(x['result']) or e['result']
+        e['operator'] = _s(x['operator']) or e['operator']
+        e['geo'] = _s(x['geo']) or e['geo']
+    return stats
+
+
+def _progress_cell(e, repeat):
+    if not e:
+        return {'state': 'none', 'result': '', 'count': 0,
+                'operator': '', 'at': '', 'geo': {}}
+    result = _s(e['result'])
+    n = len(e['recs'] | e['auds']) if repeat else (1 if (e['recs'] or e['auds']) else 0)
+    return {'state': ('pass' if result in _PROGRESS_PASS
+                      else ('reject' if result else 'none')),
+            'result': result, 'count': n, 'operator': _s(e['operator']),
+            'at': _s(e['at']), 'geo': _geo_obj(e['geo'])}
+
+
+@bp.route('/admin/api/progress', methods=['GET'])
+@admin_required
+def admin_progress():
+    """填报进度矩阵：每个小班 × 每条流程的通过/不通过/未填 + 最近操作人/时间/坐标。
+
+    只读，不写库；巡护等可重复流程额外给「已填次数」。
+    """
+    try:
+        wid = int(request.args.get('wid') or 0)
+    except (TypeError, ValueError):
+        return jsonify(error='wid 必须是整数'), 400
+    con = db()
+    r = con.execute('SELECT * FROM workbooks WHERE id=?', (wid,)).fetchone()
+    if not r:
+        con.close()
+        abort(404)
+    flist = _progress_flows(_wb_flows(r))
+    stats = _progress_cells(con, wid)
+    con.close()
+    headers = json.loads(r['headers'])
+    rows = json.loads(r['rows'])
+    key_col = _wb_key_column(r)
+    key_i = headers.index(key_col) if key_col in headers else -1
+    totals = {f['sheet']: {'total': len(rows), 'pass': 0, 'reject': 0,
+                           'none': 0, 'submissions': 0} for f in flist}
+    out = []
+
+    def _one(ridx, key, count_total=True):
+        cells = []
+        for f in flist:
+            c = _progress_cell(stats.get((ridx, f['sheet'])), f['repeat'])
+            cells.append(dict(c, flow=f['sheet']))
+            if count_total:
+                t = totals[f['sheet']]
+                t[c['state']] += 1
+                t['submissions'] += c['count']
+        out.append({'idx': ridx, 'key': key, 'cells': cells})
+
+    for i in range(len(rows)):
+        key = _s(rows[i][key_i]) if 0 <= key_i < len(rows[i]) else ''
+        _one(i, key or f'第 {i + 1} 行')
+    for ridx in sorted({k[0] for k in stats if k[0] < 0}):
+        if any(stats.get((ridx, f['sheet'])) for f in flist):
+            _one(ridx, '（项目级）', count_total=False)
+    return jsonify(workbook={'id': wid, 'name': r['name'], 'key_column': key_col},
+                   flows=flist, totals=totals, rows=out)
+
+
+@bp.route('/admin/api/progress/detail', methods=['GET'])
+@admin_required
+def admin_progress_detail():
+    """某小班某流程的填报明细（按提交次数分组）+ 提交日志。"""
+    try:
+        wid = int(request.args.get('wid') or 0)
+        ridx = int(request.args.get('row') or 0)
+    except (TypeError, ValueError):
+        return jsonify(error='wid / row 必须是整数'), 400
+    sheet = _s(request.args.get('flow'))
+    con = db()
+    r = con.execute('SELECT * FROM workbooks WHERE id=?', (wid,)).fetchone()
+    if not r:
+        con.close()
+        abort(404)
+    recs = con.execute(
+        'SELECT * FROM flow_records WHERE workbook_id=? AND row_idx=? AND flow_sheet=?'
+        ' ORDER BY rec_no, step_no, id', (wid, ridx, sheet)).fetchall()
+    auds = con.execute(
+        'SELECT rec_no, result, operator, geo, ip, created_at FROM flow_audit'
+        ' WHERE workbook_id=? AND row_idx=? AND flow_sheet=? ORDER BY id',
+        (wid, ridx, sheet)).fetchall()
+    con.close()
+    headers = json.loads(r['headers'])
+    rows = json.loads(r['rows'])
+    key_col = _wb_key_column(r)
+    key_i = headers.index(key_col) if key_col in headers else -1
+    if ridx < 0:
+        key = '（项目级）'
+    elif 0 <= ridx < len(rows) and 0 <= key_i < len(rows[ridx]):
+        key = _s(rows[ridx][key_i]) or f'第 {ridx + 1} 行'
+    else:
+        key = f'第 {ridx + 1} 行'
+    smap = _flow_step_meta(_wb_flows(r)).get(sheet) or {}
+    groups = {}
+    for x in recs:
+        st = groups.setdefault(int(x['rec_no'] or 0), {})
+        cur = st.setdefault(int(x['step_no'] or 0), {'meta': None, 'factors': []})
+        if x['factor'] == '':
+            cur['meta'] = x
+        else:
+            cur['factors'].append(x)
+    out = []
+    for rn, steps in sorted(groups.items()):
+        srows = []
+        for no, s in sorted(steps.items()):
+            step_name, labels = smap.get(str(no), ('', {}))
+            head = s['meta'] or (s['factors'][0] if s['factors'] else None)
+            geo = _geo_obj((head or {})['geo'])
+            loc = ''
+            if geo.get('lat') and geo.get('lon'):
+                loc = f"{geo['lat']}, {geo['lon']}"
+                if geo.get('acc'):
+                    loc += f"（±{geo['acc']}m）"
+            srows.append({
+                'no': no, 'step': step_name or f'第 {no} 环节',
+                'result': _s((head or {})['result']),
+                'operator': _s((head or {})['operator']),
+                'at': _s((head or {})['updated_at']) or _s((head or {})['created_at']),
+                'geo': loc,
+                'att': _flow_att_text((head or {})['att_json']),
+                'values': [{'name': f['factor'],
+                            'label': labels.get(f['factor']) or _s(f['factor']),
+                            'value': _flow_cell_text(f['value'])}
+                           for f in s['factors'] if _s(f['value']) != ''],
+            })
+        srows = [x for x in srows if x['values'] or x['att']]
+        out.append({'rec_no': rn, 'steps': srows})
+    return jsonify(key=key, flow=sheet, rows=out,
+                   audits=[{'rec_no': a['rec_no'], 'result': a['result'],
+                            'operator': a['operator'], 'at': a['created_at'],
+                            'geo': _geo_obj(a['geo']), 'ip': a['ip']} for a in auds])
 
 
 @bp.route('/admin/api/accept-logs', methods=['GET'])

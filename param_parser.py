@@ -301,9 +301,10 @@ def filter_options(rows, headers, field, cfg=None, users=None):
     return out
 
 
-def filter_rows(rows, headers, filters, kinds=None):
-    """按条件过滤数据行（只筛行、不筛列）。
+def filter_indexes(rows, headers, filters, kinds=None):
+    """按条件过滤数据行，返回**保留行的下标**；没有生效条件时返回 None（全量）。
 
+    口径与 filter_rows 完全一致（同一份判定，导出与筛选不会各写一套）：
     filters: {字段名: 期望值}（空串/None = 该条件不生效）
     kinds:   {字段名: 'select'|'date'}，缺省按 select 处理
     - select：整串精确匹配（去首尾空格）
@@ -317,17 +318,23 @@ def filter_rows(rows, headers, filters, kinds=None):
         if w and h in headers:
             active[headers.index(h)] = (w, kinds.get(h, 'select'))
     if not active:
-        return rows
+        return None
     out = []
-    for r in rows:
+    for idx, r in enumerate(rows):
         for i, (want, kind) in active.items():
             cell = '' if i >= len(r) or r[i] is None else str(r[i]).strip()
             ok = (cell[:10] == want[:10]) if kind == 'date' else (cell == want)
             if not ok:
                 break
         else:
-            out.append(r)
+            out.append(idx)
     return out
+
+
+def filter_rows(rows, headers, filters, kinds=None):
+    """按条件过滤数据行（只筛行、不筛列）；条件为空时原样返回。"""
+    idxs = filter_indexes(rows, headers, filters, kinds)
+    return rows if idxs is None else [rows[i] for i in idxs]
 
 
 # ── v0.26：按唯一键合并更新（后台「更新 Excel」）──────────────────────

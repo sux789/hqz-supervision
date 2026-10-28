@@ -13,9 +13,9 @@ BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
 
 from param_parser import (  # noqa: E402
-    ParamError, check_unique_column, export_filters_of, filter_options,
-    filter_rows, log_fields_of, merge_rows, parse_params, percent_cols_of,
-    row_key_column, unique_key_of)
+    ParamError, check_unique_column, export_filters_of, filter_indexes,
+    filter_options, filter_rows, log_fields_of, merge_rows, parse_params,
+    percent_cols_of, row_key_column, unique_key_of)
 from main import _norm_cell, _pick_data_sheet  # noqa: E402
 
 HDR = ['key', 'value', '类型', '默认值', '说明', '示例']
@@ -178,6 +178,11 @@ passes('E11 空值条件不生效', lambda: len(fsel({'标段': '', '验收人':
 passes('E12 未声明的字段被忽略（不会把数据筛空）',
        lambda: len(filter_rows(FROWS, FH, {'小班号': 'X'}, {})), lambda r: r == 4)
 passes('E13 声明字段值不存在 → 0 行', lambda: len(fsel({'标段': '不存在'})), lambda r: r == 0)
+passes('E18 filter_indexes 与 filter_rows 同口径（返回原行下标）',
+       lambda: filter_indexes(FROWS, FH, {'标段': '7标段'},
+                              dict(export_filters_of(FH, FCFG))), lambda r: r == [2])
+passes('E19 无生效条件 → None（调用方按全量处理）',
+       lambda: filter_indexes(FROWS, FH, {'标段': ''}, {}), lambda r: r is None)
 
 # E14~E16 用一组与 FH 匹配的合法基底（功能不含拍照，故拍照三件套可不写）
 FBASE = [['可编辑列', '验收人;验收日期'], ['功能', '轨迹']]

@@ -30,6 +30,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import openpyxl
+
 BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
 
@@ -503,6 +505,49 @@ def main():
            str(g0.get('lat')) == '22.1234' and str(g0.get('lon')) == '102.1234'
            and str(g0.get('acc')) == '8',
            str(g0)[:80])
+
+        # ── v0.48 导出：数据 sheet 原样 + 追加「流程填报」长表 ──
+        buf, _name, _mime = _M._export_workbook(wid)
+        ew = openpyxl.load_workbook(buf)
+        ok('T13 导出追加「流程填报」，原数据 sheet 保留',
+           '流程填报' in ew.sheetnames and '设计值' in ew.sheetnames,
+           str(ew.sheetnames)[:100])
+        ws2 = ew['流程填报']
+        vals = [list(r) for r in ws2.iter_rows(min_row=2, values_only=True)]
+        ok('T13b 明细含小班/流程/结论/操作人/附件',
+           any(str(r[0]) == 'XP-1320' and r[1] == ROUTES[4] and r[6] == '通过'
+               and r[7] == ADMIN[0] for r in vals)
+           and any('：' in str(r[10]) and '.png' in str(r[10]) for r in vals),
+           f'{len(vals)} 行 {vals[:1]}'[:160])
+        ok('T13c 数据 sheet 行数未被流程明细改变（149 行 + 表头）',
+           ew['设计值'].max_row == 150, str(ew['设计值'].max_row))
+
+        # ── v0.48 后台填报进度：矩阵 + 明细 ──
+        pg = cli.get(f'/admin/api/progress?wid={wid}', headers=H).get_json()
+        flows_pg = pg.get('flows') or []
+        ok('T14 后台进度：5 条流程且独立巡护排最后',
+           [f['sheet'] for f in flows_pg] == ROUTES,
+           str([f['sheet'] for f in flows_pg]))
+        tot = (pg.get('totals') or {}).get(ROUTES[4]) or {}
+        ok('T14b 巡护统计：通过 ≥1、未填 + 通过 = 149、提交次数 ≥1',
+           tot.get('pass', 0) >= 1 and tot.get('pass', 0) + tot.get('none', 0) == 149
+           and tot.get('submissions', 0) >= 1, str(tot))
+        cell = next((c for r in (pg.get('rows') or []) if r['idx'] == ridx
+                     for c in (r.get('cells') or []) if c['flow'] == ROUTES[4]), {})
+        ok('T14c 进度单元格带最近操作人/时间与次数',
+           cell.get('state') == 'pass' and cell.get('operator') == ADMIN[0]
+           and cell.get('count', 0) >= 1, str(cell)[:120])
+        de = cli.get(f'/admin/api/progress/detail?wid={wid}&row={ridx}&flow={ROUTES[4]}',
+                     headers=H).get_json()
+        dvals = [v for x in (de.get('rows') or []) for s in x['steps'] for v in s['values']]
+        ok('T14d 明细含巡护情况与附件清单',
+           any('林地清理' in v['value'] for v in dvals)
+           and any('.png' in s.get('att', '') for x in (de.get('rows') or [])
+                   for s in x['steps']),
+           f"{len(dvals)} 个值")
+        ok('T14e 明细带提交日志（结论/操作人）',
+           any(a.get('result') == '通过' and a.get('operator') == ADMIN[0]
+               for a in (de.get('audits') or [])), str(len(de.get('audits') or [])))
     finally:
         con = sqlite3.connect(_M.DB_PATH)
         con.execute('DELETE FROM workbooks WHERE id=?', (wid,))

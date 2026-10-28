@@ -212,9 +212,12 @@ async function loadList() {
     box.appendChild(el(`<div class="muted" style="padding:12px">还没有工作簿，请在管理后台上传 Excel。</div>`));
   }
   for (const w of data.workbooks) {
+    const oldTpl = w.tpl_schema === 'flow_tpl/1' && !w.tpl_judge && !w.tpl_note;
     const n = el(`
       <div class="wb-item" data-id="${w.id}">
-        <span class="wb-name">${escapeHtml(w.name)}</span>
+        <span class="wb-name">${escapeHtml(w.name)}${oldTpl
+          ? '<span class="tpl-old-tag" title="模板未配置通过判断/备注规则；管理员在后台「更新 Excel」后生效">旧模板</span>'
+          : ''}</span>
         <span class="muted">${escapeHtml(w.sheet_name)} · ${escapeHtml(w.uploaded_at)}</span>
         <span class="spacer"></span>
         <span class="btn ghost wb-export">⬇ 导出</span>
