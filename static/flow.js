@@ -742,7 +742,9 @@
     (F.data.steps || []).forEach((s) => {
       const vals = v2Vals(s.no);
       (s.controls || []).forEach((c) => {
-        if (c.default && String(vals[c.name] || '') === '') vals[c.name] = c.default;
+        /* 选项（下拉）不预填：验收要逐项确认，「正确」默认选中等于替现场签字 */
+        if (c.default && c.type !== '下拉'
+            && String(vals[c.name] || '') === '') vals[c.name] = c.default;
       });
     });
     // 公式变量可能来自别的环节（成活株数在第 13 行、公式在第 15 行）→ 铺平整条流程再求值
@@ -933,7 +935,9 @@
       opts.forEach((o) => {
         h += `<option${cur === o ? ' selected' : ''}>${esc(o)}</option>`;
       });
-      h += '</select></div>';
+      h += '</select>'
+        + (c.hint ? `<div class="fs-hint">${esc(c.hint)}</div>` : '')
+        + '</div>';
       return h;
     }
     if (c.type === '多选') {
@@ -1368,6 +1372,7 @@
           <select data-f="${nm}"><option value=""${F.val[c.name] ? '' : ' selected'}>请选择</option>`
           + opts.map((o) => `<option${F.val[c.name] === o ? ' selected' : ''}>${esc(o)}</option>`).join('')
           + `</select>
+          ${c.hint ? `<div class="fs-hint">${esc(c.hint)}</div>` : ''}
           ${F.data.std[c.name] != null && F.data.std[c.name] !== ''
             ? `<div class="fs-hint">标准值 <b>${esc(F.data.std[c.name])}</b></div>` : ''}</div>`;
         return;

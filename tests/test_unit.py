@@ -631,6 +631,37 @@ ok('K4 多流程 + 无类型 → 全部可用；独立流程排最后且不当�
    str([x['sheet'] for x in (_h4 or {}).get('flow_list') or []]))
 
 
+# ── L. v2 控件契约（v0.49）：未知类型报错 / 原表口径提示 ──────────
+print('=== L. v2 控件：未知类型与原表口径提示 ===')
+
+
+def _mini_ctl(ctl_text, memo=''):
+    import flow_tpl
+    wb, head = _mini_tpl([('', '流程-单流程')])
+    ws = wb['流程-单流程']
+    ws['D2'] = ctl_text
+    ws['F2'] = memo
+    return flow_tpl.parse(wb, head)['flows']['流程-单流程'][0]['controls'][0]
+
+
+_c = _mini_ctl('选项(正确;不正确→备注≥2)',
+               '原表头：核实面积(1.已实施完成2.未实施完成)。')
+ok('L1 选项控件从备注「原表头」带出原表口径提示',
+   _c.get('hint') == '原表口径：已实施完成 / 未实施完成', str(_c.get('hint')))
+_c2 = _mini_ctl('选项(正确;不正确→备注≥2)',
+                '原表头：核实撑杆数量（1.数量达标2.数量不达标3.规格达标）；'
+                '原表把数量与规格合在一列，这里拆成两行。')
+ok('L2 拆分行不生成提示（括注混着两类选项，避免指错）',
+   _c2.get('hint') == '', str(_c2.get('hint')))
+
+
+def _bad_ctl():
+    _mini_ctl('日期')
+
+raises_tpl('L3 未知控件类型 → 解析期报错（不再静默降级为文本）',
+           _bad_ctl, '流程-单流程')
+
+
 def _dup_add_col():
     """多 worker 并发启动：后到者 ADD COLUMN 报 duplicate 必须被吞掉（2026-10-27 部署实测）。"""
     import sqlite3

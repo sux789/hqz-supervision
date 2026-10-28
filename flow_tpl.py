@@ -193,11 +193,46 @@ def _control(step, ctl_text, design, sheet, no):
         c.update(type='自动', arg='系统自动算: ' + formula, formula=formula,
                  required=False)
         c.update(_judge_fields(rule, sheet, no, step))
+    elif t:
+        # 白名单之外的类型不猜：模板写错就在上传期炸掉（C 口径：坏数据入口报错带行号）
+        raise TplError(
+            f'「{sheet}」第 {no} 行「{step}」控件「{ctl_text}」类型「{t}」不认识；'
+            f'可用：选项 / 按钮 / 多选 / 数值 / 百分数 / 文本 / 长文本 / 自动')
     else:
-        # 白名单之外的类型不猜：按单行文本落地，同时在 flow 警告里说清表 + 行号
+        # 空控件保留旧行为：按单行文本落地（纯附件行不写控件时仍可上传）
         c['type'] = '单行文本'
         c['arg'] = d['arg']
     return c
+
+
+def _origin_hint(memo):
+    """备注里的「原表头：…（1.已实施完成2.未实施完成）」→ 界面提示「原表口径：…」。
+
+    选项第一项统一成「正确」后，现场不知道正确指什么；把原表说法带出来（只显示不改值）。
+    拆分行（备注含「这里拆成」）的括注混着两类选项，不生成提示，免得指错。
+    """
+    text = _s(memo)
+    if '这里拆成' in text:
+        return ''
+    m = re.search(r'原表头：([^；;]*)', text)
+    if not m:
+        return ''
+    raw = m.group(1)
+    opens = [i for i in (raw.find('('), raw.find('（')) if i >= 0]
+    if not opens:
+        return ''
+    i = min(opens)
+    j = max(raw.rfind(')'), raw.rfind('）'))
+    if j <= i:
+        return ''
+    arg = raw[i + 1:j].strip()
+    if not arg:
+        return ''
+    arg = re.sub(r'(?<!\d)[1-9]\s*[.．、，,]\s*(?!\d)', ' / ', arg)
+    # 「1一致2.不一致」这种第一项没写分隔符的写法
+    arg = re.sub(r'(?<![\d.])[1-9](?=[^\d.．、，,\s])', ' / ', arg)
+    arg = re.sub(r'\s{2,}', ' ', arg).strip(' /')
+    return f'原表口径：{arg}' if arg else ''
 
 
 def _note_control(step, notes):
@@ -285,6 +320,10 @@ def parse_flow_sheet(ws, data_headers):
             continue
         design = _design_of(d['设计值表头'], data_headers)
         ctl = _control(step, d['控件'], design, ws.title, ln)
+        if ctl['type'] == '下拉' and not ctl.get('verdict'):
+            hint = _origin_hint(d['备注'])
+            if hint:
+                ctl['hint'] = hint
         ctrls = [ctl]
         if ctl.get('note_rules'):
             ctrls.append(_note_control(step, ctl['note_rules']))

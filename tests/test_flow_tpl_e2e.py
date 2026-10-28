@@ -50,6 +50,10 @@ if TPL is None:
 
 ROUTES = ['流程-整地', '流程-回塘底肥', '流程-栽植撑杆覆膜', '流程-完工验收', '流程-日常巡护']
 
+# T1 上传后从 flows 里收集「拍照」附件要求：{流程: {环节号: [标签]}}
+# 客户端拍到照片就报 count；测试在这里模拟，免得每个用例手写一遍。
+PHOTO_BY_FLOW = {}
+
 _pass = _fail = 0
 
 
@@ -59,8 +63,19 @@ def ok(name, cond, detail=''):
     print(f'  {"✅" if cond else "❌"} {name}  {detail}')
 
 
-def batch(cli, H, wid, ridx, flow, steps, rec_no=None, geo=None):
-    body = {'row': ridx, 'flow': flow, 'steps': steps}
+def batch(cli, H, wid, ridx, flow, steps, rec_no=None, geo=None, photos=True):
+    body_steps = []
+    for s in steps:
+        s = dict(s)
+        att = list(s.get('att') or [])
+        if photos:
+            for label in (PHOTO_BY_FLOW.get(flow) or {}).get(int(s['no']), []):
+                if not any(e.get('kind') == 'photo' and e.get('label') == label
+                           for e in att):
+                    att.append({'kind': 'photo', 'label': label, 'count': 1})
+        s['att'] = att
+        body_steps.append(s)
+    body = {'row': ridx, 'flow': flow, 'steps': body_steps}
     if rec_no is not None:
         body['rec_no'] = rec_no
     if geo is not None:
@@ -182,6 +197,12 @@ def main():
     try:
         g = cli.get(f'/api/workbooks/{wid}', headers=H).get_json()
         fl = g.get('flows') or {}
+        for _sheet, _sts in (fl.get('flows') or {}).items():
+            for _s in _sts:
+                _labels = [a.get('label') for a in (_s.get('attachments') or [])
+                           if a.get('kind') == 'photo' and a.get('label')]
+                if _labels:
+                    PHOTO_BY_FLOW.setdefault(_sheet, {})[int(_s['no'])] = _labels
         hdrs, rows = g.get('headers') or [], g.get('rows') or []
         ok('T1 落库为 v2 schema（flow_tpl/1）且路由 5 条',
            fl.get('schema') == 'flow_tpl/1' and len(fl.get('routes') or []) == 5,
@@ -237,6 +258,10 @@ def main():
            and inline.get('label') == '备注'
            and inline.get('show_on') == {'核实施工面积': ['不正确']},
            str(inline)[:140])
+        ok('T2j 选项控件带原表口径提示（正确 = 已实施完成 / 未实施完成）',
+           '已实施完成' in str(ctl.get('hint') or '')
+           and '未实施完成' in str(ctl.get('hint') or ''),
+           str(ctl.get('hint')))
         ok('T2f 整地可填、回塘底肥锁定（前置未完成）',
            f.get('flow_locked') is False
            and (f.get('flow_list') or [{}])[1].get('available') is False,
@@ -311,6 +336,11 @@ def main():
         err = str((r.get_json() or {}).get('error', ''))
         ok('T5b 核实总株数 -5 → 400（数值规则 ≥0）',
            r.status_code == 400 and '核实总株数' in err, err[:80])
+
+        r = batch(cli, H, wid, ridx, ROUTES[0], full_steps(LAND_PASS), photos=False)
+        err = str((r.get_json() or {}).get('error', ''))
+        ok('T5p 关键环节没拍照 → 400（施工面积需 1 份）',
+           r.status_code == 400 and '施工面积' in err and '需 1 份' in err, err[:100])
 
         r = batch(cli, H, wid, ridx, ROUTES[0], full_steps(
             {**LAND_PASS, 8: {'是否通过': '不通过'}}))

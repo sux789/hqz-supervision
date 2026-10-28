@@ -41,7 +41,7 @@
   <!-- jsuites/jspreadsheet 自托管（国内 jsdelivr CDN 不可靠，曾致网格页白屏） -->
   <link rel="stylesheet" href="{{ url_for('static', filename='vendor/jsuites.min.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='vendor/jspreadsheet.min.css') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=0.48.0">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=0.49.0">
 </head>
 <body>
   <!-- 登录 -->
@@ -169,7 +169,7 @@
   <script src="{{ url_for('static', filename='vendor/piexif.js') }}"></script>
   <script src="{{ url_for('static', filename='photo_exif.js') }}"></script>
   <!-- ?v= 版本号熔断：静态 JS 更新后 WebView/浏览器强制拉新（曾致 APK 端验收联动代码不生效） -->
-  <script src="{{ url_for('static', filename='app.js') }}?v=0.48.0"></script>
-  <script src="{{ url_for('static', filename='flow.js') }}?v=0.48.0"></script>
+  <script src="{{ url_for('static', filename='app.js') }}?v=0.49.0"></script>
+  <script src="{{ url_for('static', filename='flow.js') }}?v=0.49.0"></script>
 </body>
 </html>
