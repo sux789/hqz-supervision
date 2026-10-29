@@ -487,6 +487,27 @@ def main():
            r.status_code == 200,
            f'{r.status_code} {str((r.get_json() or {}).get("error"))[:100]}')
 
+        # ── v0.50：改判「通过」时，上一次「不通过」留下的隐藏备注不得跟着走 ──
+        # 真实场景：先不通过并写了流程备注/就地备注；复核整改后改判通过，
+        # 备注框已隐藏，但旧客户端仍把整份状态提交上来。
+        r = batch(cli, H, wid, ridx2, ROUTES[0], full_steps(
+            {**LAND_PASS,
+             1: {'核实施工面积': '正确', '核实施工面积说明': '实测一百一十亩'},
+             6: {'核实总株数': 99999},
+             7: {'备注': '现场核实株数不足'}}))
+        f2 = cli.get(f'/api/workbooks/{wid}/flow?row={ridx2}&flow={ROUTES[0]}',
+                     headers=H).get_json()
+        v2 = f2.get('values') or {}
+        stale_note = str((v2.get('7') or {}).get('备注') or '')
+        stale_inline = str((v2.get('1') or {}).get('核实施工面积说明') or '')
+        ok('T15a 改判通过：流程备注/就地备注的旧值不再落库（隐藏即不提交）',
+           r.status_code == 200 and stale_note == '' and stale_inline == '',
+           f'{r.status_code} note={stale_note[:20]!r} inline={stale_inline[:20]!r}')
+        ok('T15b 改判通过后结论与值以本次为准',
+           str((v2.get('8') or {}).get('是否通过')) == '通过'
+           and str((v2.get('1') or {}).get('核实施工面积')) == '正确',
+           str(v2.get('8'))[:60])
+
         # ── 可重复 / 独立流程：日常巡护 ──
         att2 = att_entry(cli, H, wid, ridx, ROUTES[4], 1, '巡护资料',
                          [('巡护3.png', PNG), ('巡护4.jpg', JPG), ('记录2.pdf', PDF)])
@@ -551,6 +572,12 @@ def main():
            f'{len(vals)} 行 {vals[:1]}'[:160])
         ok('T13c 数据 sheet 行数未被流程明细改变（149 行 + 表头）',
            ew['设计值'].max_row == 150, str(ew['设计值'].max_row))
+        seq = []
+        for r in vals:
+            if r[1] not in seq:
+                seq.append(r[1])
+        ok('T13d 流程明细顺序：主线按序、独立巡护排最后（与 App/后台一致）',
+           seq == ROUTES, str(seq))
 
         # ── v0.48 后台填报进度：矩阵 + 明细 ──
         pg = cli.get(f'/admin/api/progress?wid={wid}', headers=H).get_json()

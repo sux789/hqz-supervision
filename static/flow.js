@@ -857,19 +857,22 @@
         + '（结论通过后自动解锁）。下方为只读预览。</div>';
     }
 
-    steps.forEach((s) => {
+    // v0.50：序号只数实际渲染的卡片（隐藏备注/结论按钮不占号）。
+    // 旧写法用模板行号/总行数，现场会看到「6 / 8」却已没有下一项。
+    const cards = steps.filter((s) => {
+      const cs = s.controls || [];
+      return !cs.some((c) => c.verdict) && cs.some(v2CtrlShown);
+    });
+    cards.forEach((s, i) => {
       const vals = v2Vals(s.no);
       const ctrls = s.controls || [];
-      // 结论行不单独渲染：底部「通过 / 不通过」就是提交按钮
-      if (ctrls.some((c) => c.verdict)) return;
       // 隐藏备注：条件命中才出现（环节内选错就地展开；流程备注=结论不通过）；
       // 其余情况不占版面。一个环节可有多个控件（选项 + 就地备注）。
       const shown = ctrls.filter(v2CtrlShown);
-      if (!shown.length) return;
       h += '<div class="flow-card' + (locked ? ' locked' : '') + '">';
       h += '<div class="flow-card-head">'
         + `<span class="flow-card-title">${esc(s.step)}</span>`
-        + `<span class="flow-no">${s.no} / ${steps.length}</span></div>`;
+        + `<span class="flow-no">${i + 1} / ${cards.length}</span></div>`;
       if (s.memo) h += `<div class="flow-note">${esc(s.memo)}</div>`;
       h += '<div class="flow-ctrls' + (ctrls[0].design ? ' v2-big' : '') + '">'
         + shown.map((c) => v2CtrlHtml(s, c, vals)).join('') + '</div>';
@@ -1264,9 +1267,15 @@
     refreshV2Submit();
     try {
       const geo = await submitGeo();
-      const steps = (F.data.steps || []).map((s) => ({
-        no: s.no, values: F.v2val[s.no] || {}, att: F.v2att[s.no] || [],
-      }));
+      // v0.50：未展开的隐藏控件（如改判「通过」后的流程备注）不随本次提交；
+      // 否则上一次「不通过」写的备注会挂到这次通过记录上。
+      const steps = (F.data.steps || []).map((s) => {
+        const vals = Object.assign({}, F.v2val[s.no] || {});
+        (s.controls || []).forEach((c) => {
+          if (c.hidden && !v2CtrlShown(c)) delete vals[c.name];
+        });
+        return { no: s.no, values: vals, att: F.v2att[s.no] || [] };
+      });
       await api(`/api/workbooks/${F.wid}/flow/batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -1410,11 +1410,27 @@ def api_flow_batch(wid):
     fwd = (request.headers.get('X-Forwarded-For') or '').split(',')[0].strip()
     ip = (fwd or request.remote_addr or '')[:64]
 
+    # v0.50：隐藏控件未展开时，旧值不得跟本次提交走。
+    # 场景：上次「不通过」写了流程备注，改判「通过」后备注框已隐藏，
+    # 但客户端仍会把整份状态提交上来 → 备注会挂到通过记录上（导出误导）。
+    hidden_drop = set()
+    for s in hit['steps']:
+        for c in s['controls']:
+            if c.get('hidden') and not _hidden_shown(c, all_vals):
+                hidden_drop.add((int(s['no']), c['name']))
+    for _no, _factor in hidden_drop:
+        con.execute(
+            'DELETE FROM flow_records WHERE workbook_id=? AND row_idx=?'
+            ' AND flow_sheet=? AND step_no=? AND factor=? AND rec_no=?',
+            (wid, ridx, flow, _no, _factor, rec_no))
+
     for s in hit['steps']:
         no = int(s['no'])
         vals = values_by_step[no]
         att_json = json.dumps(att_by_step[no], ensure_ascii=False)
         for factor, val in vals.items():
+            if (no, str(factor)) in hidden_drop:
+                continue
             sval = (json.dumps(val, ensure_ascii=False)
                     if isinstance(val, (list, dict)) else _s(val))[:2000]
             ex = con.execute(
@@ -2134,7 +2150,20 @@ def _add_flow_sheet(wb, wid, r, headers, rows, allowed):
         return
     flows = _wb_flows(r)
     meta_map = _flow_step_meta(flows)
-    flow_order = {x.get('flow'): i for i, x in enumerate(flows.get('routes') or [])}
+    # v0.50：与 App / 后台进度保持一致 —— 主线按序号，独立流程（巡护）排最后。
+    # 模板「流程路由」里独立流程序号是 0，直接按表序会把巡护排到最前。
+    flow_order = {}
+    for i, x in enumerate(flows.get('routes') or []):
+        sheet = _s(x.get('flow'))
+        if not sheet:
+            continue
+        flow_order[sheet] = (1 if x.get('independent') else 0,
+                             0 if x.get('independent') else (x.get('no') or 0), i)
+    for i, x in enumerate(flows.get('registry') or []):
+        sheet = _s(x.get('sheet'))
+        if sheet and sheet not in flow_order:
+            flow_order[sheet] = (1 if x.get('independent') else 0,
+                                 x.get('prio') or i + 1, i)
     key_col = _wb_key_column(r)
     key_i = headers.index(key_col) if key_col in headers else -1
 
@@ -2166,7 +2195,7 @@ def _add_flow_sheet(wb, wid, r, headers, rows, allowed):
         return f'第 {ridx + 1} 行'
 
     order = sorted(groups.items(), key=lambda kv: (
-        kv[0][0], flow_order.get(kv[0][1], 999), kv[0][2]))
+        kv[0][0], flow_order.get(kv[0][1], (0, 999, 999)), kv[0][2]))
     for (ridx, sheet, rec_no), steps in order:
         smap = meta_map.get(sheet) or {}
         for no, s in sorted(steps.items()):
