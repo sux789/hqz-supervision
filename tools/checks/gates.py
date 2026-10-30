@@ -195,14 +195,14 @@ def gate_template() -> dict:
     files = sorted(glob.glob(C.p("data/*.xlsx")))
     if not files:
         return dict(status="SKIP", detail="data/ 下无 xlsx", ms=t.ms)
-    cmd = [sys.executable, "tools/check_template.py"] + [os.path.basename(f) for f in files]
-    # check_template.py 用相对 data/ 的路径解析，直接在仓库根跑
-    rc, out = C.sh([sys.executable, "tools/check_template.py"] +
-                   [os.path.relpath(f, C.ROOT) for f in files], timeout=180)
+    rel = [os.path.relpath(f, C.ROOT) for f in files]
+    # 两道：通用体检（参数/表头/唯一键）+ v2 流程深度体检（路由/控件/说明页）
+    rc, out = C.sh([sys.executable, "tools/check_template.py"] + rel, timeout=180)
+    rc2, out2 = C.sh([sys.executable, "tools/check_flow_tpl.py"] + rel, timeout=180)
     # 只数真正的失败标记「[FATAL」——数 "FATAL" 会把「0 FATAL / 3 WARN」这类摘要行也计入
-    fatal = out.count("[FATAL")
-    if rc != 0 and "Traceback" in out:
-        return dict(status="FAIL", detail="模板体检脚本异常：" + out.strip().splitlines()[-1][:120], ms=t.ms)
+    fatal = out.count("[FATAL") + out2.count("[FATAL")
+    if "Traceback" in out or "Traceback" in out2:
+        return dict(status="FAIL", detail="模板体检脚本异常：" + (out + out2).strip().splitlines()[-1][:120], ms=t.ms)
     if fatal:
         return dict(status="WARN",
                     detail=f"{len(files)} 个模板，FATAL {fatal} 条（模板待修，非代码回归）", ms=t.ms)

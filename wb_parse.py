@@ -99,7 +99,7 @@ def _pick_data_sheet(sheetnames):
     return others[0]
 
 
-def _parse_flows(wb, headers=None, rows=None):
+def _parse_flows(wb, headers=None, rows=None, config=None):
     """解析验收流程配置（v0.31 老格式 + v0.35 业务员填写版 + v2 模板，doc/019 / doc/027）。
 
     三套格式**各自落地、前端按 schema 分派**：
@@ -112,7 +112,8 @@ def _parse_flows(wb, headers=None, rows=None):
     """
     if flow_tpl.is_tpl_doc(wb):
         try:
-            res = flow_tpl.parse(wb, data_headers=headers)
+            option_default = flow_tpl.option_default_of(config)
+            res = flow_tpl.parse(wb, data_headers=headers, option_default=option_default)
         except flow_tpl.TplError as e:
             return json.dumps({'registry': [], 'flows': {}, 'warn': [
                 {'level': 'error', 'text': 'v2 流程模板有错误，本次不生效：' + str(e)}]},
@@ -228,7 +229,7 @@ def parse_workbook_storage(stream):
             raise ParamError(f'数据 sheet「{data_name}」：{uerr}')
         param_rows = [[_norm_cell(v) for v in (list(r) + [None] * 6)[:6]] for _, r in prows]
         # v0.31：流程 sheet 复用同一个 wb（read_only 模式下仍可按名取 sheet）
-        flows_json = _parse_flows(wb, headers, rows)
+        flows_json = _parse_flows(wb, headers, rows, config)
         return (data_name, headers, rows, config, param_rows,
                 row_key_column(config), flows_json)
     finally:

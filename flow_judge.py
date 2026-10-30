@@ -9,6 +9,9 @@
     百分数(0-100→≥85)           成活率 ≥ 85% → 正确
     自动(公式→≥85)              自动算出的值同样可判
 
+    选项(...)→首项通过          选项控件：首项=正确，其余=不正确（参数「选项判定」
+                               可让整份模板默认启用；控件写 →不判定 退出）
+
 规则语法（空格无关）：`比较符 阈值`，阈值可以是「设计值」或数字，
 后面可再乘系数（×0.95）或加减偏移（-5）：
 
@@ -118,3 +121,17 @@ def evaluate_control(c, actual, design):
             'value': c.get('judge_value'), 'factor': c.get('judge_factor'),
             'delta': c.get('judge_delta')}
     return evaluate(rule, actual, design)
+
+
+def evaluate_option(c, actual):
+    """选项「首项通过」判定：首项=通过，其余=不通过；未选归必填，不在这里判。"""
+    opts = c.get('options') or []
+    if not opts:
+        return None, '选项未配置'
+    a = '' if actual is None else str(actual).strip()
+    if a == '':
+        return None, '未选择'
+    first = str(opts[0]).strip()
+    if a == first:
+        return True, f'选择「{a}」'
+    return False, f'选择「{a}」，首项「{first}」才算通过'

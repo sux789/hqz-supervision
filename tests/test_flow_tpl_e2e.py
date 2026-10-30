@@ -20,6 +20,7 @@
   T10 v2 工作簿走老 /flow 提交 → 400（不许绕过整条校验）
   T11 模板附件列：上传 ≥3 份（图片≥1 / PDF≥1），坏标签/坏类型/缺类型都 400
   T12 附件落库与回显：下载鉴权、rec_no 绑定、跨记录复用拒绝
+  T16 参数「选项判定=首项通过」→ 选项非首项拦「通过」
 
 模板放在仓库 data/ 下（可用 TPL_V2 覆盖）；找不到整段 SKIP，不算失败。
 """
@@ -169,6 +170,46 @@ DONE_PASS = {
     17: {'是否通过': '通过'},
 }
 PATROL_PASS = {1: {'巡护情况': ['林地清理、整地巡护']}, 3: {'是否通过': '通过'}}
+
+
+def firstpass_case(cli, H):
+    """T16：参数「选项判定=首项通过」→ 选项非首项拦「通过」。"""
+    wb = openpyxl.load_workbook(TPL)
+    ws = wb['参数']
+    ws.append(['选项判定', '首项通过', '文本', '首项通过',
+               'e2e：选项默认首项通过', '首项通过'])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    r = cli.post('/api/workbooks', data={'file': (buf, 'firstpass.xlsx')},
+                 headers=H, content_type='multipart/form-data')
+    j = r.get_json() or {}
+    wid = j.get('id')
+    ok('T16 参数「选项判定=首项通过」可上传',
+       r.status_code == 200 and bool(wid), str(j)[:100])
+    if not wid:
+        return
+    try:
+        g = cli.get(f'/api/workbooks/{wid}', headers=H).get_json()
+        hdrs, rows = g.get('headers') or [], g.get('rows') or []
+        ridx = next(i for i, x in enumerate(rows)
+                    if str(dict(zip(hdrs, x)).get('小班号', '')).strip() == 'XP-1320')
+        bad = {**LAND_PASS,
+               1: {'核实施工面积': '不正确', '核实施工面积说明': '现场不合格'}}
+        r = batch(cli, H, wid, ridx, ROUTES[0], full_steps(bad))
+        err = str((r.get_json() or {}).get('error', ''))
+        ok('T16b 首项通过：选「不正确」即使写了备注也拦「通过」',
+           r.status_code == 400 and ('首项' in err or '通过判断' in err), err[:120])
+    finally:
+        con = sqlite3.connect(_M.DB_PATH)
+        con.execute('DELETE FROM workbooks WHERE id=?', (wid,))
+        con.execute('DELETE FROM flow_records WHERE workbook_id=?', (wid,))
+        con.execute('DELETE FROM flow_audit WHERE workbook_id=?', (wid,))
+        con.execute('DELETE FROM flow_att WHERE workbook_id=?', (wid,))
+        con.commit()
+        con.close()
+        shutil.rmtree(_M.UPLOAD_DIR / str(wid), ignore_errors=True)
+        shutil.rmtree(_M.ATT_DIR / str(wid), ignore_errors=True)
 
 
 def main():
@@ -615,6 +656,8 @@ def main():
         con.close()
         shutil.rmtree(_M.UPLOAD_DIR / str(wid), ignore_errors=True)
         shutil.rmtree(_M.ATT_DIR / str(wid), ignore_errors=True)
+
+    firstpass_case(cli, H)
 
     print('\n' + '=' * 62)
     print(f'通过 {_pass} / 失败 {_fail}')

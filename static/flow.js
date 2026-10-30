@@ -940,6 +940,7 @@
       });
       h += '</select>'
         + (c.hint ? `<div class="fs-hint">${esc(c.hint)}</div>` : '')
+        + ((c.judge || c.first_pass) ? v2JudgeHtml(s, c, vals) : '')
         + '</div>';
       return h;
     }
@@ -1061,7 +1062,7 @@
           saveDraft(); render(); return;   // 备注区跟着出现/消失
         }
         v2AutoRefresh(no);
-        if (c.judge) refreshV2Judge(no, c);
+        if (c.judge || c.first_pass) refreshV2Judge(no, c);
         saveDraft();
         refreshV2Submit();
       });
@@ -1138,6 +1139,15 @@
   /** 模板 `→规则` 的通过判断：服务端已把规则拆成 op / 阈值 / 系数，这里只做算术。
    *  默认「正确」——没填实测值时先按模板要求显示正确，填了再实时重算。 */
   function v2JudgeOf(c, actual) {
+    if (c.first_pass) {
+      const opts = c.options || [];
+      const raw = actual == null ? '' : String(actual).trim();
+      if (!opts.length) return { ok: null, why: '选项未配置' };
+      if (raw === '') return { ok: true, why: '待选（默认正确）', empty: true };
+      const first = String(opts[0]);
+      if (raw === first) return { ok: true, why: '选择「' + raw + '」' };
+      return { ok: false, why: '选择「' + raw + '」，首项「' + first + '」才算通过' };
+    }
     if (!c.judge) return null;
     const raw = actual == null ? '' : String(actual).trim();
     let t;
@@ -1173,14 +1183,15 @@
   }
 
   function v2JudgeHtml(s, c, vals) {
-    if (!c.judge) return '';
+    if (!c.judge && !c.first_pass) return '';
+    if (c.first_pass && String(vals[c.name] == null ? '' : vals[c.name]).trim() === '') return '';
     const j = v2JudgeOf(c, vals[c.name]);
     const cls = j.ok === false ? 'bad' : (j.ok === null ? 'warn' : (j.empty ? 'ok idle' : 'ok'));
     const word = j.ok === false ? '✗ 不正确' : (j.ok === null ? '? 无法判定' : '✓ 正确');
     return `<div class="fs-judge ${cls}" data-judge="${s.no}:${esc(c.name)}">`
       + `<span class="k">通过判断</span><b>${word}</b>`
       + `<span class="why">${esc(j.why)}</span>`
-      + `<span class="r">规则 ${esc(c.judge)}</span></div>`;
+      + `<span class="r">规则 ${esc(c.judge || (c.first_pass ? '首项通过' : ''))}</span></div>`;
   }
 
   /** 只改一条判断的 DOM，不重画整页（数值输入时保焦点） */
@@ -1203,7 +1214,7 @@
     (F.data.steps || []).forEach((s) => {
       const vals = F.v2val[s.no] || {};
       (s.controls || []).forEach((c) => {
-        if (!c.judge) return;
+        if (!c.judge && !c.first_pass) return;
         const raw = vals[c.name];
         if (raw == null || String(raw).trim() === '') return;
         const j = v2JudgeOf(c, raw);

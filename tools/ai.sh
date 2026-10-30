@@ -8,6 +8,7 @@
 #   bash tools/ai.sh triage             失败分诊 → doc/health/TRIAGE.md
 #   bash tools/ai.sh task <子命令>      并行任务卡（new/claim/done/list/check/board）
 #   bash tools/ai.sh map                符号地图 → doc/map.md
+#   bash tools/ai.sh tpl [file...]      v2 流程模板深度体检（默认 data/*.xlsx）
 #   bash tools/ai.sh help
 #
 # 纪律：本脚本只生成派生视图（brief/review/TRIAGE/json/map），禁止手改这些文件。
@@ -29,6 +30,7 @@ case "$cmd" in
   triage|why)     exec "$PY" tools/checks/triage.py "$@" ;;
   task|tasks)     exec "$PY" tools/checks/tasks.py "$@" ;;
   map)     exec "$PY" tools/checks/map.py "$@" ;;
+  tpl)     exec "$PY" tools/check_flow_tpl.py "$@" ;;
   help|-h|--help)
     awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"
     ;;

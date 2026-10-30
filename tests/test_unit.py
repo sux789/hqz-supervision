@@ -621,9 +621,18 @@ ok('K2 路由写了类型但数据表没有该列 → 回退全部路由（不�
    _h2 and _h2['flow_sheet'] == '流程-单流程', str((_h2 or {}).get('flow_sheet')))
 ok('K2b 回退时 cond_val 为空串（界面不出现「项目类型：」空标题）',
    _h2 and _h2.get('cond_val') == '', str((_h2 or {}).get('cond_val')))
-_h3 = _mini_hit([('', '流程-单流程')], with_type_col=True)
+_h3 = _mini_hit([('其他', '流程-单流程')], with_type_col=True)
 ok('K3 有类型列但路由类型不匹配 → 仍不命中（多类型模板行为不变）',
    _h3 is None, str(_h3))
+_h5 = _mini_hit([('', '流程-单流程')], with_type_col=True)
+ok('K5 路由项目类型留空 = 公用：任何类型都能命中',
+   _h5 and _h5['flow_sheet'] == '流程-单流程', str((_h5 or {}).get('flow_sheet')))
+_h6 = _mini_hit([('', '流程-单流程'), ('人工造林', '流程-单流程')], with_type_col=True)
+ok('K6 公用+专用同一流程 → 只保留一条（专用优先）',
+   _h6 and len(_h6['flow_list']) == 1, str(len((_h6 or {}).get('flow_list') or [])))
+_h7 = _mini_hit([('', '流程-单流程')])
+ok('K7 无项目类型列 + 公用路由 → 全量执行',
+   _h7 and _h7['flow_sheet'] == '流程-单流程', str((_h7 or {}).get('flow_sheet')))
 _h4 = _mini_hit([('', '流程-甲'), ('', '流程-乙')], first_repeat=True)
 ok('K4 多流程 + 无类型 → 全部可用；独立流程排最后且不当默认',
    _h4 and _h4['flow_sheet'] == '流程-乙'
@@ -635,13 +644,13 @@ ok('K4 多流程 + 无类型 → 全部可用；独立流程排最后且不当�
 print('=== L. v2 控件：未知类型与原表口径提示 ===')
 
 
-def _mini_ctl(ctl_text, memo=''):
+def _mini_ctl(ctl_text, memo='', option_default=False):
     import flow_tpl
     wb, head = _mini_tpl([('', '流程-单流程')])
     ws = wb['流程-单流程']
     ws['D2'] = ctl_text
     ws['F2'] = memo
-    return flow_tpl.parse(wb, head)['flows']['流程-单流程'][0]['controls'][0]
+    return flow_tpl.parse(wb, head, option_default)['flows']['流程-单流程'][0]['controls'][0]
 
 
 _c = _mini_ctl('选项(正确;不正确→备注≥2)',
@@ -660,6 +669,34 @@ def _bad_ctl():
 
 raises_tpl('L3 未知控件类型 → 解析期报错（不再静默降级为文本）',
            _bad_ctl, '流程-单流程')
+
+_c3 = _mini_ctl('选项(正确;不正确)', option_default=True)
+ok('L4 参数「选项判定=首项通过」→ 默认首项通过，其余项进 fail_on',
+   _c3.get('first_pass') is True and _c3.get('fail_on') == ['不正确'],
+   str(_c3.get('fail_on')))
+_c4 = _mini_ctl('选项(林地清理;其他)→不判定', option_default=True)
+ok('L5 →不判定 可在默认开启时退出（巡护纯记录）',
+   _c4.get('first_pass') is False and _c4.get('option_rule') == '不判定',
+   str((_c4.get('first_pass'), _c4.get('option_rule'))))
+_c5 = _mini_ctl('选项(正确;不正确)→首项通过')
+ok('L6 不靠参数，单个控件也能显式 →首项通过',
+   _c5.get('first_pass') is True and _c5.get('fail_on') == ['不正确'],
+   str(_c5.get('fail_on')))
+
+
+def _bad_tail():
+    _mini_ctl('数值(株)→首项通过')
+
+raises_tpl('L7 →首项通过 只允许选项控件', _bad_tail, '流程-单流程')
+
+
+def _opt_judge():
+    import flow_judge
+    c = {'options': ['数量规格都达标', '数量不达标'], 'first_pass': True}
+    return [flow_judge.evaluate_option(c, x)[0] for x in ('数量规格都达标', '数量不达标', '')]
+
+ok('L8 选项判定：首项 True / 非首项 False / 未选 None',
+   _opt_judge() == [True, False, None], str(_opt_judge()))
 
 
 def _dup_add_col():

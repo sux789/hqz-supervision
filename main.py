@@ -1352,17 +1352,22 @@ def api_flow_batch(wid):
     if verdict != '不通过':
         for s in hit['steps']:
             for c in s['controls']:
-                if not c.get('judge'):
+                if not c.get('judge') and not c.get('first_pass'):
                     continue
                 actual = all_vals.get(c['name'])
                 if _s(actual) == '':
                     continue          # 空值归「必填」，上面已经拦过
-                ok, why = flow_judge.evaluate_control(
-                    c, actual, (hit.get('std') or {}).get(c['name']))
+                if c.get('first_pass'):
+                    ok, why = flow_judge.evaluate_option(c, actual)
+                    rule_txt = '首项通过'
+                else:
+                    ok, why = flow_judge.evaluate_control(
+                        c, actual, (hit.get('std') or {}).get(c['name']))
+                    rule_txt = c['judge']
                 if ok is False or ok is None:
                     label = c.get('label') or c['name']
                     label = label if label == s['step'] else f'{s["step"]}·{label}'
-                    judge_bad.append(f'{label}（{why}；规则 {c["judge"]}）')
+                    judge_bad.append(f'{label}（{why}；规则 {rule_txt}）')
     if judge_bad:
         con.close()
         _applog('flow', f'wid={wid} row={ridx} 拒绝(400 判断) flow={flow} '
