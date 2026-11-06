@@ -446,16 +446,30 @@ def _tpl_formula(expr, values):
 
 
 def _tpl_hit(flows, headers, rows, ridx, flow_sheet='', wid=None):
-    """v2 模板：某小班的一条流程（含路由状态、设计值、备注行引用）。"""
-    if ridx is None or ridx < 0 or ridx >= len(rows):
+    """v2 模板：某小班的一条流程（含路由状态、设计值、备注行引用）。
+
+    **ridx < 0 = 项目级**（v0.52：材料核验按批次，一条记录关联多个小班），
+    与小班的验收/巡护流程完全分开：小班的流程下拉里看不到材料核验，
+    材料核验只在工具栏入口里填。
+    """
+    if ridx is not None and ridx < 0:
+        return _tpl_project_hit(flows, headers, rows, ridx, flow_sheet, wid)
+    if ridx is None or ridx >= len(rows):
         return None
     ptype = _tpl_row_type(headers, rows, ridx)
-    routes = flow_tpl.routes_for(flows, ptype)
+    # 项目级流程（材料核验）不进小班：否则每个小班都多一条"未完成"，
+    # 而且现场会在某个小班里把它填成单班记录
+    routes = [r for r in flow_tpl.routes_for(flows, ptype) if not r.get('project')]
     if not routes:
         return None
     con = _db() if wid is not None else None
+    mat = {}
     try:
         status = _tpl_route_status(con, wid, ridx, flows, routes)
+        if wid is not None and (flows.get('material') or {}).get('flow'):
+            key_col = _s((flows.get('material') or {}).get('key_col'))
+            key_val = _s(dict(zip(headers, rows[ridx])).get(key_col))
+            mat = _tpl_material_status(con, wid, flows, key_val)
     finally:
         if con is not None:
             con.close()
@@ -505,6 +519,168 @@ def _tpl_hit(flows, headers, rows, ridx, flow_sheet='', wid=None):
         'rec_no': cur['_rec_no'],
         'note_step_no': note_no,
         'note_field': note_field,
+    })
+    if mat:
+        payload['material'] = mat       # 小班面板顶部那一行「材料核验：✓/⚠」
+    return payload
+
+
+def _tpl_keys(headers, rows, key_col):
+    """数据表的小班号清单（去空、保序）。材料核验的「关联小班」勾选项就是它。"""
+    col = _s(key_col)
+    if col not in [str(h) for h in headers]:
+        return []
+    i = [str(h) for h in headers].index(col)
+    out, seen = [], set()
+    for r in rows:
+        v = _s(r[i]) if i < len(r) else ''
+        if v and v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+
+def _as_keys(v):
+    """「关联小班」的存值 → 小班号列表。多选存 JSON 数组，单选存单值（都认）。"""
+    val = _decode_value(v)
+    if isinstance(val, list):
+        return [_s(x) for x in val if _s(x)]
+    s = _s(val)
+    return [s] if s else []
+
+
+def _batch_label(vals, rec_no):
+    """批次号：优先取名字带「批次」的那一格；没有就退回「第 N 批」。"""
+    for k, v in (vals or {}).items():
+        if '批次' in _s(k) and _s(v):
+            return _s(v)
+    return f'第 {rec_no} 批'
+
+
+def _rec_batch(e, rec_no):
+    """一条批次记录的批次号：批次号是**整条流程**的（一批货一个号），不分环节。"""
+    vals = {}
+    for d in (e.get('steps') or {}).values():
+        vals.update(d or {})
+    return _batch_label(vals, rec_no)
+
+
+def _tpl_material_status(con, wid, flows, key_val):
+    """某个小班的材料核验覆盖状态：**按环节各自判定**（v0.52 用户拍板）。
+
+    苗木核验和肥料核验是两件事：苗木那批验了、肥料没验，只提示「肥料核验未做」。
+    **结论不通过不算覆盖**（不合格的材料不能算核验通过），小班继续提示，
+    但会把那可批次的号带出来，现场知道要整改哪一批。
+    """
+    mat = (flows or {}).get('material') or {}
+    sheet = _s(mat.get('flow'))
+    if con is None or not sheet or not key_val:
+        return {}
+    want = [s for s in flow_tpl.steps_of(flows, sheet)
+            if s.get('link') in ('单选', '多选')]
+    if not want:
+        return {}
+    recs = {}
+    for x in con.execute(
+            'SELECT step_no,rec_no,factor,value,result,operator,updated_at'
+            ' FROM flow_records WHERE workbook_id=? AND row_idx=-1 AND flow_sheet=?'
+            ' ORDER BY rec_no, id', (wid, sheet)).fetchall():
+        rn = int(x['rec_no'] or 0)
+        e = recs.setdefault(rn, {'result': '', 'at': '', 'operator': '', 'steps': {}})
+        if x['factor']:
+            e['steps'].setdefault(int(x['step_no']), {})[x['factor']] = x['value']
+        else:
+            e['result'] = _s(x['result'])
+        e['at'] = _s(x['updated_at']) or e['at']
+        e['operator'] = _s(x['operator']) or e['operator']
+    order = sorted(recs, reverse=True)         # 最近批次先看
+    steps_out = []
+    for s in want:
+        no = int(s['no'])
+        got = {'no': no, 'step': s['step'], 'ok': False, 'batch': '',
+               'at': '', 'operator': '', 'fail_batch': ''}
+        for rn in order:
+            e = recs[rn]
+            vals = e['steps'].get(no) or {}
+            if key_val not in _as_keys(vals.get('关联小班')):
+                continue
+            label = _rec_batch(e, rn)
+            if not got['batch']:               # 最近一批（不管通过与否）用来展示
+                got.update(batch=label, at=e['at'], operator=e['operator'])
+            if e['result'] in flow_config.PASS_RESULTS:
+                got.update(ok=True, batch=label, at=e['at'], operator=e['operator'])
+                break
+            if not got['fail_batch']:
+                got['fail_batch'] = label
+        steps_out.append(got)
+    done = sum(1 for x in steps_out if x['ok'])
+    return {'flow': sheet, 'name': sheet.replace('流程-', ''),
+            'key': key_val, 'steps': steps_out,
+            'total': len(steps_out), 'done': done, 'ok': done == len(steps_out)}
+
+
+def _tpl_project_hit(flows, headers, rows, ridx, flow_sheet, wid):
+    """项目级入口（v0.52：材料核验按批次）—— row=-1 时只认参数指定的那条流程。
+
+    与 v0.37 的老格式材料入口同源：基本信息只给**项目级常量列**（项目名称/标段…），
+    随小班变化的列（树种/株数）不显示 —— 一条批次记录该显示哪个小班的值？
+    小班差异由「关联小班」多选承担。
+    """
+    mat = (flows or {}).get('material') or {}
+    sheet = _s(mat.get('flow'))
+    if not sheet:
+        return None
+    if flow_sheet and flow_sheet != sheet:
+        return None
+    steps = flow_tpl.steps_of(flows, sheet)
+    if not steps:
+        return None
+    cols, std = _project_std(headers, rows)
+    m = {'sheet': sheet, 'prio': int(mat.get('no') or 0), 'cond_field': '',
+         'cond_val': '', 'scope': '全部', 'steps': steps}
+    payload = _hit_payload(m, std, cols, list(flows.get('warn') or []))
+    keys = _tpl_keys(headers, rows, mat.get('key_col'))
+    for s in payload['steps']:
+        for c in s['controls']:
+            if c['name'] == '关联小班':
+                c['arg'] = ';'.join(keys)
+                c['options'] = keys
+                c['required'] = True
+    con = _db() if wid is not None else None
+    try:
+        info = _tpl_flow_info(con, wid, ridx, sheet, steps)
+    finally:
+        if con is not None:
+            con.close()
+    route = next((r for r in (flows.get('routes') or [])
+                  if r['flow'] == sheet), {})
+    note_no, note_field = 0, ''
+    for s in steps:
+        if s.get('note_no'):
+            note_no, note_field = s['note_no'], s.get('note_field') or '备注'
+            break
+    payload.update({
+        'schema': 'flow_tpl/1',
+        'entry': '材料',
+        'flow_sheet': sheet,
+        'flow_list': [{
+            'sheet': sheet, 'no': route.get('no') or 0, 'prereq': [],
+            'repeat': True, 'trigger': route.get('trigger') or '',
+            'note': route.get('note') or '', 'independent': True,
+            'done': False, 'has': info['has'], 'available': True}],
+        'flow_locked': False,
+        'flow_prereq': [],
+        'flow_repeat': True,
+        'flow_independent': True,
+        'flow_trigger': route.get('trigger') or '',
+        'values': info['values'],
+        'meta': info['meta'],
+        'atts': info['atts'],
+        'rec_no': info['rec_no'],
+        'note_step_no': note_no,
+        'note_field': note_field,
+        'project': True,
+        'project_key_col': mat.get('key_col') or '',
     })
     return payload
 

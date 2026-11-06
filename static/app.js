@@ -93,8 +93,10 @@ async function ensureWb(id) {
   allRows = cur.rows.map((r) => r.map((v) => (v == null ? '' : String(v))));
   // v0.37：配了「材料」入口才显示材料检验按钮。sheet 名形如「流程-材料检验（按批次）·材料」，
   // 取 · 后一段即入口；老 12 列格式没有 · → 取到的不是「材料」，按钮不显示（零请求判断）
+  // v0.52：v2 模板没有 registry，材料核验由参数「材料核验流程」指定，flows.material 里带着
   const reg = (cur.flows && cur.flows.registry) || [];
-  wbHasMaterial = reg.some((r) => String(r.sheet || '').split('·').pop() === '材料');
+  wbHasMaterial = !!(cur.flows && cur.flows.material && cur.flows.material.flow)
+    || reg.some((r) => String(r.sheet || '').split('·').pop() === '材料');
   return true;
 }
 
@@ -450,6 +452,16 @@ function openFlowView(wid, idx, entry) {
   // 材料检验按钮激活态：正在看项目级材料面板时高亮，点任一小班即退回行级流程
   const bm = $('#btnMaterial');
   if (bm) bm.classList.toggle('cur', idx < 0);
+  // v0.52：项目级面板不挂小班，顶部「项目类型/标段/小班号」选择栏在此时没有意义，
+  // 留着反而让人以为这一批只报了当前这个小班（430px 实测确认会误读）
+  const sb = $('#selectorBar'), sm = $('#selMeta');
+  if (sb) sb.classList.toggle('hidden', idx < 0);
+  if (sm) sm.classList.toggle('hidden', idx < 0);
+  // 顶栏标题也换掉：进去前写的是「XP-1320 · 模板名」，那一批并不是只报这个小班
+  if (idx < 0 && cur && $('#pageName')) {
+    $('#pageName').textContent = '材料核验 · ' + String(cur.name || '')
+      .replace(/\.xls[xm]$/i, '');
+  }
 }
 
 function setSaveStatus(text, cls) {

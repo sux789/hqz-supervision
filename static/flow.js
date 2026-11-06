@@ -799,6 +799,19 @@
     return h;
   }
 
+  /** v0.52 材料核验状态（小班面板顶部一行）：按环节各自判定，不通过不算完成。 */
+  function materialHtml(m) {
+    const parts = (m.steps || []).map((s) => (s.ok
+      ? `<span class="mat-ok">✓ ${esc(s.step)}${s.batch ? `（${esc(s.batch)}）` : ''}</span>`
+      : `<span class="mat-miss">⚠ ${esc(s.step)}`
+        + `${s.fail_batch ? `（${esc(s.fail_batch)} 不合格）` : ' 未核验'}</span>`));
+    const head = m.ok
+      ? `材料核验：已完成（${m.total} 项）`
+      : `材料核验：还差 ${m.total - m.done} 项`;
+    return `<div class="flow-mat${m.ok ? ' ok' : ''}"><b>${head}</b>`
+      + parts.join('') + '</div>';
+  }
+
   function renderV2(host) {
     v2Normalize();
     const d = F.data, steps = d.steps || [];
@@ -810,6 +823,7 @@
 
     // 无「项目类型」列的单流程模板：标题只留流程名，不显示空的类型
     const meta = [];
+    if (d.project || F.rowIdx < 0) meta.push('项目级（按批次，一条记录可关联多个小班）');
     if (d.cond_val) meta.push('项目类型：' + esc(d.cond_val));
     if (d.flow_independent) meta.push('独立流程（可多次，不参与主线先后）');
     else if (d.flow_repeat) meta.push('可重复填报（每次提交新增一次记录）');
@@ -819,6 +833,10 @@
       + `<div class="flow-title">${esc(curName)}</div>`
       + (meta.length ? `<div class="flow-meta">${meta.join(' · ')}</div>` : '')
       + '</div>';
+
+    // v0.52：材料核验（项目级，按批次）—— 小班面板顶部一行状态，逐环节判定。
+    // 苗木核验和肥料核验是两件事：只提示真正还没做的那几项。
+    if (d.material && d.material.total) h += materialHtml(d.material);
 
     // 流程下拉：只有一条流程时不必给选择器（标题已显示流程名）
     let pick = '';
@@ -947,10 +965,18 @@
     if (c.type === '多选') {
       const opts = splitList(c.arg);
       const sel = Array.isArray(vals[c.name]) ? vals[c.name] : [];
+      // v0.52：材料核验的「关联小班」可能有上百项 —— 给个筛选框，别让人滚着找
+      const many = opts.length > 20;
       h += `<div class="fs-item"><div class="fs-label">${nm} <span class="req">*</span>
-        <span class="fs-hint">可多选</span></div><div class="fs-multi">`;
+        <span class="fs-hint">可多选${many ? `（共 ${opts.length} 个，可输编号筛选）` : ''}</span></div>`;
+      if (many) {
+        h += `<input type="text" class="fs-filter" data-flt="${s.no}:${field}"
+          placeholder="输入编号筛选，如 ${esc(opts[0] || '')}">`;
+      }
+      h += '<div class="fs-multi">';
       opts.forEach((o) => {
-        h += `<label class="fs-chk"><input type="checkbox" data-s="${s.no}" data-m="${field}"`
+        h += `<label class="fs-chk" data-opt="${esc(o)}"><input type="checkbox"`
+          + ` data-s="${s.no}" data-m="${field}"`
           + ` data-v="${esc(o)}"${sel.indexOf(o) >= 0 ? ' checked' : ''}>${esc(o)}</label>`;
       });
       h += `</div><div class="fs-verdict hint" data-mcount="${s.no}">已选 ${sel.length} 项</div></div>`;
@@ -1065,6 +1091,19 @@
         if (c.judge || c.first_pass) refreshV2Judge(no, c);
         saveDraft();
         refreshV2Submit();
+      });
+    });
+
+    // v0.52：上百个小班时按编号筛选（只隐藏，不改选中状态）
+    Array.prototype.forEach.call(host.querySelectorAll('[data-flt]'), (el) => {
+      on(el, 'input', () => {
+        const q = el.value.trim().toUpperCase();
+        const box = el.nextElementSibling;
+        if (!box) return;
+        Array.prototype.forEach.call(box.querySelectorAll('.fs-chk'), (l) => {
+          const hit = !q || String(l.dataset.opt || '').toUpperCase().indexOf(q) >= 0;
+          l.style.display = hit ? '' : 'none';
+        });
       });
     });
 

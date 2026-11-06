@@ -45,6 +45,9 @@ KEYS = {
     '导出筛选': '控件映射',
     # v2 流程模板：选项控件的默认判定（首项通过 / 留空或 不判定）
     '选项判定': '文本',
+    # v2 流程模板：哪条流程是「项目级材料核验」（按批次、一条记录关联多个小班）；
+    # 留空 = 不做材料核验（老模板零改动）
+    '材料核验流程': '文本',
 }
 
 REQUIRED = ['可编辑列', '功能']
@@ -150,6 +153,12 @@ def parse_params(param_rows, headers):
             raise ParamError(
                 f'参数 sheet 第{rno}行 key「选项判定」：只能是「首项通过」或留空'
                 f'（也可写「不判定」），实际「{value}」')
+
+        # v2 流程模板：材料核验流程名（必须写成流程 sheet 的名字，形如「流程-材料核验」）
+        if key == '材料核验流程' and value and not value.startswith('流程-'):
+            raise ParamError(
+                f'参数 sheet 第{rno}行 key「材料核验流程」：要写流程 sheet 的名字，'
+                f'形如「流程-材料核验」（实际「{value}」）；不做材料核验就留空')
 
         # 控件映射：字段|控件类型
         if key == '搜索选项' and value:

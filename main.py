@@ -41,7 +41,7 @@ import sync_cloud
 import track_export
 from flow_hit import (_ATT_MAX, _att_gate, _att_name, _att_sig, _att_sig_cls,
                       _entries_of, _flow_hit, _flow_log_from_records, _geo_obj,
-                      _rule_errors, _tpl_formula, _unique_conflict)
+                      _rule_errors, _tpl_formula, _tpl_keys, _unique_conflict)
 from param_parser import (ParamError, _s, export_filters_of,
                           filter_indexes, filter_options, log_fields_of,
                           merge_rows, row_key_column, split_list, unique_key_of)
@@ -783,7 +783,12 @@ def api_flow(wid):
                    flow_log=flow_log,
                    flow_rec_no=hit.get('rec_no') or 0,
                    note_step_no=hit.get('note_step_no') or 0,
-                   note_field=hit.get('note_field') or '')
+                   note_field=hit.get('note_field') or '',
+                   # v0.52：材料核验（项目级）—— 小班面板顶部那一行状态；
+                   # project=True 表示当前填的是项目级批次（不挂小班档案）
+                   material=hit.get('material') or {},
+                   project=bool(hit.get('project')),
+                   project_key_col=hit.get('project_key_col') or '')
 
 
 @bp.route('/api/workbooks/<int:wid>/flow', methods=['POST'])
@@ -1290,6 +1295,23 @@ def api_flow_batch(wid):
         values_by_step[no] = vals if isinstance(vals, dict) else {}
         att = one.get('att') or []
         att_by_step[no] = att if isinstance(att, list) else []
+
+    # v0.52 材料核验（项目级）：勾的小班号必须真在这份表里。
+    # 手输/脏数据会让覆盖判定永久失效（那个小班永远提示未核验），所以在入口就拦住。
+    if hit.get('project'):
+        keys = set(_tpl_keys(headers, rows, hit.get('project_key_col') or ''))
+        bad = []
+        for s in hit['steps']:
+            v = values_by_step[int(s['no'])].get('关联小班')
+            picked = v if isinstance(v, list) else ([v] if _s(v) else [])
+            bad.extend(_s(x) for x in picked if _s(x) not in keys)
+        if bad:
+            con.close()
+            _applog('flow', f'wid={wid} row={ridx} 拒绝(400 小班号无效) '
+                            f'flow={flow} bad={bad[:10]} user={auth_user()[0]}')
+            return jsonify(
+                error='这些小班号不在这份表里：' + '、'.join(dict.fromkeys(bad))[:120]
+                      + '；请在下拉里勾选，不要手写'), 400
 
     # 结论：v2 每条流程恰好一个「是否通过」按钮环节
     verdict = ''
@@ -2413,8 +2435,8 @@ def _progress_flows(flows):
     if (flows or {}).get('schema') == 'flow_tpl/1':
         for x in flows.get('routes') or []:
             sheet = _s(x.get('flow'))
-            if not sheet:
-                continue
+            if not sheet or x.get('project'):
+                continue      # v0.52：材料核验是项目级（按批次），不是小班的一列
             out.append({'sheet': sheet, 'name': sheet.replace('流程-', ''),
                         'no': x.get('no') or 0, 'repeat': bool(x.get('repeat')),
                         'independent': bool(x.get('independent'))})

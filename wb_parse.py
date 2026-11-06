@@ -113,7 +113,9 @@ def _parse_flows(wb, headers=None, rows=None, config=None):
     if flow_tpl.is_tpl_doc(wb):
         try:
             option_default = flow_tpl.option_default_of(config)
-            res = flow_tpl.parse(wb, data_headers=headers, option_default=option_default)
+            res = flow_tpl.parse(wb, data_headers=headers, option_default=option_default,
+                                 material_flow=flow_tpl.material_of(config),
+                                 key_col=row_key_column(config))
         except flow_tpl.TplError as e:
             return json.dumps({'registry': [], 'flows': {}, 'warn': [
                 {'level': 'error', 'text': 'v2 流程模板有错误，本次不生效：' + str(e)}]},
