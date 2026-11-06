@@ -607,11 +607,7 @@
       Array.prototype.forEach.call(
         host.querySelectorAll('.flow-card.locked input, .flow-card.locked select,'
           + ' .flow-card.locked textarea, .flow-card.locked button'),
-        (el) => {
-          // v0.54：「去核验」是软提示的跳转按钮，不是填表控件 —— 流程因前置被锁时
-          // 也要能点，否则现场在工序没解锁时反而没法先去补材料核验
-          if (!el.dataset || !el.dataset.need) el.disabled = true;
-        });
+        (el) => { el.disabled = true; });
     }
 
     Array.prototype.forEach.call(host.querySelectorAll('.flow-entries .fe'), (b) => {
@@ -816,23 +812,27 @@
     return h;
   }
 
-  /** v0.52 材料核验状态（小班面板顶部一行）：按环节各自判定，不通过不算完成。
-      v0.53：项目级流程可以有多条（苗木核验一条、肥料核验一条都行），
-      多条时给每项带上流程名，免得两个「核验」分不清是哪条流程的。 */
-  function materialHtml(m) {
-    const multi = (m.flows || 0) > 1;
-    const nm = (s) => ((multi && s.flow_name && s.flow_name !== s.step) ? s.flow_name + '·' : '') + s.step;
-    const jump = (s) => `data-mat-flow="${esc(s.flow)}" data-mat-key="${esc(m.key || '')}"`
-      + ' title="点去对应的公共核验流程"';
-    const parts = (m.steps || []).map((s) => (s.ok
-      ? `<span class="mat-ok mat-item" ${jump(s)}>✓ ${esc(nm(s))}${s.batch ? `（${esc(s.batch)}）` : ''}</span>`
-      : `<span class="mat-miss mat-item" ${jump(s)}>⚠ ${esc(nm(s))}`
-        + `${s.fail_batch ? `（${esc(s.fail_batch)} 不合格）` : ' 未核验'}</span>`));
-    const head = m.ok
-      ? `材料核验：已完成（${m.total} 项）`
-      : `材料核验：还差 ${m.total - m.done} 项`;
-    return `<div class="flow-mat${m.ok ? ' ok' : ''}"><b>${head}</b>`
-      + parts.join('') + '</div>';
+  /** v0.55 材料核验提示：放在流程内容之前，只列未核验项。
+      该小班全部核验完 → 整块不显示（现场看不到多余绿条）。
+      当前流程「需先核验」指向的项排最前并标「本流程」，其余作为总览列出，
+      避免做整地这类流程时完全看不到苗木/肥料的待办。 */
+  function materialHtml(m, steps) {
+    const todo = ((m && m.steps) || []).filter((x) => !x.ok);
+    if (!todo.length) return '';
+    const refs = new Set();
+    (steps || []).forEach((s) => (s.need_flows || []).forEach((f) => refs.add(f)));
+    const here = todo.filter((x) => refs.has(x.flow));
+    const other = todo.filter((x) => !refs.has(x.flow));
+    const nm = (x) => ((m.flows || 0) > 1 && x.flow_name && x.flow_name !== x.step
+      ? x.flow_name + '·' : '') + x.step;
+    const item = (x, tag) => `<span class="mat-miss mat-item" data-mat-flow="${esc(x.flow)}"`
+      + ` data-mat-key="${esc(m.key || '')}" title="点去对应的公共核验流程">`
+      + tag + `⚠ ${esc(nm(x))}`
+      + `${x.fail_batch ? `（${esc(x.fail_batch)} 不合格）` : ' 未核验'}</span>`;
+    let h = `<div class="flow-mat"><b>材料核验：还差 ${todo.length} 项</b>`;
+    here.forEach((x) => { h += item(x, '<i class="mat-here">本流程</i>'); });
+    other.forEach((x) => { h += item(x, ''); });
+    return h + '</div>';
   }
 
   function renderV2(host) {
@@ -857,9 +857,6 @@
       + (meta.length ? `<div class="flow-meta">${meta.join(' · ')}</div>` : '')
       + '</div>';
 
-    // v0.52：材料核验（项目级，按批次）—— 小班面板顶部一行状态，逐环节判定。
-    // 苗木核验和肥料核验是两件事：只提示真正还没做的那几项。
-    if (d.material && d.material.total) h += materialHtml(d.material);
 
     // 流程下拉：只有一条流程时不必给选择器（标题已显示流程名）
     let pick = '';
@@ -881,6 +878,10 @@
       pick += '<span class="fs-hint">已有一次填报，提交将覆盖为本表单内容</span>';
     }
     if (pick) h += '<div class="flow-pick">' + pick + '</div>';
+
+    // v0.55：材料核验提示放在「流程前面」（流程下拉之后、环节卡片之前）。
+    // 只列未核验项；该小班全部核验完就整块不显示。
+    if (d.material && d.material.total) h += materialHtml(d.material, steps);
 
     (d.warn || []).forEach((w) => {
       h += `<div class="flow-warn"><b>配置提示</b>${esc(w.text || w)}</div>`;
@@ -915,18 +916,6 @@
       h += '<div class="flow-card-head">'
         + `<span class="flow-card-title">${esc(s.step)}</span>`
         + `<span class="flow-no">${i + 1} / ${cards.length}</span></div>`;
-      // v0.54：环节表「需先核验」→ 软提示 + 一键去公共流程（不拦截提交）
-      (s.need_flows || []).forEach((fl) => {
-        const its = ((d.material || {}).steps || []).filter((x) => x.flow === fl);
-        const ok = its.length > 0 && its.every((x) => x.ok);
-        const b = its.length && its[0].batch ? `（${its[0].batch}）` : '';
-        h += `<div class="flow-need${ok ? ' ok' : ''}">`
-          + `<span>需先核验：<b>${esc(flowName(fl))}</b></span>`
-          + (ok ? `<span class="fn-ok">✓ 已完成${esc(b)}</span>`
-                : '<span class="fn-miss">⚠ 未完成</span>')
-          + `<button type="button" class="btn ghost" data-need="${esc(fl)}"`
-          + ` data-key="${esc((d.material || {}).key || '')}">去核验 →</button></div>`;
-      });
       if (s.memo) h += `<div class="flow-note">${esc(s.memo)}</div>`;
       h += '<div class="flow-ctrls' + (ctrls[0].design ? ' v2-big' : '') + '">'
         + shown.map((c) => v2CtrlHtml(s, c, vals)).join('') + '</div>';
@@ -955,11 +944,7 @@
       Array.prototype.forEach.call(
         host.querySelectorAll('.flow-card.locked input, .flow-card.locked select,'
           + ' .flow-card.locked textarea, .flow-card.locked button'),
-        (el) => {
-          // v0.54：「去核验」是软提示的跳转按钮，不是填表控件 —— 流程因前置被锁时
-          // 也要能点，否则现场在工序没解锁时反而没法先去补材料核验
-          if (!el.dataset || !el.dataset.need) el.disabled = true;
-        });
+        (el) => { el.disabled = true; });
     }
     bindV2(host);
   }
@@ -1135,12 +1120,11 @@
     });
 
     // v0.52：上百个小班时按编号筛选（只隐藏，不改选中状态）
-    // v0.54：状态行 / 环节卡片的「去核验」→ 交给 app.js 切到项目级公共流程
-    Array.prototype.forEach.call(host.querySelectorAll('[data-need], [data-mat-flow]'), (el) => {
+    // v0.55：材料核验待办项 → 交给 app.js 切到项目级公共流程
+    Array.prototype.forEach.call(host.querySelectorAll('[data-mat-flow]'), (el) => {
       on(el, 'click', () => {
-        const fl = el.dataset.need || el.dataset.matFlow;
-        const key = el.dataset.key || el.dataset.matKey
-          || ((F.data || {}).material || {}).key || '';
+        const fl = el.dataset.matFlow;
+        const key = el.dataset.matKey || ((F.data || {}).material || {}).key || '';
         if (fl && window.__supOpenMaterial) window.__supOpenMaterial(fl, key);
       });
     });
