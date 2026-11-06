@@ -130,6 +130,8 @@ def _hit_payload(m, std, std_cols, warns):
             'note_field': s.get('note_field', ''),
             'note_no': s.get('note_no', 0),
             'unique': s.get('unique', '不校验'),
+            # v0.54：环节卡片顶部的「需先核验」软提示（只提示，不拦截提交）
+            'need_flows': s.get('need_flows') or [],
             'prev': s.get('prev') or [],
             'prev_result': s.get('prev_result') or {},
             'need_result': s.get('need_result', True),

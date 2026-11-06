@@ -43,7 +43,7 @@ ROUTE_COLS = ['序号', '项目类型', '流程', '前置流程', '可重复', '
 # **作用对象=项目** 的环节 = 按批次登记、一条记录关联多个小班（如苗木核验/肥料核验）：
 # 这类流程不挂小班档案（row_idx=-1）、可多次、不进小班流程下拉。留空 = 小班。
 # 两列都放末尾：Excel 里加列不用挪已有内容，业务专家也只需在最右两列上填写。
-STEP_COLS = ['序号', '环节', '设计值表头', '控件', '附件', '备注', '关联小班', '作用对象']
+STEP_COLS = ['序号', '环节', '设计值表头', '控件', '附件', '备注', '关联小班', '作用对象', '需先核验']
 LINKS = ['不需要', '单选', '多选']
 SUBJECTS = ['小班', '项目']
 
@@ -446,6 +446,9 @@ def parse_flow_sheet(ws, data_headers, option_default=False):
             'subject': subject,
             'multi': False,
             'link': link,
+            # v0.54：这一环节开工前要看哪个公共（项目级）流程；多个用 ; 分隔
+            'need_flows': [x.strip() for x in re.split(r'[;；]',
+                            _s(d.get('需先核验'))) if x.strip()],
             'basic_info': [],
             'basic_hide': [],
             'verdict': '是否通过' if ctl.get('verdict') else '',
@@ -567,6 +570,17 @@ def _project_flows(flows, routes, data_headers, key_col, warn):
                              'text': f'项目级流程「{name}」按批次登记，已自动改为「可重复」'})
         out.append({'flow': name, 'name': name.replace('流程-', ''),
                     'no': hit[0]['no'] if hit else 0})
+    # 「需先核验」只能指向确实存在的项目级流程 —— 写错流程名会让现场点了没反应，
+    # 所以在解析期就报错（表名 + 行号），不要等上线才发现
+    pnames = {x['flow'] for x in out}
+    for name, steps in flows.items():
+        for s in steps:
+            for ref in (s.get('need_flows') or []):
+                if ref not in pnames:
+                    raise TplError(
+                        f'「{name}」第 {s["line"]} 行「{s["step"]}」的「需先核验」'
+                        f'写的是「{ref}」，但它不是项目级流程'
+                        f'（项目级：{"、".join(sorted(pnames)) or "无"}）')
     cols = [_s(h) for h in (data_headers or []) if _s(h)]
     key = key_col if key_col in cols else ('小班号' if '小班号' in cols
                                            else (cols[0] if cols else ''))

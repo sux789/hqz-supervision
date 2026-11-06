@@ -5,7 +5,7 @@
 用法：python tests/test_flow_tpl_e2e.py      # 全绿退出码 0
 
 模板结构变了（一列一因子 → 一行一环节），App 的行为也跟着变：
-  T1  上传 → flows.schema=flow_tpl/1；6 条路由（v0.52 含项目级材料核验）；设计值表头映射成 std
+  T1  上传 → flows.schema=flow_tpl/1；7 条路由（v0.54 含两张项目级公共表）；设计值表头映射成 std
   T1c 「参数」页驱动搜索栏（项目类型→标段→乡→村→小班，级联顺序）
   T1d 「参数」页带出照片配置（目录/水印/文件名/压缩）
   T2  不带 flow → 默认给「当前该做的那条」，其余按路由顺序放进 flow_list
@@ -197,78 +197,105 @@ def _att(cli, H, wid, row, flow, step, label, files):
             'names': names, 'types': types, 'ids': ids}
 
 
-def material_case(cli, H):
-    """M1~M9：v0.52 材料核验（项目级、按批次、勾多个小班、逐环节覆盖）。
+def _mat_submit(cli, H, wid, flow, batch, keys, verdict='通过'):
+    """提交一批公共核验（两张表各自的附件与核验项名不同）。"""
+    seed = '苗木核验' in flow
+    item = '苗木核验' if seed else '肥料核验'
+    att = []
+    if seed:
+        att.append({'kind': 'photo', 'label': '苗木现场照片', 'count': 1})
+        att.append(_att(cli, H, wid, -1, flow, 2, '苗木三证一签',
+                        [(f'{batch}-a.png', PNG), (f'{batch}-b.pdf', PDF)]))
+    else:
+        att.append(_att(cli, H, wid, -1, flow, 2, '肥料检验报告',
+                        [(f'{batch}-c.pdf', PDF)]))
+    steps = [
+        {'no': 1, 'values': {'进场批次号': batch}, 'att': []},
+        {'no': 2, 'values': {item: '正确', '关联小班': keys}, 'att': att},
+        {'no': 3, 'values': {'备注': '' if verdict == '通过' else '现场材料退换'},
+         'att': []},
+        {'no': 4, 'values': {'是否通过': verdict}, 'att': []},
+    ]
+    return cli.post(f'/api/workbooks/{wid}/flow/batch', headers=H,
+                    json={'row': -1, 'flow': flow, 'steps': steps})
 
-    现场口径：一批苗木到货覆盖 12 个小班 → 现场只填一条记录、勾 12 个小班，
-    提交后这 12 个班不再提示苗木核验，其余 137 班照旧提示。
+
+def material_case(cli, H):
+    """M1~M10：v0.54 两张公共核验表 + 环节表「需先核验」软提示。
+
+    现场口径：苗木一批到货覆盖 12 个小班、肥料一批覆盖 8 个小班 —— 两张表各记一条，
+    谁覆盖了谁，就在该小班的对应工序环节解除提示；没覆盖的班照样能做完工序。
     """
     with TPL.open('rb') as fh:
-        r = cli.post('/api/workbooks', data={'file': (io.BytesIO(fh.read()), 'material.xlsx')},
+        r = cli.post('/api/workbooks',
+                     data={'file': (io.BytesIO(fh.read()), 'material2.xlsx')},
                      headers=H, content_type='multipart/form-data')
     j = r.get_json() or {}
     wid = j.get('id')
-    ok('M1 环节表声明「作用对象=项目」的模板可上传', r.status_code == 200 and bool(wid),
+    ok('M1 拆成两张公共核验表的模板可上传', r.status_code == 200 and bool(wid),
        str(j)[:100])
     if not wid:
         return
     try:
-        mf = '流程-材料核验'
+        seed, fert = '流程-苗木核验', '流程-肥料核验'
         g = cli.get(f'/api/workbooks/{wid}', headers=H).get_json()
         fl = g.get('flows') or {}
         proj = fl.get('projects') or {}
-        route = next((x for x in (fl.get('routes') or []) if x.get('flow') == mf), {})
-        ok('M2 作用对象=项目 → 该流程被认作项目级（key_col=小班号，可重复）',
-           mf in [x['flow'] for x in (proj.get('flows') or [])
-                  or []] and proj.get('key_col') == '小班号'
-           and route.get('project') is True and route.get('repeat') is True, str(proj))
-        step2 = next(s for s in (fl.get('flows') or {}).get(mf, []) if s['no'] == 2)
-        ok('M2b 环节级声明：苗木核验 subject=项目 + link=多选，批次号环节不带关联小班',
-           step2.get('subject') == '项目' and step2.get('link') == '多选'
-           and any(c['name'] == '关联小班' for c in step2['controls'])
-           and not any(c['name'] == '关联小班'
-                       for c in next(s for s in fl['flows'][mf] if s['no'] == 1)['controls']),
-           f"{step2.get('subject')}/{step2.get('link')}")
+        names = [x['flow'] for x in (proj.get('flows') or [])]
+        ok('M2 两张表都被认作项目级流程，各自作用对象=项目',
+           seed in names and fert in names and proj.get('key_col') == '小班号'
+           and all(s['subject'] == '项目' for n in (seed, fert)
+                   for s in fl['flows'][n]), str(names))
+        hooks = {n: [(s['no'], s['step'], s.get('need_flows'))
+                     for s in st if s.get('need_flows')]
+                 for n, st in fl['flows'].items()}
+        ok('M2b 环节表「需先核验」两处挂点正确',
+           hooks.get('流程-回塘底肥') == [(2, '有机肥1.5kg/株', [fert])]
+           and hooks.get('流程-栽植撑杆覆膜') == [(1, '核实栽植面积', [seed])],
+           str({k: v for k, v in hooks.items() if v}))
 
-        m = cli.get(f'/api/workbooks/{wid}/flow?row=-1&entry=材料', headers=H).get_json()
+        m = cli.get(f'/api/workbooks/{wid}/flow?row=-1&entry=材料',
+                    headers=H).get_json()
         ctl = next((c for s in (m.get('steps') or []) for c in s['controls']
                     if c['name'] == '关联小班'), {})
-        ok('M3 项目级入口：5 个环节 + 关联小班多选 149 个候选',
-           m.get('ok') and len(m.get('steps') or []) == 5
-           and ctl.get('type') == '多选' and len(ctl.get('options') or []) == 149,
-           f"{len(m.get('steps') or [])} 环节 / {len(ctl.get('options') or [])} 班")
+        ok('M3 项目级入口：4 个环节 + 关联小班 149 候选 + 两条流程可下拉切换',
+           m.get('ok') and len(m.get('steps') or []) == 4
+           and ctl.get('type') == '多选' and len(ctl.get('options') or []) == 149
+           and len(m.get('flow_list') or []) == 2,
+           f"{len(m.get('steps') or [])} 环节 / {len(ctl.get('options') or [])} 班 / "
+           f"{len(m.get('flow_list') or [])} 条流程")
         ok('M3b 项目级只给全表同值的常量列（不给造林树种/总株数这类随小班变的列）',
            '项目类型' in (m.get('std') or {})
-           and '造林树种' not in (m.get('std') or {})
-           and '设计总株数（株）' not in (m.get('std') or {}),
+           and '造林树种' not in (m.get('std') or {}),
            str(list((m.get('std') or {}).keys()))[:120])
+        m2 = cli.get(f'/api/workbooks/{wid}/flow?row=-1&flow='
+                     + fert, headers=H).get_json()
+        ok('M3c 指定流程名可打开另一张公共表', m2.get('flow_sheet') == fert,
+           str(m2.get('flow_sheet')))
 
         f0 = cli.get(f'/api/workbooks/{wid}/flow?row=0', headers=H).get_json()
-        ok('M4 小班的流程下拉里不出现材料核验（不会误填成单班记录）',
-           mf not in [x.get('sheet') for x in (f0.get('flow_list') or [])],
+        ok('M4 小班的流程下拉里不出现两张公共表（不会误填成单班记录）',
+           seed not in [x.get('sheet') for x in (f0.get('flow_list') or [])]
+           and fert not in [x.get('sheet') for x in (f0.get('flow_list') or [])],
            str([x.get('sheet') for x in (f0.get('flow_list') or [])]))
         mm = f0.get('material') or {}
-        ok('M4b 小班面板拿到材料核验状态：2 项待核验',
-           mm.get('total') == 2 and mm.get('done') == 0 and mm.get('ok') is False,
-           str([(x['step'], x['ok']) for x in mm.get('steps') or []]))
+        ok('M4b 小班状态行：两条公共流程各 1 项待核验（带流程名）',
+           mm.get('total') == 2 and mm.get('flows') == 2 and mm.get('done') == 0
+           and all(x.get('flow_name') for x in mm.get('steps') or []), str(mm)[:160])
+        rt = cli.get(f'/api/workbooks/{wid}/flow?row=0&flow=流程-回塘底肥',
+                     headers=H).get_json()
+        st2 = next((s for s in rt.get('steps') or [] if s['no'] == 2), {})
+        ok('M4c 回塘底肥·环节2 带「需先核验」标识（前端据此出软提示）',
+           st2.get('need_flows') == [fert], str(st2.get('need_flows')))
 
-        i1, i2 = _row_of(cli, H, wid, 'XP-1320'), _row_of(cli, H, wid, 'XP-1321')
+        i1 = _row_of(cli, H, wid, 'XP-1320')
+        i2 = _row_of(cli, H, wid, 'XP-1321')
         i3 = _row_of(cli, H, wid, 'XP-1322')
-        flow = m['flow_sheet']
-        a1 = _att(cli, H, wid, -1, flow, 2, '苗木三证一签', [('a.png', PNG), ('b.pdf', PDF)])
-        a2 = _att(cli, H, wid, -1, flow, 3, '肥料检验报告', [('c.pdf', PDF)])
-        steps = [
-            {'no': 1, 'values': {'进场批次号': 'M-001'}, 'att': []},
-            {'no': 2, 'values': {'苗木核验': '正确', '关联小班': ['XP-1320', 'XP-1321']},
-             'att': [{'kind': 'photo', 'label': '苗木现场照片', 'count': 1}, a1]},
-            {'no': 3, 'values': {'肥料核验': '正确', '关联小班': ['XP-1320']},
-             'att': [a2]},
-            {'no': 4, 'values': {'备注': ''}, 'att': []},
-            {'no': 5, 'values': {'是否通过': '通过'}, 'att': []},
-        ]
-        r = cli.post(f'/api/workbooks/{wid}/flow/batch', headers=H,
-                     json={'row': -1, 'flow': flow, 'steps': steps})
-        ok('M5 项目级批次一次提交 5 个环节（row=-1）', r.status_code == 200,
+        r = _mat_submit(cli, H, wid, seed, 'M-001', ['XP-1320', 'XP-1321'])
+        ok('M5 苗木批次一次提交（row=-1，勾 2 个小班）', r.status_code == 200,
+           str(r.get_json())[:140])
+        r = _mat_submit(cli, H, wid, fert, 'F-001', ['XP-1320'])
+        ok('M5b 肥料批次独立提交（不同附件、不同批次号）', r.status_code == 200,
            str(r.get_json())[:140])
 
         def mat_of(i):
@@ -276,55 +303,52 @@ def material_case(cli, H):
                     .get_json().get('material') or {})
 
         m1 = mat_of(i1)
-        ok('M6 勾了的小班两项都完成（苗木+肥料，带批次号）',
+        ok('M6 两张表都覆盖的小班：2/2，批次号各自保留',
            m1.get('ok') is True and m1.get('done') == 2
-           and all(x['batch'] == 'M-001' for x in m1.get('steps') or []), str(m1)[:160])
-        m2 = mat_of(i2)
-        ok('M6b 只勾了苗木的小班：苗木✓ 肥料仍提示（按环节各自判定）',
-           m2.get('ok') is False and m2.get('done') == 1
-           and [x['ok'] for x in m2.get('steps') or []] == [True, False], str(m2)[:160])
-        m3 = mat_of(i3)
-        ok('M6c 没勾的小班照旧提示两项', m3.get('ok') is False and m3.get('done') == 0,
-           str(m3)[:120])
+           and {x['batch'] for x in m1.get('steps') or []} == {'M-001', 'F-001'},
+           str([(x['step'], x['ok'], x['batch']) for x in m1.get('steps') or []]))
+        m2b = mat_of(i2)
+        ok('M6b 只被苗木覆盖：苗木✓ 肥料仍提示（按环节/按流程各自判定）',
+           m2b.get('ok') is False and m2b.get('done') == 1
+           and next((x['ok'] for x in m2b['steps'] if x['flow'] == seed), None) is True
+           and next((x['ok'] for x in m2b['steps'] if x['flow'] == fert), None) is False,
+           str([(x['flow_name'], x['ok']) for x in m2b.get('steps') or []]))
+        ok('M6c 没勾的小班照旧提示两项', mat_of(i3).get('done') == 0)
 
-        # M7：不通过不算覆盖（不合格材料不能让小班"视为已核验"），但要带出批次号
-        # 附件按记录绑定（同一文件不可跨记录复用）→ 第二批另传一份
-        a3 = _att(cli, H, wid, -1, flow, 2, '苗木三证一签', [('a2.png', PNG), ('b2.pdf', PDF)])
-        a4 = _att(cli, H, wid, -1, flow, 3, '肥料检验报告', [('c2.pdf', PDF)])
-        bad = [
-            {'no': 1, 'values': {'进场批次号': 'M-002'}, 'att': []},
-            {'no': 2, 'values': {'苗木核验': '不正确', '苗木核验说明': '苗高不达标',
-                               '关联小班': ['XP-1322']},
-             'att': [{'kind': 'photo', 'label': '苗木现场照片', 'count': 1}, a3]},
-            {'no': 3, 'values': {'肥料核验': '正确', '关联小班': ['XP-1322']}, 'att': [a4]},
-            {'no': 4, 'values': {'备注': '苗高不达标，退苗重送'}, 'att': []},
-            {'no': 5, 'values': {'是否通过': '不通过'}, 'att': []},
-        ]
-        r = cli.post(f'/api/workbooks/{wid}/flow/batch', headers=H,
-                     json={'row': -1, 'flow': flow, 'steps': bad})
-        ok('M7 批次可以判「不通过」提交', r.status_code == 200, str(r.get_json())[:140])
-        m3b = mat_of(i3)
-        st2 = next((x for x in m3b.get('steps') or [] if x['no'] == 2), {})
+        # M7：不通过不算覆盖（不合格材料不能让小班"视为已核验"）
+        r = _mat_submit(cli, H, wid, fert, 'F-002', ['XP-1322'], verdict='不通过')
+        ok('M7 肥料批次可以判「不通过」提交', r.status_code == 200,
+           str(r.get_json())[:140])
+        bad = next((x for x in (mat_of(i3).get('steps') or [])
+                    if x['flow'] == fert), {})
         ok('M7b 不通过不算覆盖：小班仍提示，但标注不合格批次',
-           st2.get('ok') is False and st2.get('fail_batch') == 'M-002', str(st2)[:140])
+           bad.get('ok') is False and bad.get('fail_batch') == 'F-002', str(bad)[:140])
 
-        # M8：勾不存在的小班号 → 400（脏数据会让覆盖判定永久失效）
-        junk = [dict(s) for s in steps]
-        junk[1] = {'no': 2, 'values': {'苗木核验': '正确', '关联小班': ['XP-9999']},
-                   'att': [{'kind': 'photo', 'label': '苗木现场照片', 'count': 1}, a1]}
+        # M8：勾不存在的小班号 → 400；在小班里提交公共流程 → 400
+        junk = cli.post(f'/api/workbooks/{wid}/flow/batch', headers=H,
+                        json={'row': -1, 'flow': seed, 'steps': [
+                            {'no': 1, 'values': {'进场批次号': 'X-9'}, 'att': []},
+                            {'no': 2, 'values': {'苗木核验': '正确',
+                                               '关联小班': ['XP-9999']}, 'att': []},
+                            {'no': 3, 'values': {'备注': ''}, 'att': []},
+                            {'no': 4, 'values': {'是否通过': '通过'}, 'att': []}]})
+        ok('M8 手写不存在的小班号 → 400（附件闸门之前就拦）', junk.status_code == 400
+           and '小班号' in str((junk.get_json() or {}).get('error', '')),
+           str(junk.get_json())[:120])
         r = cli.post(f'/api/workbooks/{wid}/flow/batch', headers=H,
-                     json={'row': -1, 'flow': flow, 'steps': junk})
-        ok('M8 手写不存在的小班号 → 400', r.status_code == 400
-           and '小班号' in str((r.get_json() or {}).get('error', '')),
+                     json={'row': 0, 'flow': seed, 'steps': []})
+        ok('M8b 小班里提交公共流程 → 400（只能在项目级入口填）', r.status_code == 400,
            str(r.get_json())[:120])
-        r = cli.post(f'/api/workbooks/{wid}/flow/batch', headers=H,
-                     json={'row': 0, 'flow': flow, 'steps': steps})
-        ok('M8b 小班里提交材料核验 → 400（只能在项目级入口填）', r.status_code == 400,
-           str(r.get_json())[:120])
+
+        # M9：软提示不拦截 —— 材料两项都没做的小班，主线整地照样能提交通过
+        land = batch(cli, H, wid, i3, ROUTES[0], full_steps(LAND_PASS))
+        ok('M9 材料未核验也能提交主线工序（软提示，不锁工序）',
+           land.status_code == 200, str(land.get_json())[:140])
 
         pg = cli.get(f'/admin/api/progress?wid={wid}', headers=H).get_json()
-        ok('M9 后台进度不把材料核验当小班的一列（仍是 5 条主线/巡护）',
-           mf not in [x['sheet'] for x in (pg.get('flows') or [])],
+        ok('M10 后台进度不把两张公共表当小班列（仍是 5 条）',
+           seed not in [x['sheet'] for x in (pg.get('flows') or [])]
+           and fert not in [x['sheet'] for x in (pg.get('flows') or [])],
            str([x['sheet'] for x in (pg.get('flows') or [])]))
     finally:
         con = sqlite3.connect(_M.DB_PATH)
@@ -411,8 +435,8 @@ def main():
                 if _labels:
                     PHOTO_BY_FLOW.setdefault(_sheet, {})[int(_s['no'])] = _labels
         hdrs, rows = g.get('headers') or [], g.get('rows') or []
-        ok('T1 落库为 v2 schema（flow_tpl/1）且路由 6 条（含项目级材料核验）',
-           fl.get('schema') == 'flow_tpl/1' and len(fl.get('routes') or []) == 6,
+        ok('T1 落库为 v2 schema（flow_tpl/1）且路由 7 条（含两条项目级公共表）',
+           fl.get('schema') == 'flow_tpl/1' and len(fl.get('routes') or []) == 7,
            f"{fl.get('schema')} {len(fl.get('routes') or [])} 条")
         ok('T1b 设计值表被认作数据表（149 小班）',
            g.get('sheet_name') == '设计值' and len(rows) == 149,

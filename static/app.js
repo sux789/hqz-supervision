@@ -431,9 +431,14 @@ function openDetail(idx) {
      ③ 没有流程时把面板保持隐藏 → 老工作簿界面与 v0.30 完全一致
    注意：flow.js 若因任何原因没加载成功，这里必须**静默降级**而不是让整页失效（C16）。
    v0.37：idx<0 = 项目级（材料检验按批次），entry 显式传「材料」。 */
-function openFlowView(wid, idx, entry) {
+function openFlowView(wid, idx, entry, flowSel) {
   const panel = $('#flowPanel');
   if (panel) panel.innerHTML = '';
+  if (idx >= 0) {
+    // 现场自己切回小班 = 放弃这次「去核验」跳转，别留着待会儿又跳回去
+    window.__supJumpBack = null;
+    window.__supMaterialKey = '';
+  }
   if (!window.supFlow) return;
   try {
     window.__supUser = $('#whoami').dataset.user || '';
@@ -443,7 +448,7 @@ function openFlowView(wid, idx, entry) {
       return o;
     });
     window.__supAcceptOpts = cfgList('验收结果选项');
-    window.supFlow.open(wid, idx, entry);
+    window.supFlow.open(wid, idx, entry, flowSel);
   } catch (e) {
     console.warn('验收流程面板加载失败，已退回网格填表', e);
     if (panel) panel.classList.add('hidden');
@@ -823,8 +828,31 @@ $('#btnExport').addEventListener('click', () => {
    点了任一小班（openDetail/jumpRow）会自动退回该小班的行级流程。 */
 $('#btnMaterial').addEventListener('click', () => {
   if (!cur) return;
+  window.__supJumpBack = null;      // 从工具栏自己进的，不算「去核验」跳转
+  window.__supMaterialKey = '';
   openFlowView(cur.id, -1, '材料');
 });
+
+/* v0.54：从小班面板顶部状态行 / 环节卡片「去核验」直接进公共（项目级）流程。
+   记住来路 + 当前小班号，提交完自动回原小班原流程，不让现场自己找回去。 */
+window.__supOpenMaterial = function (flow, key) {
+  if (!cur || !window.supFlow) return;
+  window.__supJumpBack = {
+    wid: cur.id, row: curIdx,
+    flow: (window.supFlow.currentFlow && window.supFlow.currentFlow()) || '',
+  };
+  window.__supMaterialKey = key || '';
+  openFlowView(cur.id, -1, '材料', flow);
+};
+
+window.__supReturnFromMaterial = function () {
+  const b = window.__supJumpBack;
+  if (!b || !cur) return false;
+  window.__supJumpBack = null;
+  window.__supMaterialKey = '';
+  openFlowView(b.wid, b.row, '', b.flow);
+  return true;
+};
 
 /* 解析下拉选项键：形如「XX选项」且 XX 是真实表头列（排除「搜索选项」控件映射键）。
    坑：简单 endsWith('选项') 会先命中「搜索选项」（v0.7 遗留 bug，下拉从未弹出） */

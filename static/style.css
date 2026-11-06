@@ -262,6 +262,16 @@ textarea#syncBaiduToken { font-family: ui-monospace, Menlo, monospace; font-size
 /* 每项整体换行：窄屏下别把批次号拆成「M-」「001）」两截（430px 实测） */
 .flow-mat .mat-ok, .flow-mat .mat-miss { display: inline-block; white-space: nowrap;
                                          margin-right: 10px; }
+.flow-mat .mat-item { cursor: pointer; border-bottom: 1px dashed currentColor; }
+/* v0.54：环节卡片顶部的「需先核验」软提示（不拦截提交） */
+.flow-need { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+             margin: 0 0 8px; padding: 6px 9px; border-radius: 6px; font-size: 12px;
+             background: #fdf3e3; border: 1px solid #f0d9ae; color: #8a5a12; }
+.flow-need.ok { background: #eef6ee; border-color: #cfe3d2; color: #2f5d3a; }
+.flow-need .fn-miss { color: #b06a12; }
+.flow-need .fn-ok { color: #2f5d3a; }
+.flow-need .btn { padding: 4px 9px; font-size: 12px; border-color: #d4d9de;
+                  background: #fff; color: #2f5d3a; margin-left: auto; }
 .flow-mat .mat-ok { color: #2f5d3a; }
 .flow-mat .mat-miss { color: #b06a12; font-weight: 500; }
 
