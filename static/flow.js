@@ -799,11 +799,15 @@
     return h;
   }
 
-  /** v0.52 材料核验状态（小班面板顶部一行）：按环节各自判定，不通过不算完成。 */
+  /** v0.52 材料核验状态（小班面板顶部一行）：按环节各自判定，不通过不算完成。
+      v0.53：项目级流程可以有多条（苗木核验一条、肥料核验一条都行），
+      多条时给每项带上流程名，免得两个「核验」分不清是哪条流程的。 */
   function materialHtml(m) {
+    const multi = (m.flows || 0) > 1;
+    const nm = (s) => ((multi && s.flow_name) ? s.flow_name + '·' : '') + s.step;
     const parts = (m.steps || []).map((s) => (s.ok
-      ? `<span class="mat-ok">✓ ${esc(s.step)}${s.batch ? `（${esc(s.batch)}）` : ''}</span>`
-      : `<span class="mat-miss">⚠ ${esc(s.step)}`
+      ? `<span class="mat-ok">✓ ${esc(nm(s))}${s.batch ? `（${esc(s.batch)}）` : ''}</span>`
+      : `<span class="mat-miss">⚠ ${esc(nm(s))}`
         + `${s.fail_batch ? `（${esc(s.fail_batch)} 不合格）` : ' 未核验'}</span>`));
     const head = m.ok
       ? `材料核验：已完成（${m.total} 项）`

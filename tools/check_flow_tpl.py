@@ -243,7 +243,8 @@ def check_file(path: Path):
         if dup:
             F.append(f'类型「{t}」同时用公用和专用路由重复配置了流程：{dup}'
                      f' —— 保留专用或删掉公用那一行')
-        nos = [r['no'] for r in rs]
+        # 序号 0 = 独立流程（巡护、项目级材料核验…），可以有多条，不算重复
+        nos = [r['no'] for r in rs if r['no'] != 0]
         if len(set(nos)) != len(nos):
             W.append(f'类型「{t}」的流程序号有重复：{nos}')
         prereq = {_s(r['flow']): [_s(p) for p in r['prereq']] for r in rs}
@@ -258,8 +259,17 @@ def check_file(path: Path):
         if len(heads) > 1:
             W.append(f'类型「{t}」有多个无前置主流程：{heads}（若为并行入口可忽略）')
     for r in routes:
+        # 项目级流程（作用对象=项目，如材料核验）也是独立流程，序号同样约定 0
         if r['independent'] and r['no'] != 0:
             W.append(f'独立流程「{r["flow"]}」序号为 {r["no"]}（约定 0，界面会排到主线之后）')
+
+    # 项目级流程（作用对象=项目）：没有「关联小班」环节就判不出覆盖了谁
+    for sheet, steps in (tpl.get('flows') or {}).items():
+        if not steps or all((x.get('subject') or '小班') == '小班' for x in steps):
+            continue
+        if not any(x.get('link') in ('单选', '多选') for x in steps):
+            F.append(f'「{sheet}」是项目级流程，但没有任何环节填「关联小班」'
+                     f'（多选/单选）—— 提交后无法判定覆盖了哪些小班')
 
     # ── 单个流程 ───────────────────────────────────────
     std_numeric_cols = set()
@@ -352,7 +362,9 @@ def check_file(path: Path):
                         I.append(f'「{sheet}」第 {s["line"]} 行「{s["step"]}」有 '
                                  f'{len(wrong)} 个错误项未要求备注（失败可不写原因）')
                 elif t == '多选':
-                    if len(c.get('options') or []) < 2:
+                    # 「关联小班」的选项在运行时按数据表小班号列填（模板里本来就空），
+                    # 不是写漏了选项，别报
+                    if c.get('name') != '关联小班' and len(c.get('options') or []) < 2:
                         W.append(f'「{sheet}」第 {s["line"]} 行「{s["step"]}」多选选项少于 2 个')
                 elif t == '数值':
                     if c.get('judge_ref') == '设计值' and not c.get('std_col'):

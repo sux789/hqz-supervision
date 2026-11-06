@@ -466,8 +466,8 @@ def _tpl_hit(flows, headers, rows, ridx, flow_sheet='', wid=None):
     mat = {}
     try:
         status = _tpl_route_status(con, wid, ridx, flows, routes)
-        if wid is not None and (flows.get('material') or {}).get('flow'):
-            key_col = _s((flows.get('material') or {}).get('key_col'))
+        if wid is not None and ((flows.get('projects') or {}).get('flows')):
+            key_col = _s((flows.get('projects') or {}).get('key_col'))
             key_val = _s(dict(zip(headers, rows[ridx])).get(key_col))
             mat = _tpl_material_status(con, wid, flows, key_val)
     finally:
@@ -566,80 +566,88 @@ def _rec_batch(e, rec_no):
 
 
 def _tpl_material_status(con, wid, flows, key_val):
-    """某个小班的材料核验覆盖状态：**按环节各自判定**（v0.52 用户拍板）。
+    """某个小班的项目级核验覆盖状态：**按环节各自判定**，支持多条项目级流程。
 
     苗木核验和肥料核验是两件事：苗木那批验了、肥料没验，只提示「肥料核验未做」。
-    **结论不通过不算覆盖**（不合格的材料不能算核验通过），小班继续提示，
-    但会把那可批次的号带出来，现场知道要整改哪一批。
+    **结论不通过不算覆盖**（不合格材料不能算核验通过），小班继续提示，
+    但把那一批的批次号带出来，现场知道要整改哪一批。
     """
-    mat = (flows or {}).get('material') or {}
-    sheet = _s(mat.get('flow'))
-    if con is None or not sheet or not key_val:
+    proj = (flows or {}).get('projects') or {}
+    plist = proj.get('flows') or []
+    if con is None or not key_val or not plist:
         return {}
-    want = [s for s in flow_tpl.steps_of(flows, sheet)
-            if s.get('link') in ('单选', '多选')]
-    if not want:
+    items = []
+    for p in plist:
+        sheet = _s(p.get('flow'))
+        want = [s for s in flow_tpl.steps_of(flows, sheet)
+                if s.get('link') in ('单选', '多选')]
+        if not want:
+            continue
+        recs = {}
+        for x in con.execute(
+                'SELECT step_no,rec_no,factor,value,result,operator,updated_at'
+                ' FROM flow_records WHERE workbook_id=? AND row_idx=-1 AND flow_sheet=?'
+                ' ORDER BY rec_no, id', (wid, sheet)).fetchall():
+            rn = int(x['rec_no'] or 0)
+            e = recs.setdefault(rn, {'result': '', 'at': '', 'operator': '', 'steps': {}})
+            if x['factor']:
+                e['steps'].setdefault(int(x['step_no']), {})[x['factor']] = x['value']
+            else:
+                e['result'] = _s(x['result'])
+            e['at'] = _s(x['updated_at']) or e['at']
+            e['operator'] = _s(x['operator']) or e['operator']
+        order = sorted(recs, reverse=True)         # 最近批次先看
+        for s in want:
+            no = int(s['no'])
+            got = {'no': no, 'step': s['step'], 'flow': sheet,
+                   'flow_name': p.get('name') or sheet.replace('流程-', ''),
+                   'ok': False, 'batch': '', 'at': '', 'operator': '',
+                   'fail_batch': ''}
+            for rn in order:
+                e = recs[rn]
+                vals = e['steps'].get(no) or {}
+                if key_val not in _as_keys(vals.get('关联小班')):
+                    continue
+                label = _rec_batch(e, rn)
+                if not got['batch']:           # 最近一批（不管通过与否）用来展示
+                    got.update(batch=label, at=e['at'], operator=e['operator'])
+                if e['result'] in flow_config.PASS_RESULTS:
+                    got.update(ok=True, batch=label, at=e['at'],
+                               operator=e['operator'])
+                    break
+                if not got['fail_batch']:
+                    got['fail_batch'] = label
+            items.append(got)
+    if not items:
         return {}
-    recs = {}
-    for x in con.execute(
-            'SELECT step_no,rec_no,factor,value,result,operator,updated_at'
-            ' FROM flow_records WHERE workbook_id=? AND row_idx=-1 AND flow_sheet=?'
-            ' ORDER BY rec_no, id', (wid, sheet)).fetchall():
-        rn = int(x['rec_no'] or 0)
-        e = recs.setdefault(rn, {'result': '', 'at': '', 'operator': '', 'steps': {}})
-        if x['factor']:
-            e['steps'].setdefault(int(x['step_no']), {})[x['factor']] = x['value']
-        else:
-            e['result'] = _s(x['result'])
-        e['at'] = _s(x['updated_at']) or e['at']
-        e['operator'] = _s(x['operator']) or e['operator']
-    order = sorted(recs, reverse=True)         # 最近批次先看
-    steps_out = []
-    for s in want:
-        no = int(s['no'])
-        got = {'no': no, 'step': s['step'], 'ok': False, 'batch': '',
-               'at': '', 'operator': '', 'fail_batch': ''}
-        for rn in order:
-            e = recs[rn]
-            vals = e['steps'].get(no) or {}
-            if key_val not in _as_keys(vals.get('关联小班')):
-                continue
-            label = _rec_batch(e, rn)
-            if not got['batch']:               # 最近一批（不管通过与否）用来展示
-                got.update(batch=label, at=e['at'], operator=e['operator'])
-            if e['result'] in flow_config.PASS_RESULTS:
-                got.update(ok=True, batch=label, at=e['at'], operator=e['operator'])
-                break
-            if not got['fail_batch']:
-                got['fail_batch'] = label
-        steps_out.append(got)
-    done = sum(1 for x in steps_out if x['ok'])
-    return {'flow': sheet, 'name': sheet.replace('流程-', ''),
-            'key': key_val, 'steps': steps_out,
-            'total': len(steps_out), 'done': done, 'ok': done == len(steps_out)}
+    done = sum(1 for x in items if x['ok'])
+    return {'key': key_val, 'steps': items, 'total': len(items), 'done': done,
+            'ok': done == len(items), 'flows': len(plist)}
 
 
 def _tpl_project_hit(flows, headers, rows, ridx, flow_sheet, wid):
-    """项目级入口（v0.52：材料核验按批次）—— row=-1 时只认参数指定的那条流程。
+    """项目级入口（v0.53：材料核验等按批次的流程）—— row=-1 时只认项目级流程。
 
     与 v0.37 的老格式材料入口同源：基本信息只给**项目级常量列**（项目名称/标段…），
     随小班变化的列（树种/株数）不显示 —— 一条批次记录该显示哪个小班的值？
-    小班差异由「关联小班」多选承担。
+    小班差异由「关联小班」多选承担。多条项目级流程时给流程下拉。
     """
-    mat = (flows or {}).get('material') or {}
-    sheet = _s(mat.get('flow'))
-    if not sheet:
+    proj = (flows or {}).get('projects') or {}
+    plist = proj.get('flows') or []
+    if not plist:
         return None
-    if flow_sheet and flow_sheet != sheet:
+    if flow_sheet and flow_sheet not in [p['flow'] for p in plist]:
         return None
+    chosen = next((p for p in plist if p['flow'] == flow_sheet), plist[0])
+    sheet = chosen['flow']
     steps = flow_tpl.steps_of(flows, sheet)
     if not steps:
         return None
     cols, std = _project_std(headers, rows)
-    m = {'sheet': sheet, 'prio': int(mat.get('no') or 0), 'cond_field': '',
+    m = {'sheet': sheet, 'prio': int(chosen.get('no') or 0), 'cond_field': '',
          'cond_val': '', 'scope': '全部', 'steps': steps}
     payload = _hit_payload(m, std, cols, list(flows.get('warn') or []))
-    keys = _tpl_keys(headers, rows, mat.get('key_col'))
+    keys = _tpl_keys(headers, rows, proj.get('key_col'))
     for s in payload['steps']:
         for c in s['controls']:
             if c['name'] == '关联小班':
@@ -647,13 +655,16 @@ def _tpl_project_hit(flows, headers, rows, ridx, flow_sheet, wid):
                 c['options'] = keys
                 c['required'] = True
     con = _db() if wid is not None else None
+    infos = {}
     try:
-        info = _tpl_flow_info(con, wid, ridx, sheet, steps)
+        for p in plist:
+            infos[p['flow']] = _tpl_flow_info(con, wid, ridx, p['flow'],
+                                              flow_tpl.steps_of(flows, p['flow']))
     finally:
         if con is not None:
             con.close()
-    route = next((r for r in (flows.get('routes') or [])
-                  if r['flow'] == sheet), {})
+    info = infos.get(sheet) or {'values': {}, 'meta': {}, 'atts': {}, 'rec_no': 0}
+    route = next((r for r in (flows.get('routes') or []) if r['flow'] == sheet), {})
     note_no, note_field = 0, ''
     for s in steps:
         if s.get('note_no'):
@@ -663,11 +674,15 @@ def _tpl_project_hit(flows, headers, rows, ridx, flow_sheet, wid):
         'schema': 'flow_tpl/1',
         'entry': '材料',
         'flow_sheet': sheet,
-        'flow_list': [{
-            'sheet': sheet, 'no': route.get('no') or 0, 'prereq': [],
-            'repeat': True, 'trigger': route.get('trigger') or '',
-            'note': route.get('note') or '', 'independent': True,
-            'done': False, 'has': info['has'], 'available': True}],
+        # 多条项目级流程（如苗木核验、肥料核验各一条）时前端自动出流程下拉
+        'flow_list': [{'sheet': p['flow'], 'no': p.get('no') or 0, 'prereq': [],
+                       'repeat': True,
+                       'trigger': next((r.get('trigger') or ''
+                                        for r in (flows.get('routes') or [])
+                                        if r['flow'] == p['flow']), ''),
+                       'note': '', 'independent': True, 'done': False,
+                       'has': bool((infos.get(p['flow']) or {}).get('has')),
+                       'available': True} for p in plist],
         'flow_locked': False,
         'flow_prereq': [],
         'flow_repeat': True,
@@ -680,7 +695,7 @@ def _tpl_project_hit(flows, headers, rows, ridx, flow_sheet, wid):
         'note_step_no': note_no,
         'note_field': note_field,
         'project': True,
-        'project_key_col': mat.get('key_col') or '',
+        'project_key_col': proj.get('key_col') or '',
     })
     return payload
 

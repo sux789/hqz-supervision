@@ -93,10 +93,11 @@ async function ensureWb(id) {
   allRows = cur.rows.map((r) => r.map((v) => (v == null ? '' : String(v))));
   // v0.37：配了「材料」入口才显示材料检验按钮。sheet 名形如「流程-材料检验（按批次）·材料」，
   // 取 · 后一段即入口；老 12 列格式没有 · → 取到的不是「材料」，按钮不显示（零请求判断）
-  // v0.52：v2 模板没有 registry，材料核验由参数「材料核验流程」指定，flows.material 里带着
+  // v0.53：v2 模板没有 registry，项目级流程由环节表「作用对象=项目」声明，flows.projects 里带着
   const reg = (cur.flows && cur.flows.registry) || [];
-  wbHasMaterial = !!(cur.flows && cur.flows.material && cur.flows.material.flow)
-    || reg.some((r) => String(r.sheet || '').split('·').pop() === '材料');
+  wbHasMaterial = !!((cur.flows && cur.flows.projects
+    && (cur.flows.projects.flows || []).length)
+    || reg.some((r) => String(r.sheet || '').split('·').pop() === '材料'));
   return true;
 }
 

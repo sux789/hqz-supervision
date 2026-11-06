@@ -208,7 +208,7 @@ def material_case(cli, H):
                      headers=H, content_type='multipart/form-data')
     j = r.get_json() or {}
     wid = j.get('id')
-    ok('M1 模板带「材料核验流程」参数可上传', r.status_code == 200 and bool(wid),
+    ok('M1 环节表声明「作用对象=项目」的模板可上传', r.status_code == 200 and bool(wid),
        str(j)[:100])
     if not wid:
         return
@@ -216,11 +216,19 @@ def material_case(cli, H):
         mf = '流程-材料核验'
         g = cli.get(f'/api/workbooks/{wid}', headers=H).get_json()
         fl = g.get('flows') or {}
-        mat = fl.get('material') or {}
+        proj = fl.get('projects') or {}
         route = next((x for x in (fl.get('routes') or []) if x.get('flow') == mf), {})
-        ok('M2 参数指向材料核验流程，路由标记为项目级',
-           mat.get('flow') == mf and mat.get('key_col') == '小班号'
-           and route.get('project') is True and route.get('repeat') is True, str(mat))
+        ok('M2 作用对象=项目 → 该流程被认作项目级（key_col=小班号，可重复）',
+           mf in [x['flow'] for x in (proj.get('flows') or [])
+                  or []] and proj.get('key_col') == '小班号'
+           and route.get('project') is True and route.get('repeat') is True, str(proj))
+        step2 = next(s for s in (fl.get('flows') or {}).get(mf, []) if s['no'] == 2)
+        ok('M2b 环节级声明：苗木核验 subject=项目 + link=多选，批次号环节不带关联小班',
+           step2.get('subject') == '项目' and step2.get('link') == '多选'
+           and any(c['name'] == '关联小班' for c in step2['controls'])
+           and not any(c['name'] == '关联小班'
+                       for c in next(s for s in fl['flows'][mf] if s['no'] == 1)['controls']),
+           f"{step2.get('subject')}/{step2.get('link')}")
 
         m = cli.get(f'/api/workbooks/{wid}/flow?row=-1&entry=材料', headers=H).get_json()
         ctl = next((c for s in (m.get('steps') or []) for c in s['controls']

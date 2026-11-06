@@ -114,7 +114,6 @@ def _parse_flows(wb, headers=None, rows=None, config=None):
         try:
             option_default = flow_tpl.option_default_of(config)
             res = flow_tpl.parse(wb, data_headers=headers, option_default=option_default,
-                                 material_flow=flow_tpl.material_of(config),
                                  key_col=row_key_column(config))
         except flow_tpl.TplError as e:
             return json.dumps({'registry': [], 'flows': {}, 'warn': [

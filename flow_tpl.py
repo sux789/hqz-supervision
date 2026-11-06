@@ -39,11 +39,13 @@ ROUTE_SHEET = '流程路由'
 DOC_SHEET = '说明'
 
 ROUTE_COLS = ['序号', '项目类型', '流程', '前置流程', '可重复', '触发方式', '说明']
-# v0.52：「关联小班」是**尾列**——老模板只有前 6 列，读表时自动补空（不需要），行为不变。
-# 写「单选 / 多选」时该环节自动生成一个「关联小班」控件（选项 = 数据表的小班号列），
-# 供「材料核验」这种一条记录对应多个小班的环节用。
-STEP_COLS = ['序号', '环节', '设计值表头', '控件', '附件', '备注', '关联小班']
+# v0.53：环节表末尾两列——「关联小班」（不需要/单选/多选）与「作用对象」（小班/项目）。
+# **作用对象=项目** 的环节 = 按批次登记、一条记录关联多个小班（如苗木核验/肥料核验）：
+# 这类流程不挂小班档案（row_idx=-1）、可多次、不进小班流程下拉。留空 = 小班。
+# 两列都放末尾：Excel 里加列不用挪已有内容，业务专家也只需在最右两列上填写。
+STEP_COLS = ['序号', '环节', '设计值表头', '控件', '附件', '备注', '关联小班', '作用对象']
 LINKS = ['不需要', '单选', '多选']
+SUBJECTS = ['小班', '项目']
 
 REPEAT_VALUES = ('是', '否')
 
@@ -105,16 +107,6 @@ def option_default_of(config):
     if v == '首项通过':
         return True
     raise TplError(f'参数「选项判定」只能是「首项通过」或留空（实际「{v}」）')
-
-
-def material_of(config):
-    """参数「材料核验流程」→ 项目级材料核验的流程 sheet 名；留空 = 不做材料核验。
-
-    **为什么用参数页一行而不是流程路由加一列**（v0.52 决定）：`parse_routes` 对
-    「流程路由」表头做全等校验，加一列会让所有现存模板当场报错；而「参数」页是
-    key|value 表，加一行只影响自己。业务专家只需要填一个流程名。
-    """
-    return _s((config or {}).get('材料核验流程'))
 
 
 # ── 控件 DSL ────────────────────────────────────────────────────────
@@ -422,6 +414,17 @@ def parse_flow_sheet(ws, data_headers, option_default=False):
             raise TplError(
                 f'「{ws.title}」第 {ln} 行「{step}」的「关联小班」写的是「{link}」，'
                 f'只认：{" / ".join(LINKS)}')
+        # v0.53：作用对象决定这条流程挂在小班档案上，还是按批次登记（row=-1）
+        subject = _s(d.get('作用对象')) or '小班'
+        if subject not in SUBJECTS:
+            raise TplError(
+                f'「{ws.title}」第 {ln} 行「{step}」的「作用对象」写的是「{subject}」，'
+                f'只认：{" / ".join(SUBJECTS)}（留空 = 小班）')
+        if link != '不需要' and subject != '项目':
+            raise TplError(
+                f'「{ws.title}」第 {ln} 行「{step}」填了「关联小班={link}」，'
+                f'但「作用对象」不是「项目」——一条记录挂多个小班只在项目级流程里有意义；'
+                f'小班级流程就填作用对象=小班、关联小班=不需要')
         if link != '不需要':
             ctrls.append(_link_control(step, link))
         out.append({
@@ -440,7 +443,7 @@ def parse_flow_sheet(ws, data_headers, option_default=False):
             'controls': ctrls,
             'controls_raw': d['控件'],
             'expert': False,
-            'subject': '小班',
+            'subject': subject,
             'multi': False,
             'link': link,
             'basic_info': [],
@@ -484,12 +487,12 @@ def _attach_note(flows):
             s['note_no'] = note['no']
 
 
-def parse(wb, data_headers=None, option_default=False, material_flow='', key_col=''):
-    """整个 v2 模板 → {'schema':'flow_tpl/1','routes':[...],'flows':{...},'warn':[...]}
+def parse(wb, data_headers=None, option_default=False, key_col=''):
+    """整个 v2 模板 → {'schema':'flow_tpl/1','routes':[...],'flows':{...},'projects':{},'warn':[]}
 
-    `material_flow` = 参数「材料核验流程」的流程名。给了就把这条流程认作**项目级**：
-    不挂小班档案（row=-1）、一条记录关联多个小班、可多次（按批次），
-    并生成 `material` 块供路由层判定「哪些小班已经核验过」。
+    v0.53：项目级流程由**环节表「作用对象=项目」**声明，不再从参数页读流程名。
+    一条流程里只要有一个「作用对象=项目」的环节，整条流程就是项目级
+    （不挂小班档案、一条记录关联多个小班、可多次、不进小班的流程下拉）。
     """
     routes = parse_routes(wb)
     flows = {}
@@ -500,8 +503,7 @@ def parse(wb, data_headers=None, option_default=False, material_flow='', key_col
         raise TplError('工作簿里没有任何「流程-」定义表')
 
     warn = []
-    material = _material_block(flows, routes, _s(material_flow),
-                               data_headers or [], _s(key_col), warn)
+    projects = _project_flows(flows, routes, data_headers or [], _s(key_col), warn)
     _attach_note(flows)
 
     for r in routes:
@@ -521,47 +523,54 @@ def parse(wb, data_headers=None, option_default=False, material_flow='', key_col
         'source': 'tpl_v2',
         'routes': routes,
         'flows': flows,
-        'material': material,
+        'projects': projects,
         'warn': warn,
     }
 
 
-def _material_block(flows, routes, name, data_headers, key_col, warn):
-    """参数「材料核验流程」→ {'flow','key_col','no'}；配置有问题只报警告，不阻断上传。
+def _project_flows(flows, routes, data_headers, key_col, warn):
+    """哪些流程是项目级（环节表「作用对象=项目」）→ {'key_col','flows':[{flow,name,no}]}。
 
     项目级 = row_idx=-1：一条记录挂多个小班，所以它必须
-      ① 有「关联小班」列（单选/多选），否则提交完不知道覆盖了谁；
-      ② 可多次（每批一条），否则第二批会把第一批覆盖掉；
+      ① 至少一个环节填了「关联小班」（否则提交完不知道覆盖了谁）；
+      ② 可多次（每批一条），否则第二批会把第一批顶掉；
       ③ 不进任何小班的流程下拉（否则现场会在某个小班里填成单班记录）。
+    **同一张流程表不许混用**：小班级环节和项目级环节放一条流程里，
+    记录维度会打架（一半挂小班、一半不挂），解析期直接报错。
     """
-    if not name:
-        return {}
-    if name not in flows:
-        warn.append({'level': 'error',
-                     'text': f'参数「材料核验流程」写的是「{name}」，但工作簿里没有这张流程表'
-                             f'（现有：{"、".join(flows)}）；材料核验本次不生效'})
-        return {}
-    steps = flows[name]
-    if not any(s.get('link') in ('单选', '多选') for s in steps):
-        warn.append({'level': 'error',
-                     'text': f'材料核验流程「{name}」没有任何环节填「关联小班」（单选/多选），'
-                             f'提交后无法判定覆盖了哪些小班，这些小班仍会提示材料核验'})
-    cols = [_s(h) for h in (data_headers or []) if _s(h)]
-    key = key_col if key_col in cols else ('小班号' if '小班号' in cols else (cols[0] if cols else ''))
-    hit = [r for r in routes if r['flow'] == name]
-    if not hit:
-        warn.append({'level': 'info',
-                     'text': f'材料核验流程「{name}」没有出现在「流程路由」里；'
-                             f'仍可从工具栏进，但界面上看不到序号/触发方式'})
-    for r in hit:
-        r['project'] = True
-        r['independent'] = True          # 不参与主线先后，也不被任何前置引用
-        if not r['repeat']:
-            r['repeat'] = True           # 按批次登记，天然可多次
+    out = []
+    for name, steps in flows.items():
+        kinds = {(_s(s.get('subject')) or '小班') for s in steps}
+        if kinds == {'小班'}:
+            continue
+        if len(kinds) > 1:
+            bad = next(s for s in steps if (_s(s.get('subject')) or '小班') != '项目')
+            raise TplError(
+                f'「{name}」第 {bad["line"]} 行「{bad["step"]}」：同一张流程表里'
+                f'「作用对象」不能既有小班又有项目（项目级流程整条都按批次登记）')
+        if not any(s.get('link') in ('单选', '多选') for s in steps):
+            warn.append({'level': 'error',
+                         'text': f'流程「{name}」声明为项目级，但没有任何环节填「关联小班」'
+                                 f'（单选/多选）：提交后无法判定覆盖了哪些小班，'
+                                 f'这些小班仍会提示未核验'})
+        hit = [r for r in routes if r['flow'] == name]
+        if not hit:
             warn.append({'level': 'info',
-                         'text': f'材料核验流程「{name}」按批次登记，已自动改为「可重复」'})
-    return {'flow': name, 'key_col': key,
-            'no': hit[0]['no'] if hit else 0}
+                         'text': f'项目级流程「{name}」没有出现在「流程路由」里；'
+                                 f'仍可从工具栏进，但看不到序号/触发方式'})
+        for r in hit:
+            r['project'] = True
+            r['independent'] = True        # 不参与主线先后，也不被任何前置引用
+            if not r['repeat']:
+                r['repeat'] = True         # 按批次登记，天然可多次
+                warn.append({'level': 'info',
+                             'text': f'项目级流程「{name}」按批次登记，已自动改为「可重复」'})
+        out.append({'flow': name, 'name': name.replace('流程-', ''),
+                    'no': hit[0]['no'] if hit else 0})
+    cols = [_s(h) for h in (data_headers or []) if _s(h)]
+    key = key_col if key_col in cols else ('小班号' if '小班号' in cols
+                                           else (cols[0] if cols else ''))
+    return {'key_col': key, 'flows': out}
 
 
 def routes_for(flows, project_type):
